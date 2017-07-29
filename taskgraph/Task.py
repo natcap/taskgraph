@@ -14,16 +14,16 @@ import threading
 import errno
 import Queue
 import inspect
+import pkg_resources
 
-import psutil
+try:
+    pkg_resources.get_distribution('psutil')
+except pkg_resources.DistributionNotFound:
+    HAS_PSUTIL = False
+else:
+    HAS_PSUTIL = True
 
 LOGGER = logging.getLogger('Task')
-
-
-def _worker(work_queue):
-    """Thread worker.  `work_queue` has func/args tuple or 'STOP'."""
-    for func, args in iter(work_queue.get, 'STOP'):
-        func(*args)
 
 
 class TaskGraph(object):
@@ -58,10 +58,11 @@ class TaskGraph(object):
 
         if n_workers > 0:
             self.worker_pool = multiprocessing.Pool(n_workers)
-            parent = psutil.Process()
-            parent.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
-            for child in parent.children():
-                child.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+            if HAS_PSUTIL:
+                parent = psutil.Process()
+                parent.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                for child in parent.children():
+                    child.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
         else:
             self.worker_pool = None
 

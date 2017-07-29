@@ -39,3 +39,18 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.join()
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
+
+    def test_single_task_multiprocessing(self):
+        """Test a single task with multiprocessing."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        _ = task_graph.add_task(
+            target=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path])
+        task_graph.join()
+        result = pickle.load(open(target_path, 'rb'))
+        self.assertEqual(result, [value]*list_len)
+
