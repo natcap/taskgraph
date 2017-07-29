@@ -140,11 +140,12 @@ class TaskGraph(object):
             ignore_path_list = []
         if target is None:
             target = lambda: None
-        task = Task(
-            target, args, kwargs, target_path_list, ignore_path_list,
-            dependent_task_list, ignore_directories, self.token_storage_path)
-
         with self.global_lock:
+            task_id = len(self.global_working_task_set)
+            task = Task(
+                task_id, target, args, kwargs, target_path_list,
+                ignore_path_list, dependent_task_list, ignore_directories,
+                self.token_storage_path)
             self.global_working_task_set.add(task)
         if self.n_workers > 0:
             self.work_queue.put(
@@ -169,11 +170,12 @@ class Task(object):
     """Encapsulates work/task state for multiprocessing."""
 
     def __init__(
-            self, target, args, kwargs, target_path_list, ignore_path_list,
+            self, task_id, target, args, kwargs, target_path_list, ignore_path_list,
             dependent_task_list, ignore_directories, token_storage_path):
         """Make a Task.
 
         Parameters:
+            task_id (int): unique task id from the task graph.
             target (function): a function that takes the argument list
                 `args`
             args (tuple): a list of arguments to pass to `target`.  Can be
@@ -206,6 +208,7 @@ class Task(object):
         self.ignore_directories = ignore_directories
         self.token_storage_path = token_storage_path
         self.token_path = None  # not set until dependencies are blocked
+        self.task_id = task_id
 
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete
@@ -244,7 +247,7 @@ class Task(object):
             json.dumps(self.kwargs, sort_keys=True), source_code,
             self.target_path_list, str(file_stat_list))
 
-        return task_string
+        return hashlib.sha1(task_string).hexdigest()
 
     def __call__(
             self, global_lock, global_working_task_dict,
@@ -277,32 +280,25 @@ class Task(object):
             if len(self.dependent_task_list) > 0:
                 for task in self.dependent_task_list:
                     task.join()
-                    if not task.is_complete():
-                        raise RuntimeError(
-                            "Task %s didn't complete, discontinuing "
-                            "execution of %s" % (
-                                task.task_id, self.target.__name__))
 
-            token = self._calculate_token()
-            task_id = '%s_%s' % (
-                self.target.__name__, hashlib.sha1(token).hexdigest())
-            self.token_path = os.path.join(self.token_storage_path, task_id)
-            LOGGER.debug("Starting task %s", task_id)
+            token_id = self._calculate_token()
+            self.token_path = os.path.join(self.token_storage_path, token_id)
+            LOGGER.debug("Starting task %s", token_id)
 
             if self.is_complete():
                 LOGGER.debug(
                     "Completion token exists for %s so not executing",
-                    task_id)
+                    self.task_id)
                 return
 
-            LOGGER.debug("Starting process for %s", task_id)
+            LOGGER.debug("Starting process for %s", token_id)
             if global_worker_pool is not None:
                 result = global_worker_pool.apply_async(
                     func=self.target, args=self.args, kwds=self.kwargs)
                 result.get()
             else:
                 self.target(*self.args, **self.kwargs)
-            LOGGER.debug("Complete process for %s", task_id)
+            LOGGER.debug("Complete process for %s", token_id)
             with open(self.token_path, 'w') as token_file:
                 token_file.write(str(datetime.datetime.now()))
         finally:
@@ -315,9 +311,14 @@ class Task(object):
             for path in [self.token_path] + self.target_path_list])
 
     def join(self):
-        """Block until task is complete."""
+        """Block until task is complete, raise exception if not complete."""
         with self.lock:
             pass
+        if not self.is_complete():
+            raise RuntimeError(
+                "Task %s didn't complete, discontinuing "
+                "execution of %s" % (
+                    self.task_id, self.target.__name__))
 
 
 def _get_file_stats(base_value, ignore_list, ignore_directories):
@@ -337,13 +338,12 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         """
     if isinstance(base_value, types.StringType):
         try:
-            if base_value not in ignore_list:
-                if (not isinstance(base_value, types.StringType) or
-                        not os.path.isdir(base_value) or
-                        not ignore_directories):
-                    yield (
-                        os.path.getmtime(base_value), os.path.getsize(
-                            base_value), base_value)
+            if base_value not in ignore_list and (
+                    not os.path.isdir(base_value) or
+                    not ignore_directories):
+                yield (
+                    os.path.getmtime(base_value), os.path.getsize(
+                        base_value), base_value)
         except OSError:
             pass
     elif isinstance(base_value, collections.Mapping):
