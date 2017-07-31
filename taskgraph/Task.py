@@ -2,7 +2,6 @@
 import types
 import collections
 import traceback
-import time
 import datetime
 import hashlib
 import json
@@ -84,13 +83,14 @@ class TaskGraph(object):
         for func, args, kwargs in iter(work_queue.get, 'STOP'):
             try:
                 func(*args, **kwargs)
-            except Exception as e:
+            except Exception as subprocess_exception:
                 LOGGER.error(traceback.format_exc())
+                LOGGER.error(subprocess_exception)
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
         self.closed = True
-        for thread_id in xrange(self.n_workers):
+        for _ in xrange(self.n_workers):
             self.work_queue.put('STOP')
 
     def add_task(
@@ -170,8 +170,9 @@ class Task(object):
     """Encapsulates work/task state for multiprocessing."""
 
     def __init__(
-            self, task_id, target, args, kwargs, target_path_list, ignore_path_list,
-            dependent_task_list, ignore_directories, token_storage_path):
+            self, task_id, target, args, kwargs, target_path_list,
+            ignore_path_list, dependent_task_list, ignore_directories,
+            token_storage_path):
         """Make a Task.
 
         Parameters:
@@ -335,7 +336,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         list of (timestamp, filesize) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
-        """
+    """
     if isinstance(base_value, types.StringType):
         try:
             if base_value not in ignore_list and (
@@ -349,9 +350,11 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
     elif isinstance(base_value, collections.Mapping):
         for key in sorted(base_value.iterkeys()):
             value = base_value[key]
-            for x in _get_file_stats(value, ignore_list, ignore_directories):
-                yield x
+            for stat in _get_file_stats(
+                    value, ignore_list, ignore_directories):
+                yield stat
     elif isinstance(base_value, collections.Iterable):
         for value in base_value:
-            for x in _get_file_stats(value, ignore_list, ignore_directories):
-                yield x
+            for stat in _get_file_stats(
+                    value, ignore_list, ignore_directories):
+                yield stat
