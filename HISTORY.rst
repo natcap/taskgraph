@@ -4,6 +4,9 @@
 
 Unreleased Changes
 ------------------
+
+0.1.2 (2017-07-31)
+------------------
 * Fixing an issue where `types.StringType` is not the same as `types.StringTypes`.
 
 0.1.1 (2017-07-31)
