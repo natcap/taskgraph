@@ -1,10 +1,11 @@
+"""taskgraph setup.py."""
 from setuptools import setup
 
 README = open('README.rst').read()
 
 setup(
     name='taskgraph',
-    version='0.1.1',
+    version='0.1.2',
     description='Parallel task graph framework.',
     long_description=README,
     maintainer='Rich Sharp',

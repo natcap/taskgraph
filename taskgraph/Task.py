@@ -338,7 +338,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
     """
-    if isinstance(base_value, types.StringType):
+    if isinstance(base_value, types.StringTypes):
         try:
             if base_value not in ignore_list and (
                     not os.path.isdir(base_value) or

@@ -171,3 +171,6 @@ class TaskGraphTests(unittest.TestCase):
         # should get four results if we track directories because of two files
         # and two directories
         self.assertEqual(len(dir_result), 4)
+
+        result = list(_get_file_stats(u'foo', [], False))
+        self.assertEqual(result, [])
