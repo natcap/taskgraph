@@ -1,4 +1,5 @@
-__version__ = '0.1.1'
+"""taskgraph module."""
+from taskgraph.Task import TaskGraph
+from taskgraph.Task import Task
 
-from Task import TaskGraph
-from Task import Task
+__version__ = '0.1.2'
