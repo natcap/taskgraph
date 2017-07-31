@@ -172,5 +172,5 @@ class TaskGraphTests(unittest.TestCase):
         # and two directories
         self.assertEqual(len(dir_result), 4)
 
-        result = list(_get_file_stats(None, None, False))
+        result = list(_get_file_stats(u'foo', [], False))
         self.assertEqual(result, [])
