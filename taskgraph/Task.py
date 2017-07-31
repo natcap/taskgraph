@@ -20,6 +20,7 @@ try:
 except pkg_resources.DistributionNotFound:
     HAS_PSUTIL = False
 else:
+    import psutil
     HAS_PSUTIL = True
 
 LOGGER = logging.getLogger('Task')
