@@ -51,7 +51,7 @@ class TaskGraphTests(unittest.TestCase):
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
-            target=_create_list_on_disk,
+            func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])
         task_graph.join()
@@ -69,15 +69,15 @@ class TaskGraphTests(unittest.TestCase):
         value_b = 10
         list_len = 10
         task_a = task_graph.add_task(
-            target=_create_list_on_disk,
+            func=_create_list_on_disk,
             args=(value_a, list_len, target_a_path),
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
-            target=_create_list_on_disk,
+            func=_create_list_on_disk,
             args=(value_b, list_len, target_b_path),
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
-            target=_sum_lists_from_disk,
+            func=_sum_lists_from_disk,
             args=(target_a_path, target_b_path, result_path),
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
@@ -87,7 +87,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [value_a+value_b]*list_len)
 
         sum_2_task = task_graph.add_task(
-            target=_sum_lists_from_disk,
+            func=_sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task])
@@ -97,7 +97,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result2, expected_result)
 
         sum_3_task = task_graph.add_task(
-            target=_sum_lists_from_disk,
+            func=_sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task])
@@ -109,7 +109,7 @@ class TaskGraphTests(unittest.TestCase):
     def test_broken_task(self):
         """Test that a task with an exception won't crash multiprocessing."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        _ = task_graph.add_task(target=_div_by_zero)
+        _ = task_graph.add_task(func=_div_by_zero)
         with self.assertRaises(RuntimeError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
@@ -134,7 +134,7 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         with self.assertRaises(ValueError):
             _ = task_graph.add_task(
-                target=_create_list_on_disk,
+                func=_create_list_on_disk,
                 args=(value, list_len, target_path),
                 target_path_list=[target_path])
 
@@ -145,7 +145,7 @@ class TaskGraphTests(unittest.TestCase):
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
-            target=_create_list_on_disk,
+            func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])
         task_graph.join()
