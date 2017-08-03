@@ -5,7 +5,7 @@ README = open('README.rst').read()
 
 setup(
     name='taskgraph',
-    version='0.1.2',
+    version='0.2.0',
     description='Parallel task graph framework.',
     long_description=README,
     maintainer='Rich Sharp',
