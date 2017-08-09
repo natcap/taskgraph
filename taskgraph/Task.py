@@ -235,8 +235,8 @@ class Task(object):
                 Task.func_source_map[self.func] = (
                     inspect.getsource(self.func))
             source_code = Task.func_source_map[self.func]
-        except IOError:
-            # we might be in a frozen binary, so just leave blank
+        except (IOError, TypeError):
+            # many reasons for this, so just leave blank
             source_code = ''
 
         file_stat_list = list(_get_file_stats(
