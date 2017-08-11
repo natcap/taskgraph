@@ -5,6 +5,11 @@
 Unreleased Changes
 ------------------
 
+0.2.1 (2017-08-11)
+------------------
+* Handling cases where a function might be an object or something else that can't import source code.
+* Using natcap.versioner for versioning.
+
 0.2.0 (2017-07-31)
 ------------------
 * Fixing an issue where `types.StringType` is not the same as `types.StringTypes`.
