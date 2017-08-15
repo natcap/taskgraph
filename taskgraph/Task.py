@@ -302,15 +302,26 @@ class Task(object):
                 self.func(*self.args, **self.kwargs)
             LOGGER.debug("Complete process for %s", token_id)
             with open(self.token_path, 'w') as token_file:
-                token_file.write(str(datetime.datetime.now()))
+                # write out json string as target paths, file modified, file size
+                file_stat_list = list(
+                    _get_file_stats([self.target_path_list], [], False))
+                token_file.write(json.dumps(file_stat_list))
         finally:
             self.lock.release()
 
     def is_complete(self):
-        """Return true if complete token and expected files exist."""
-        return all([
-            os.path.exists(path)
-            for path in [self.token_path] + self.target_path_list])
+        """Return true if target files are the same as recorded in token."""
+        try:
+            with open(self.token_path, 'r') as token_file:
+                for path, modified_time, size in json.loads(token_file.read()):
+                    if not (os.path.exists(path) and
+                            modified_time == os.path.getmtime(path) and
+                            size == os.path.getsize(path)):
+                        return False
+            return True
+        except (IOError, ValueError):
+            # file might not exist or be a JSON object, not complete then.
+            return False
 
     def join(self):
         """Block until task is complete, raise exception if not complete."""
@@ -334,7 +345,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             considered for filestats.
 
     Return:
-        list of (timestamp, filesize) tuples for any filepaths found in
+        list of (path, timestamp, filesize) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
     """
@@ -343,9 +354,8 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             if base_value not in ignore_list and (
                     not os.path.isdir(base_value) or
                     not ignore_directories):
-                yield (
-                    os.path.getmtime(base_value), os.path.getsize(
-                        base_value), base_value)
+                yield (base_value, os.path.getmtime(base_value),
+                       os.path.getsize(base_value))
         except OSError:
             pass
     elif isinstance(base_value, collections.Mapping):
