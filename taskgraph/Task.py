@@ -319,7 +319,7 @@ class Task(object):
                             size == os.path.getsize(path)):
                         return False
             return True
-        except (IOError, ValueError):
+        except (IOError, ValueError, TypeError):
             # file might not exist or be a JSON object, not complete then.
             return False
 

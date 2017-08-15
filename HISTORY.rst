@@ -4,6 +4,8 @@
 
 Unreleased Changes
 ------------------
+* More robust testing on a chain of tasks that might fail because an ancestor failed.
+
 
 0.2.2 (2017-08-15)
 ------------------
