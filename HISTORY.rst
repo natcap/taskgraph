@@ -5,6 +5,10 @@
 Unreleased Changes
 ------------------
 
+0.2.2 (2017-08-15)
+------------------
+* Changed how TaskGraph determines of work is complete.  Now records target paths in file token with modified time and file size.  When checking if work is complete, the token is loaded and the target file stats are compared for each file.
+
 0.2.1 (2017-08-11)
 ------------------
 * Handling cases where a function might be an object or something else that can't import source code.
