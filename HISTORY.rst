@@ -1,9 +1,8 @@
 .. :changelog:
 
-.. Unreleased Changes
-
-Unreleased Changes
+0.2.3 (2017-09-18)
 ------------------
+* More robust testing on a chain of tasks that might fail because an ancestor failed.
 
 0.2.2 (2017-08-15)
 ------------------

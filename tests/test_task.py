@@ -10,6 +10,7 @@ import logging
 
 logging.basicConfig(level=logging.DEBUG)
 
+
 def _create_list_on_disk(value, length, target_path):
     """Create a numpy array on disk filled with value of `size`."""
     target_list = [value] * length
@@ -45,7 +46,7 @@ class TaskGraphTests(unittest.TestCase):
         shutil.rmtree(self.workspace_dir)
 
     def test_single_task(self):
-        """Test a single task."""
+        """TaskGraph: Test a single task."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
@@ -59,7 +60,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [value]*list_len)
 
     def test_task_chain(self):
-        """Test a task chain."""
+        """TaskGraph: Test a task chain."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_a_path = os.path.join(self.workspace_dir, 'a.dat')
         target_b_path = os.path.join(self.workspace_dir, 'b.dat')
@@ -107,7 +108,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
 
     def test_broken_task(self):
-        """Test that a task with an exception won't crash multiprocessing."""
+        """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
         _ = task_graph.add_task(func=_div_by_zero)
         with self.assertRaises(RuntimeError):
@@ -116,8 +117,27 @@ class TaskGraphTests(unittest.TestCase):
         # we should have a file in there that's the token
         self.assertEqual(len(file_results), 0)
 
+    def test_broken_task_chain(self):
+        """TaskGraph: test dependent tasks fail on ancestor fail."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        base_task = task_graph.add_task(func=_div_by_zero)
+
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        dependent_task = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path],
+            dependent_task_list=[base_task])
+        with self.assertRaises(RuntimeError):
+            task_graph.join()
+        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
+        # we shouldn't have any files in there
+        self.assertEqual(len(file_results), 0)
+
     def test_empty_task(self):
-        """Test a single task."""
+        """TaskGraph: Test an empty task."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task()
         task_graph.join()
@@ -126,7 +146,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(len(file_results), 1)
 
     def test_closed_graph(self):
-        """Test a single task."""
+        """TaskGraph: Test adding to an closed task graph fails."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         task_graph.close()
         target_path = os.path.join(self.workspace_dir, '1000.dat')
@@ -139,7 +159,7 @@ class TaskGraphTests(unittest.TestCase):
                 target_path_list=[target_path])
 
     def test_single_task_multiprocessing(self):
-        """Test a single task with multiprocessing."""
+        """TaskGraph: Test a single task with multiprocessing."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
@@ -153,7 +173,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [value]*list_len)
 
     def test_get_file_stats(self):
-        """Test _get_file_stats subroutine."""
+        """TaskGraph: Test _get_file_stats subroutine."""
         from taskgraph.Task import _get_file_stats
         test_dir = os.path.join(self.workspace_dir, 'test_dir')
         test_file = os.path.join(test_dir, 'test_file.txt')

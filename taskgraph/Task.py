@@ -285,22 +285,18 @@ class Task(object):
 
             token_id = self._calculate_token()
             self.token_path = os.path.join(self.token_storage_path, token_id)
-            LOGGER.debug("Starting task %s", token_id)
-
             if self.is_complete():
                 LOGGER.debug(
                     "Completion token exists for %s so not executing",
                     self.task_id)
                 return
 
-            LOGGER.debug("Starting process for %s", token_id)
             if global_worker_pool is not None:
                 result = global_worker_pool.apply_async(
                     func=self.func, args=self.args, kwds=self.kwargs)
                 result.get()
             else:
                 self.func(*self.args, **self.kwargs)
-            LOGGER.debug("Complete process for %s", token_id)
             with open(self.token_path, 'w') as token_file:
                 # write out json string as target paths, file modified, file size
                 file_stat_list = list(
@@ -319,7 +315,7 @@ class Task(object):
                             size == os.path.getsize(path)):
                         return False
             return True
-        except (IOError, ValueError):
+        except (IOError, ValueError, TypeError):
             # file might not exist or be a JSON object, not complete then.
             return False
 
