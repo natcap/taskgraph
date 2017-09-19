@@ -1,5 +1,9 @@
 .. :changelog:
 
+0.2.4 (2017-09-19)
+------------------
+* Empty release.  Possible bug with PyPI release, so re-releasing with a bumped up version.
+
 0.2.3 (2017-09-18)
 ------------------
 * More robust testing on a chain of tasks that might fail because an ancestor failed.
