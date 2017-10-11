@@ -149,12 +149,19 @@ class TaskGraph(object):
                 self.token_storage_path)
             self.global_working_task_set.add(task)
         if self.n_workers > 0:
-            self.work_queue.put(
-                (task,
-                 (self.global_lock,
-                  self.global_working_task_set,
-                  self.worker_pool),
-                 {}))
+            def add_self():
+                """Add task to work queue once dependent tasks are done."""
+                LOGGER.debug('attempting to add task %s' % task_id)
+                for dependent_task in dependent_task_list:
+                    dependent_task.join()
+                self.work_queue.put(
+                    (task,
+                     (self.global_lock,
+                      self.global_working_task_set,
+                      self.worker_pool),
+                     {}))
+                LOGGER.debug('added task %s' % task_id)
+            threading.Thread(target=add_self).start()
         else:
             task(
                 self.global_lock, self.global_working_task_set,

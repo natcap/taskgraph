@@ -1,5 +1,10 @@
 .. :changelog:
 
+0.2.5 (2017-10-11)
+------------------
+* Fixed a bug where tasks with satisfied dependencies or no dependencies were blocked on dependent tasks added to the task graph earlier in the main thread execution.
+* Indicating that `psutil` is an optional dependency through the `setup` function.
+
 0.2.4 (2017-09-19)
 ------------------
 * Empty release.  Possible bug with PyPI release, so re-releasing with a bumped up version.
