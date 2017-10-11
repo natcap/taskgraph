@@ -14,6 +14,9 @@ setup(
     packages=['taskgraph'],
     license='BSD',
     keywords='parallel multiprocessing distributed computing',
+    extras_require={
+        'niced_processes': ['psutil'],
+        },
     classifiers=[
         'Intended Audience :: Developers',
         'Development Status :: 5 - Production/Stable',

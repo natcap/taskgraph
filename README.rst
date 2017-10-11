@@ -9,8 +9,8 @@ TaskGraph is great.
 TaskGraph Dependencies
 ======================
 
-Task Graph is written in pure Python, but if the `psutils` package is
-installed the distributed multiprocessing processeses will be `nice`\d.
+Task Graph is written in pure Python, but if the ``psutils`` package is
+installed the distributed multiprocessing processes will be ``nice``\d.
 
 Example Use
 ===========
