@@ -49,14 +49,18 @@ class TaskGraph(object):
             if exception.errno != errno.EEXIST:
                 raise
         self.token_storage_path = token_storage_path
+
+        # the work queue is the feeder to active worker threads
         self.work_queue = Queue.Queue()
         self.n_workers = n_workers
+
         # used to synchronize a pass through potential tasks to add to the
         # work queue
         self.process_pending_tasks_condition = threading.Condition(
             threading.Lock())
+
         # tasks that haven't been evaluated for dependencies go in here
-        # making it a set so adds and removes are relatively fast
+        # to start making it a set so adds and removes are relatively fast
         self.pending_task_set = set()
 
         if n_workers > 0:
@@ -71,7 +75,13 @@ class TaskGraph(object):
 
         # use this to keep track of all the tasks added to the graph
         self.task_set = set()
+
+        # used to remember if task_graph has been closed
         self.closed = False
+
+        # used to synchronize on a terminate command
+        self.terminating_event = threading.Event()
+        self.terminating_event.set()
 
         # launch threads to manage the workers
         for thread_id in xrange(n_workers):
@@ -96,6 +106,7 @@ class TaskGraph(object):
         """Worker taking (func, args, kwargs) tuple from `work_queue`."""
         for func, args, kwargs in iter(work_queue.get, 'STOP'):
             LOGGER.debug("Worker start")
+            self.terminating_event.wait()
             try:
                 func(*args, **kwargs)
             except Exception as subprocess_exception:
@@ -108,7 +119,14 @@ class TaskGraph(object):
 
     def _terminate(self):
         """Used to terminate remaining task graph computation on an error."""
-        pass
+        self.terminating_event.clear()
+        # clear the working queue
+        while not self.work_queue.empty():
+            _ = self.work_queue.get()
+        # clear the pending task set
+        self.pending_task_set.clear()
+        self.close()
+        self.terminating_event.set()
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
@@ -155,6 +173,7 @@ class TaskGraph(object):
         Returns:
             Task which was just added to the graph.
         """
+        self.terminating_event.wait()
         try:
             if self.closed:
                 raise ValueError(
@@ -200,6 +219,7 @@ class TaskGraph(object):
             self.process_pending_tasks_condition.acquire()
             while True:
                 self.process_pending_tasks_condition.wait()
+                self.terminating_event.wait()
                 queued_task_set = set()
                 LOGGER.debug(
                     "process pending task set %s", self.pending_task_set)
@@ -227,6 +247,7 @@ class TaskGraph(object):
     def join(self):
         """Join all threads in the graph."""
         LOGGER.debug("Joining taskgraph")
+        self.terminating_event.wait()
         try:
             for task in self.task_set:
                 LOGGER.debug("taskgraph join task set %s", self.task_set)
