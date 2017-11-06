@@ -51,10 +51,16 @@ class TaskGraph(object):
         self.token_storage_path = token_storage_path
         self.work_queue = Queue.Queue()
         self.n_workers = n_workers
+        self.process_pending_tasks_condition = threading.Condition()
+        self.pending_task_set = set()
         for thread_id in xrange(n_workers):
             threading.Thread(
                 target=TaskGraph.worker, args=(self.work_queue,),
                 name=thread_id).start()
+
+        threading.Thread(
+            target=self.process_pending_tasks,
+            name='process_pending_tasks').start()
 
         if n_workers > 0:
             self.worker_pool = multiprocessing.Pool(n_workers)
@@ -66,11 +72,8 @@ class TaskGraph(object):
         else:
             self.worker_pool = None
 
-        # used to lock global resources
-        self.global_lock = threading.Lock()
-
         # if a Task is in here, it's been previously created
-        self.global_working_task_set = set()
+        self.task_set = set()
 
         self.closed = False
 
@@ -81,12 +84,15 @@ class TaskGraph(object):
     @staticmethod
     def worker(work_queue):
         """Worker taking (func, args, kwargs) tuple from `work_queue`."""
+        LOGGER.debug("Starting this worker")
         for func, args, kwargs in iter(work_queue.get, 'STOP'):
             try:
+                LOGGER.debug('in worker: %s', func)
                 func(*args, **kwargs)
             except Exception as subprocess_exception:
                 LOGGER.error(traceback.format_exc())
                 LOGGER.error(subprocess_exception)
+        LOGGER.debug("Quitting this worker")
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
@@ -94,12 +100,15 @@ class TaskGraph(object):
         for _ in xrange(self.n_workers):
             self.work_queue.put('STOP')
 
+        self.process_pending_tasks_condition.acquire()
+        self.pending_task_set.add('STOP')
+        self.process_pending_tasks_condition.notify()
+        self.process_pending_tasks_condition.release()
+
     def add_task(
-            self, func=None, args=None, kwargs=None,
-            target_path_list=None,
-            ignore_path_list=None,
-            dependent_task_list=None,
-            ignore_directories=True):
+            self, func=None, args=None, kwargs=None, task_name=None,
+            target_path_list=None, ignore_path_list=None,
+            dependent_task_list=None, ignore_directories=True):
         """Add a task to the task graph.
 
         See the docstring for Task.__call__ to determine how it determines
@@ -114,6 +123,8 @@ class TaskGraph(object):
                 don't exist, or their timestamp is earlier than an input
                 arg or work token, func will be executed.  If None, not
                 considered when scheduling task.
+            task_name (string): if not None, this value is used to identify
+                the task in logging messages.
             ignore_path_list (list): list of file paths that could be in
                 args/kwargs that should be ignored when considering timestamp
                 hashes.
@@ -133,6 +144,8 @@ class TaskGraph(object):
             args = []
         if kwargs is None:
             kwargs = {}
+        if task_name is None:
+            task_name = 'unnamed_task'
         if dependent_task_list is None:
             dependent_task_list = []
         if target_path_list is None:
@@ -141,30 +154,54 @@ class TaskGraph(object):
             ignore_path_list = []
         if func is None:
             func = lambda: None
-        with self.global_lock:
-            task_id = len(self.global_working_task_set)
-            task = Task(
-                task_id, func, args, kwargs, target_path_list,
-                ignore_path_list, dependent_task_list, ignore_directories,
-                self.token_storage_path)
-            self.global_working_task_set.add(task)
+
+        task_id = '%s_%d' % (task_name, len(self.task_set))
+        task = Task(
+            task_id, func, args, kwargs, target_path_list,
+            ignore_path_list, dependent_task_list, ignore_directories,
+            self.token_storage_path)
+        self.task_set.add(task)
+
         if self.n_workers > 0:
-            self.work_queue.put(
-                (task,
-                 (self.global_lock,
-                  self.global_working_task_set,
-                  self.worker_pool),
-                 {}))
+            self.process_pending_tasks_condition.acquire()
+            self.pending_task_set.add(task)
+            self.process_pending_tasks_condition.notify()
+            self.process_pending_tasks_condition.release()
         else:
-            task(
-                self.global_lock, self.global_working_task_set,
-                self.worker_pool)
+            task(self.worker_pool)
         return task
+
+    def process_pending_tasks(self):
+        """Search pending task list for free tasks to work queue."""
+        while True:
+            self.process_pending_tasks_condition.acquire()
+            for task in self.pending_task_set:
+                if task == 'STOP':
+                    self.process_pending_tasks_condition.release()
+                    return
+                try:
+                    if all([task.is_complete()
+                            for task in task.dependent_task_list]):
+                        self.work_queue.put((task, (self.worker_pool,), {}))
+                except RuntimeError:
+                    # a dependent task failed, stop execution and raise
+                    # exception
+                    self.close()
+                    self.process_pending_tasks_condition.release()
+                    raise
+            LOGGER.debug("in process_pending_tasks waiting")
+            self.process_pending_tasks_condition.wait()
+            LOGGER.debug("in process_pending_tasks woke up")
 
     def join(self):
         """Join all threads in the graph."""
-        for task in self.global_working_task_set:
-            task.join()
+        LOGGER.debug("Starting join")
+        try:
+            for task in self.task_set:
+                task.join()
+        except Exception:
+            self.close()
+        LOGGER.debug("All done with join")
 
 
 class Task(object):
@@ -252,8 +289,7 @@ class Task(object):
         return hashlib.sha1(task_string).hexdigest()
 
     def __call__(
-            self, global_lock, global_working_task_dict,
-            global_worker_pool):
+            self, global_worker_pool):
         """Invoke this method when ready to execute task.
 
         This function will execute `func` on `args`/`kwargs` under the
@@ -267,11 +303,6 @@ class Task(object):
 
 
         Parameters:
-            global_lock (threading.Lock): use this to lock global
-                the global resources to the task graph.
-            global_working_task_dict (dict): contains a dictionary of task_ids
-                to Tasks that are currently executing.  Global resource and
-                should acquire lock before modifying it.
             global_worker_pool (multiprocessing.Pool): a process pool used to
                 execute subprocesses.  If None, use current process.
 
@@ -303,31 +334,28 @@ class Task(object):
                     _get_file_stats([self.target_path_list], [], False))
                 token_file.write(json.dumps(file_stat_list))
         finally:
+            LOGGER.debug("In task releasing lock")
             self.lock.release()
 
     def is_complete(self):
         """Return true if target files are the same as recorded in token."""
-        try:
-            with open(self.token_path, 'r') as token_file:
-                for path, modified_time, size in json.loads(token_file.read()):
-                    if not (os.path.exists(path) and
-                            modified_time == os.path.getmtime(path) and
-                            size == os.path.getsize(path)):
-                        return False
-            return True
-        except (IOError, ValueError, TypeError):
-            # file might not exist or be a JSON object, not complete then.
+        if not self.lock.acquire(False):
+            # lock is still acquired, so it's not done yet.
             return False
+        with open(self.token_path, 'r') as token_file:
+            for path, modified_time, size in json.loads(token_file.read()):
+                if not (os.path.exists(path) and
+                        modified_time == os.path.getmtime(path) and
+                        size == os.path.getsize(path)):
+                    raise RuntimeError(
+                        "Task %s didn't complete correctly" % self.task_id)
+        return True
 
     def join(self):
-        """Block until task is complete, raise exception if not complete."""
+        """Block until task is complete, raise exception if runtime failed."""
         with self.lock:
             pass
-        if not self.is_complete():
-            raise RuntimeError(
-                "Task %s didn't complete, discontinuing "
-                "execution of %s" % (
-                    self.task_id, self.func.__name__))
+        return self.is_complete()
 
 
 def _get_file_stats(base_value, ignore_list, ignore_directories):
