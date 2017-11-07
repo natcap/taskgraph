@@ -221,7 +221,7 @@ class TaskGraph(object):
         try:
             self.process_pending_tasks_condition.acquire()
             while True:
-                self.process_pending_tasks_condition.wait()
+                self.process_pending_tasks_condition.wait(1.0)
                 queued_task_set = set()
                 for task in self.pending_task_set:
                     if task == 'STOP':
