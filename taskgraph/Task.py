@@ -2,8 +2,6 @@
 import pprint
 import types
 import collections
-import traceback
-import datetime
 import hashlib
 import json
 import pickle
@@ -14,6 +12,7 @@ import threading
 import errno
 import Queue
 import inspect
+
 import pkg_resources
 
 try:
@@ -274,7 +273,7 @@ class TaskGraph(object):
                 "Exception \"%s\" raised when joining task %s. It's possible "
                 "that this task did not cause the exception, rather another "
                 "exception terminated the task_graph. Check the log to see "
-                "if there are other exceptions." % (e, task))
+                "if there are other exceptions.", e, task)
             self._terminate()
             raise
 
@@ -424,7 +423,7 @@ class Task(object):
             else:
                 self.func(*self.args, **self.kwargs)
             with open(self.token_path, 'w') as token_file:
-                # write out json string as target paths, file modified, file size
+                # write json string as target paths, file modified, file size
                 file_stat_list = list(
                     _get_file_stats([self.target_path_list], [], False))
                 token_file.write(json.dumps(file_stat_list))
