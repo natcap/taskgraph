@@ -56,8 +56,10 @@ class TaskGraph(object):
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
-        self.process_pending_tasks_condition = threading.Condition(
-            threading.Lock())
+        self.process_pending_tasks_condition = threading.Condition()
+
+        # keep track if the task graph has been forcibly terminated
+        self.terminated = False
 
         # tasks that haven't been evaluated for dependencies go in here
         # to start making it a set so adds and removes are relatively fast
@@ -106,32 +108,40 @@ class TaskGraph(object):
     def worker(self, work_queue):
         """Worker taking (func, args, kwargs) tuple from `work_queue`."""
         for func, args, kwargs in iter(work_queue.get, 'STOP'):
-            LOGGER.debug("Worker start")
             try:
                 func(*args, **kwargs)
             except Exception as subprocess_exception:
-                LOGGER.debug("Worker error")
+                # An error occurred on a call, terminate the taskgraph
+                LOGGER.error("Worker error")
                 LOGGER.error(traceback.format_exc())
                 LOGGER.error(subprocess_exception)
                 self._terminate()
-                LOGGER.debug("Worker error return")
                 return
 
     def _terminate(self):
         """Used to terminate remaining task graph computation on an error."""
-        self.close()
+        if self.terminated:
+            return
+        with self.process_pending_tasks_condition:
+            self.pending_task_set.clear()
+            try:
+                while True:
+                    self.work_queue.get_nowait()
+            except Queue.Empty:
+                self.close()
+            for task in self.task_set:
+                task.terminate()
+            self.terminated = True
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
-        if not self.closed:
-            LOGGER.debug("closing taskgraph")
-            with self.process_pending_tasks_condition:
+        with self.process_pending_tasks_condition:
+            if not self.closed:
                 self.closed = True
                 for _ in xrange(self.n_workers):
                     self.work_queue.put('STOP')
                 self.pending_task_set.add('STOP')
                 self.process_pending_tasks_condition.notify()
-            LOGGER.debug("taskgraph closed")
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -166,6 +176,7 @@ class TaskGraph(object):
             Task which was just added to the graph.
         """
         try:
+            self.process_pending_tasks_condition.acquire()
             if self.closed:
                 raise ValueError(
                     "The task graph is closed and cannot accept more tasks.")
@@ -202,6 +213,8 @@ class TaskGraph(object):
             # something went wrong, shut down the taskgraph
             self.close()
             raise
+        finally:
+            self.process_pending_tasks_condition.release()
 
     def process_pending_tasks(self):
         """Search pending task list for free tasks to work queue."""
@@ -210,8 +223,6 @@ class TaskGraph(object):
             while True:
                 self.process_pending_tasks_condition.wait()
                 queued_task_set = set()
-                LOGGER.debug(
-                    "process pending task set %s", self.pending_task_set)
                 for task in self.pending_task_set:
                     if task == 'STOP':
                         return
@@ -227,22 +238,16 @@ class TaskGraph(object):
                         raise
                 self.pending_task_set = self.pending_task_set.difference(
                     queued_task_set)
-                LOGGER.debug(
-                    "process pending task set after call %s", self.pending_task_set)
         finally:
-            LOGGER.debug("process pending task quitting")
             self.process_pending_tasks_condition.release()
 
     def join(self):
         """Join all threads in the graph."""
-        LOGGER.debug("Joining taskgraph")
         try:
             for task in self.task_set:
-                LOGGER.debug("taskgraph join task set %s", self.task_set)
                 task.join()
-            LOGGER.debug("done Joining taskgraph")
-        except Exception:
-            self.close()
+        except Exception as e:
+            self._terminate()
             raise
 
 
@@ -293,6 +298,7 @@ class Task(object):
         self.token_path = None  # not set until dependencies are blocked
         self.task_id = task_id
         self.completion_condition = completion_condition
+        self.terminated = False
 
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete
@@ -355,6 +361,9 @@ class Task(object):
             None
         """
         try:
+            if self.terminated:
+                raise RuntimeError(
+                    "Task %s was called after termination.", self.task_id)
             if self.dependent_task_list:
                 for task in self.dependent_task_list:
                     task.join()
@@ -362,7 +371,7 @@ class Task(object):
             token_id = self._calculate_token()
             self.token_path = os.path.join(self.token_storage_path, token_id)
             if self.is_complete():
-                LOGGER.debug(
+                LOGGER.info(
                     "Completion token exists for %s so not executing",
                     self.task_id)
                 return
@@ -379,11 +388,9 @@ class Task(object):
                     _get_file_stats([self.target_path_list], [], False))
                 token_file.write(json.dumps(file_stat_list))
         finally:
-            LOGGER.debug("task is quitting %s", self.lock)
             self.lock.release()
             with self.completion_condition:
                 self.completion_condition.notify()
-            LOGGER.debug("task lock released %s", self.lock)
 
     def is_complete(self):
         """Return true if target files are the same as recorded in token."""
@@ -404,12 +411,15 @@ class Task(object):
 
     def join(self):
         """Block until task is complete, raise exception if runtime failed."""
-        LOGGER.debug("joining task")
-        LOGGER.debug("task lock %s", self.lock)
         with self.lock:
             pass
-        LOGGER.debug("task checking is_complete")
         return self.is_complete()
+
+    def terminate(self):
+        """Invoke to terminate the Task. join() will pass through."""
+        self.terminated = True
+        self.lock.acquire(False)
+        self.lock.release()
 
 
 def _get_file_stats(base_value, ignore_list, ignore_directories):
