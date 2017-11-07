@@ -221,6 +221,10 @@ class TaskGraph(object):
         try:
             self.process_pending_tasks_condition.acquire()
             while True:
+                # There is a race condition where the taskgraph could finish
+                # all adds and join before this function first acquires a
+                # lock. In that case there is nothing left to notify the
+                # thread.
                 self.process_pending_tasks_condition.wait(1.0)
                 queued_task_set = set()
                 for task in self.pending_task_set:
