@@ -1,4 +1,5 @@
 """Task graph framework."""
+import pprint
 import types
 import collections
 import traceback
@@ -117,9 +118,10 @@ class TaskGraph(object):
                 func(*args, **kwargs)
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
-                LOGGER.error("Worker error")
-                LOGGER.error(traceback.format_exc())
-                LOGGER.error(subprocess_exception)
+                LOGGER.error(
+                    "function %s(%s, %s) failed with exception %s. "
+                    "Terminating taskgraph.", func, args, kwargs,
+                    subprocess_exception)
                 self._terminate()
                 return
 
@@ -136,6 +138,8 @@ class TaskGraph(object):
                 self.close()
             for task in self.task_set:
                 task.terminate()
+            if self.n_workers > 0:
+                self.worker_pool.terminate()
             self.terminated = True
 
     def close(self):
@@ -261,6 +265,11 @@ class TaskGraph(object):
             for task in self.task_set:
                 task.join()
         except Exception as e:
+            LOGGER.error(
+                "Exception %s raised when joining task %s. It's possible "
+                "that this task did not cause the exception, rather another "
+                "exception terminated the task_graph. Check the log to see "
+                "if there are other exceptions." % (e, task))
             self._terminate()
             raise
 
@@ -324,6 +333,20 @@ class Task(object):
         except OSError as exception:
             if exception.errno != errno.EEXIST:
                 raise
+
+    def __str__(self):
+        return "Task object %s:\n" % (id(self)) + pprint.pformat(
+            {
+                "target_path_list": self.target_path_list,
+                "dependent_task_list": self.dependent_task_list,
+                "ignore_path_list": self.ignore_path_list,
+                "ignore_directories": self.ignore_directories,
+                "token_storage_path": self.token_storage_path,
+                "token_path": self.token_path,
+                "task_id": self.task_id,
+                "completion_condition": self.completion_condition,
+                "terminated": self.terminated,
+            })
 
     def _calculate_token(self):
         """Make a unique hash of the call. Standalone so it can be threaded."""
@@ -400,6 +423,9 @@ class Task(object):
                 file_stat_list = list(
                     _get_file_stats([self.target_path_list], [], False))
                 token_file.write(json.dumps(file_stat_list))
+        except Exception:
+            self.terminate()
+            raise
         finally:
             self.task_complete_event.set()
             with self.completion_condition:
