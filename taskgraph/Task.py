@@ -227,8 +227,8 @@ class TaskGraph(object):
                     if task == 'STOP':
                         return
                     try:
-                        if all([task.is_complete()
-                                for task in task.dependent_task_list]):
+                        if all([d_task.is_complete()
+                                for d_task in task.dependent_task_list]):
                             self.work_queue.put(
                                 (task, (self.worker_pool,), {}))
                             queued_task_set.add(task)
@@ -398,6 +398,7 @@ class Task(object):
         if not self.lock.acquire(False):
             # lock is still acquired, so it's not done yet.
             return False
+        self.lock.release()
         try:
             with open(self.token_path, 'r') as token_file:
                 for path, modified_time, size in json.loads(token_file.read()):
