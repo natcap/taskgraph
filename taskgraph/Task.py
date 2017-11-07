@@ -316,8 +316,7 @@ class Task(object):
 
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete
-        self.lock = threading.Lock()
-        self.lock.acquire()  # the only release is at the end of __call__
+        self.task_complete_event = threading.Event()
 
         # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
         try:
@@ -402,7 +401,7 @@ class Task(object):
                     _get_file_stats([self.target_path_list], [], False))
                 token_file.write(json.dumps(file_stat_list))
         finally:
-            self.lock.release()
+            self.task_complete_event.set()
             with self.completion_condition:
                 self.completion_condition.notify()
 
@@ -418,10 +417,9 @@ class Task(object):
             RuntimeError if the task thread is stopped but no completion
             token
         """
-        if not self.lock.acquire(False):
+        if not self.task_complete_event.isSet():
             # lock is still acquired, so it's not done yet.
             return False
-        self.lock.release()
         try:
             with open(self.token_path, 'r') as token_file:
                 for path, modified_time, size in json.loads(token_file.read()):
@@ -436,15 +434,13 @@ class Task(object):
 
     def join(self):
         """Block until task is complete, raise exception if runtime failed."""
-        with self.lock:
-            pass
+        self.task_complete_event.wait()
         return self.is_complete()
 
     def terminate(self):
-        """Invoke to terminate the Task. join() will pass through."""
+        """Invoke to terminate the Task."""
         self.terminated = True
-        self.lock.acquire(False)
-        self.lock.release()
+        self.task_complete_event.set()
 
 
 def _get_file_stats(base_value, ignore_list, ignore_directories):
