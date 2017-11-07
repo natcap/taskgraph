@@ -93,6 +93,8 @@ class TaskGraph(object):
             worker_thread.start()
             self.thread_set.add(worker_thread)
 
+        self.pending_process_task_ready = threading.Event()
+
         # launch thread to monitor the pending task set
         pending_task_thread = threading.Thread(
             target=self.process_pending_tasks,
@@ -100,6 +102,9 @@ class TaskGraph(object):
         pending_task_thread.daemon = True
         pending_task_thread.start()
         self.thread_set.add(pending_task_thread)
+
+        # wait for the process pending task to be set up
+        self.pending_process_task_ready.wait()
 
     def __del__(self):
         """Clean up task graph by injecting STOP sentinels."""
@@ -220,12 +225,16 @@ class TaskGraph(object):
         """Search pending task list for free tasks to work queue."""
         try:
             self.process_pending_tasks_condition.acquire()
+            # set the flag to alert the init thread this process is ready
+            # to be consistent on the process_pending_tasks_condition
+            # condition
+            self.pending_process_task_ready.set()
             while True:
                 # There is a race condition where the taskgraph could finish
                 # all adds and join before this function first acquires a
                 # lock. In that case there is nothing left to notify the
                 # thread.
-                self.process_pending_tasks_condition.wait(1.0)
+                self.process_pending_tasks_condition.wait()
                 queued_task_set = set()
                 for task in self.pending_task_set:
                     if task == 'STOP':
@@ -398,7 +407,17 @@ class Task(object):
                 self.completion_condition.notify()
 
     def is_complete(self):
-        """Return true if target files are the same as recorded in token."""
+        """Test to determine if Task is complete.
+
+        Returns:
+            False if task thread is still running.
+            True if task thread is stopped and the completion token was
+                created correctly.
+
+        Raises:
+            RuntimeError if the task thread is stopped but no completion
+            token
+        """
         if not self.lock.acquire(False):
             # lock is still acquired, so it's not done yet.
             return False
