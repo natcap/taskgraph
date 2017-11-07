@@ -125,13 +125,12 @@ class TaskGraph(object):
         """Prevent future tasks from being added to the work queue."""
         if not self.closed:
             LOGGER.debug("closing taskgraph")
-            self.process_pending_tasks_condition.acquire()
-            self.closed = True
-            for _ in xrange(self.n_workers):
-                self.work_queue.put('STOP')
-            self.pending_task_set.add('STOP')
-            self.process_pending_tasks_condition.notify()
-            self.process_pending_tasks_condition.release()
+            with self.process_pending_tasks_condition:
+                self.closed = True
+                for _ in xrange(self.n_workers):
+                    self.work_queue.put('STOP')
+                self.pending_task_set.add('STOP')
+                self.process_pending_tasks_condition.notify()
             LOGGER.debug("taskgraph closed")
 
     def add_task(
@@ -189,14 +188,13 @@ class TaskGraph(object):
             task = Task(
                 task_id, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.token_storage_path)
+                self.token_storage_path, self.process_pending_tasks_condition)
             self.task_set.add(task)
 
             if self.n_workers > 0:
-                self.process_pending_tasks_condition.acquire()
-                self.pending_task_set.add(task)
-                self.process_pending_tasks_condition.notify()
-                self.process_pending_tasks_condition.release()
+                with self.process_pending_tasks_condition:
+                    self.pending_task_set.add(task)
+                    self.process_pending_tasks_condition.notify()
             else:
                 task(self.worker_pool)
             return task
@@ -254,7 +252,7 @@ class Task(object):
     def __init__(
             self, task_id, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            token_storage_path):
+            token_storage_path, completion_condition):
         """Make a Task.
 
         Parameters:
@@ -280,6 +278,8 @@ class Task(object):
                 of the work token hash.
             token_storage_path (string): path to a directory that exists
                 where task can store a file to indicate completion of task.
+            completion_condition (threading.Condition): this condition should
+                be .notified() when the task successfully completes.
         """
         self.func = func
         self.args = args
@@ -292,6 +292,7 @@ class Task(object):
         self.token_storage_path = token_storage_path
         self.token_path = None  # not set until dependencies are blocked
         self.task_id = task_id
+        self.completion_condition = completion_condition
 
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete
@@ -380,6 +381,8 @@ class Task(object):
         finally:
             LOGGER.debug("task is quitting %s", self.lock)
             self.lock.release()
+            with self.completion_condition:
+                self.completion_condition.notify()
             LOGGER.debug("task lock released %s", self.lock)
 
     def is_complete(self):
