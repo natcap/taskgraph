@@ -119,7 +119,8 @@ class TaskGraph(object):
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.error(
-                    "function %s(%s, %s) failed with exception %s. "
+                    "A taskgraph worker failed on function \"%s(%s, %s)\" "
+                    "with exception \"%s\". "
                     "Terminating taskgraph.", func, args, kwargs,
                     subprocess_exception)
                 self._terminate()
@@ -144,13 +145,14 @@ class TaskGraph(object):
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
+        if self.closed:
+            return
         with self.process_pending_tasks_condition:
-            if not self.closed:
-                self.closed = True
-                for _ in xrange(self.n_workers):
-                    self.work_queue.put('STOP')
-                self.pending_task_set.add('STOP')
-                self.process_pending_tasks_condition.notify()
+            self.closed = True
+            for _ in xrange(self.n_workers):
+                self.work_queue.put('STOP')
+            self.pending_task_set.add('STOP')
+            self.process_pending_tasks_condition.notify()
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -265,8 +267,11 @@ class TaskGraph(object):
             for task in self.task_set:
                 task.join()
         except Exception as e:
+            # If there's an exception on a join it means that a task failed
+            # to execute correctly. Print a helpful message then terminate the
+            # taskgraph object.
             LOGGER.error(
-                "Exception %s raised when joining task %s. It's possible "
+                "Exception \"%s\" raised when joining task %s. It's possible "
                 "that this task did not cause the exception, rather another "
                 "exception terminated the task_graph. Check the log to see "
                 "if there are other exceptions." % (e, task))
