@@ -1,5 +1,14 @@
 .. :changelog:
 
+0.2.6 (2017-11-07)
+------------------
+* Fixed an issue from the previous hotfix that could exceed the number of available threads.
+* Additional error checking and flow control ensures that a TaskGraph will catastrophically fail and report useful exception logging a task fails during runtime.
+* Fixed a deadlock issue where a failure on a subtask would occasionally cause a TaskGraph to hang.
+* `Task.is_complete` raises a RuntimeError if the task is complete but failed.
+* More efficient handling of topological progression of task execution to attempt to maximize total possible CPU load.
+* Fixing an issue from the last release that caused the test cases to fail. (Don't use 0.2.5 at all).
+
 0.2.5 (2017-10-11)
 ------------------
 * Fixed a bug where tasks with satisfied dependencies or no dependencies were blocked on dependent tasks added to the task graph earlier in the main thread execution.
