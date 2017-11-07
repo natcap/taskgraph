@@ -229,7 +229,8 @@ class TaskGraph(object):
                     try:
                         if all([task.is_complete()
                                 for task in task.dependent_task_list]):
-                            self.work_queue.put((task, (self.worker_pool,), {}))
+                            self.work_queue.put(
+                                (task, (self.worker_pool,), {}))
                             queued_task_set.add(task)
                     except Exception:
                         # a dependent task failed, stop execution and raise
