@@ -108,7 +108,7 @@ class TaskGraph(object):
 
     def __del__(self):
         """Clean up task graph by injecting STOP sentinels."""
-        self.close()
+        self._terminate()
 
     def worker(self, work_queue):
         """Worker taking (func, args, kwargs) tuple from `work_queue`."""
@@ -126,7 +126,7 @@ class TaskGraph(object):
                 return
 
     def _terminate(self):
-        """Used to terminate remaining task graph computation on an error."""
+        """Forcefully terminate remaining task graph computation."""
         if self.terminated:
             return
         with self.process_pending_tasks_condition:
