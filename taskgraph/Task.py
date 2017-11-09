@@ -405,7 +405,7 @@ class Task(object):
 
             token_id = self._calculate_token()
             self.token_path = os.path.join(self.token_storage_path, token_id)
-            if self.is_complete():
+            if self._valid_token():
                 LOGGER.info(
                     "Completion token exists for %s so not executing",
                     self.task_id)
@@ -430,6 +430,26 @@ class Task(object):
             with self.completion_condition:
                 self.completion_condition.notify()
 
+    def _valid_token(self):
+        """Determine if `self.token_path` represents a valid token.
+
+        Returns:
+            True if files referenced in json file at `self.token_path` exist,
+            modified times are equal to the modified times recorded in the
+            token recrod, and the size is the same as in the recorded record.
+
+        """
+        try:
+            with open(self.token_path, 'r') as token_file:
+                for path, modified_time, size in json.loads(token_file.read()):
+                    if not (os.path.exists(path) and
+                            modified_time == os.path.getmtime(path) and
+                            size == os.path.getsize(path)):
+                        return False
+        except Exception:
+            return False
+        return True
+
     def is_complete(self):
         """Test to determine if Task is complete.
 
@@ -445,17 +465,9 @@ class Task(object):
         if not self.task_complete_event.isSet():
             # lock is still acquired, so it's not done yet.
             return False
-        try:
-            with open(self.token_path, 'r') as token_file:
-                for path, modified_time, size in json.loads(token_file.read()):
-                    if not (os.path.exists(path) and
-                            modified_time == os.path.getmtime(path) and
-                            size == os.path.getsize(path)):
-                        raise RuntimeError()
-        except Exception:
-            raise RuntimeError(
-                "Task %s didn't complete correctly" % self.task_id)
-        return True
+        if self._valid_token():
+            return True
+        raise RuntimeError("Task %s didn't complete correctly" % self.task_id)
 
     def join(self):
         """Block until task is complete, raise exception if runtime failed."""
