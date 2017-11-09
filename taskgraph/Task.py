@@ -213,9 +213,8 @@ class TaskGraph(object):
             self.task_set.add(task)
 
             if self.n_workers > 0:
-                with self.process_pending_tasks_condition:
-                    self.pending_task_set.add(task)
-                    self.process_pending_tasks_condition.notify()
+                self.pending_task_set.add(task)
+                self.process_pending_tasks_condition.notify()
             else:
                 task(self.worker_pool)
             return task
