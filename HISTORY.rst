@@ -2,7 +2,7 @@
 
 0.2.7 (2017-11-09)
 ------------------
-* Fixed a critical error from the last hotfix thta prevented `taskgraph` from avoiding recomputation of already completed tasks.
+* Fixed a critical error from the last hotfix that prevented `taskgraph` from avoiding recomputation of already completed tasks.
 
 0.2.6 (2017-11-07)
 ------------------
