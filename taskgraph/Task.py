@@ -436,8 +436,7 @@ class Task(object):
         Returns:
             True if files referenced in json file at `self.token_path` exist,
             modified times are equal to the modified times recorded in the
-            token recrod, and the size is the same as in the recorded record.
-
+            token record, and the size is the same as in the recorded record.
         """
         try:
             with open(self.token_path, 'r') as token_file:
