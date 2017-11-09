@@ -467,6 +467,8 @@ class Task(object):
             return False
         if self._valid_token():
             return True
+
+        # If the thread is done and the token is not valid, there was an error
         raise RuntimeError("Task %s didn't complete correctly" % self.task_id)
 
     def join(self):

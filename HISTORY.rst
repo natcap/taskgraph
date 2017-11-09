@@ -1,5 +1,9 @@
 .. :changelog:
 
+0.2.7 (2017-11-09)
+------------------
+* Fixed a critical error from the last hotfix thta prevented `taskgraph` from avoiding recomputation of already completed tasks.
+
 0.2.6 (2017-11-07)
 ------------------
 * Fixed an issue from the previous hotfix that could cause `taskgraph` to exceed the number of available threads if enough tasks were added with long running dependencies.
