@@ -13,15 +13,11 @@ import errno
 import Queue
 import inspect
 
-import pkg_resources
-
 try:
-    pkg_resources.get_distribution('psutil')
-except pkg_resources.DistributionNotFound:
-    HAS_PSUTIL = False
-else:
     import psutil
     HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 LOGGER = logging.getLogger('Task')
 
