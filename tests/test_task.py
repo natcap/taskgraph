@@ -110,7 +110,8 @@ class TaskGraphTests(unittest.TestCase):
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        _ = task_graph.add_task(func=_div_by_zero)
+        _ = task_graph.add_task(
+            func=_div_by_zero, task_name='test_broken_task')
         with self.assertRaises(RuntimeError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
@@ -120,7 +121,8 @@ class TaskGraphTests(unittest.TestCase):
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        base_task = task_graph.add_task(func=_div_by_zero)
+        base_task = task_graph.add_task(
+            func=_div_by_zero, task_name='test_broken_task_chain')
 
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5

@@ -64,7 +64,13 @@ class TaskGraph(object):
                 parent = psutil.Process()
                 parent.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
                 for child in parent.children():
-                    child.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                    try:
+                        child.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                    except psutil.NoSuchProcess:
+                        LOGGER.warn(
+                            "NoSuchProcess exception encountered when trying "
+                            "to nice %s. This might be a bug in `psutil` so "
+                            "it should be okay to ignore.")
         else:
             self.worker_pool = None
 
@@ -96,11 +102,6 @@ class TaskGraph(object):
         pending_task_thread.daemon = True
         pending_task_thread.start()
         self.thread_set.add(pending_task_thread)
-
-    def __del__(self):
-        """Stop any processes that might exist."""
-        if not self.worker_pool:
-            self.worker_pool.terminate()
 
     def worker(self, work_queue):
         """Worker taking (func, args, kwargs) tuple from `work_queue`."""
@@ -240,11 +241,10 @@ class TaskGraph(object):
                         self.work_queue.put(
                             (task, (self.worker_pool,), {}))
                         queued_task_set.add(task)
-                except Exception:
-                    # a dependent task failed, stop execution and raise
-                    # exception
+                except Exception as e:
+                    LOGGER.error("Dependent task failed. Exception: %s", e)
                     self._terminate()
-                    raise
+                    return
 
             pending_task_set = pending_task_set.difference(
                 queued_task_set)
@@ -466,6 +466,7 @@ class Task(object):
             return True
 
         # If the thread is done and the token is not valid, there was an error
+        #traceback.print_stack()
         raise RuntimeError("Task %s didn't complete correctly" % self.task_id)
 
     def join(self):
