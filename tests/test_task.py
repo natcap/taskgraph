@@ -164,7 +164,7 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
-        _ = task_graph.add_task(
+        t = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])

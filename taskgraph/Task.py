@@ -12,6 +12,7 @@ import threading
 import errno
 import Queue
 import inspect
+import traceback
 
 try:
     import psutil
@@ -52,14 +53,10 @@ class TaskGraph(object):
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
-        self.process_pending_tasks_condition = threading.Condition()
+        self.process_pending_tasks_event = threading.Event()
 
         # keep track if the task graph has been forcibly terminated
         self.terminated = False
-
-        # tasks that haven't been evaluated for dependencies go in here
-        # to start making it a set so adds and removes are relatively fast
-        self.pending_task_set = set()
 
         if n_workers > 0:
             self.worker_pool = multiprocessing.Pool(n_workers)
@@ -84,13 +81,14 @@ class TaskGraph(object):
         for thread_id in xrange(n_workers):
             worker_thread = threading.Thread(
                 target=self.worker, args=(self.work_queue,),
-                name=thread_id)
+                name='worker_thread_%d' % thread_id)
             worker_thread.daemon = True
             worker_thread.start()
             self.thread_set.add(worker_thread)
 
-        self.pending_process_task_ready = threading.Event()
-
+        # tasks that haven't been evaluated for dependencies go in here
+        # to be processed by the process_pending_tasks thread
+        self.pending_task_queue = Queue.Queue()
         # launch thread to monitor the pending task set
         pending_task_thread = threading.Thread(
             target=self.process_pending_tasks,
@@ -99,12 +97,10 @@ class TaskGraph(object):
         pending_task_thread.start()
         self.thread_set.add(pending_task_thread)
 
-        # wait for the process pending task to be set up
-        self.pending_process_task_ready.wait()
-
     def __del__(self):
-        """Clean up task graph by injecting STOP sentinels."""
-        self._terminate()
+        """Stop any processes that might exist."""
+        if not self.worker_pool:
+            self.worker_pool.terminate()
 
     def worker(self, work_queue):
         """Worker taking (func, args, kwargs) tuple from `work_queue`."""
@@ -125,29 +121,21 @@ class TaskGraph(object):
         """Forcefully terminate remaining task graph computation."""
         if self.terminated:
             return
-        with self.process_pending_tasks_condition:
-            self.pending_task_set.clear()
-            try:
-                while True:
-                    self.work_queue.get_nowait()
-            except Queue.Empty:
-                self.close()
-            for task in self.task_set:
-                task.terminate()
-            if self.n_workers > 0:
-                self.worker_pool.terminate()
-            self.terminated = True
+        self.close()
+        for task in self.task_set:
+            task.terminate()
+        if self.n_workers > 0:
+            self.worker_pool.terminate()
+        self.terminated = True
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
         if self.closed:
             return
-        with self.process_pending_tasks_condition:
-            self.closed = True
-            for _ in xrange(self.n_workers):
-                self.work_queue.put('STOP')
-            self.pending_task_set.add('STOP')
-            self.process_pending_tasks_condition.notify()
+        self.closed = True
+        for _ in xrange(self.n_workers):
+            self.work_queue.put('STOP')
+        self.pending_task_queue.put('STOP')
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -182,7 +170,6 @@ class TaskGraph(object):
             Task which was just added to the graph.
         """
         try:
-            self.process_pending_tasks_condition.acquire()
             if self.closed:
                 raise ValueError(
                     "The task graph is closed and cannot accept more tasks.")
@@ -205,55 +192,66 @@ class TaskGraph(object):
             task = Task(
                 task_id, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.token_storage_path, self.process_pending_tasks_condition)
+                self.token_storage_path, self.process_pending_tasks_event)
             self.task_set.add(task)
 
             if self.n_workers > 0:
-                self.pending_task_set.add(task)
-                self.process_pending_tasks_condition.notify()
+                self.pending_task_queue.put(task)
+                self.process_pending_tasks_event.set()
             else:
                 task(self.worker_pool)
             return task
         except Exception:
             # something went wrong, shut down the taskgraph
-            self.close()
+            self._terminate()
             raise
-        finally:
-            self.process_pending_tasks_condition.release()
 
     def process_pending_tasks(self):
-        """Search pending task list for free tasks to work queue."""
-        try:
-            self.process_pending_tasks_condition.acquire()
-            # set the flag to alert the init thread this process is ready
-            # to be consistent on the process_pending_tasks_condition
-            # condition
-            self.pending_process_task_ready.set()
-            while True:
-                # There is a race condition where the taskgraph could finish
-                # all adds and join before this function first acquires a
-                # lock. In that case there is nothing left to notify the
-                # thread.
-                self.process_pending_tasks_condition.wait()
-                queued_task_set = set()
-                for task in self.pending_task_set:
+        """Drain work queue and iterate through pending task set for tasks."""
+
+        # this will hold all the tasks whose dependencies have not been
+        # satisfied on a previous iteration, but may now be
+        pending_task_set = set()
+
+        # this will remember if we've encountered a STOP sentinel
+        stop_work = False
+        # this is the main processing loop
+        while True:
+            # this will remember the tasks that were queued to the work queue
+            # on this iteration
+            queued_task_set = set()
+            while not stop_work:
+                # drain the pending task queue into the pending task set
+                try:
+                    task = self.pending_task_queue.get(False)
                     if task == 'STOP':
-                        return
-                    try:
-                        if all([d_task.is_complete()
-                                for d_task in task.dependent_task_list]):
-                            self.work_queue.put(
-                                (task, (self.worker_pool,), {}))
-                            queued_task_set.add(task)
-                    except Exception:
-                        # a dependent task failed, stop execution and raise
-                        # exception
-                        self.close()
-                        raise
-                self.pending_task_set = self.pending_task_set.difference(
-                    queued_task_set)
-        finally:
-            self.process_pending_tasks_condition.release()
+                        stop_work = True
+                        break
+                    pending_task_set.add(task)
+                except Queue.Empty:
+                    break
+
+            # Process all pending tasks and put them on the work
+            # queue if their dependencies are satisfied
+            for task in pending_task_set:
+                try:
+                    if all([dep_task.is_complete()
+                            for dep_task in task.dependent_task_list]):
+                        self.work_queue.put(
+                            (task, (self.worker_pool,), {}))
+                        queued_task_set.add(task)
+                except Exception:
+                    # a dependent task failed, stop execution and raise
+                    # exception
+                    self._terminate()
+                    raise
+
+            pending_task_set = pending_task_set.difference(
+                queued_task_set)
+            if not pending_task_set and stop_work:
+                return
+            self.process_pending_tasks_event.wait()
+            self.process_pending_tasks_event.clear()
 
     def join(self):
         """Join all threads in the graph."""
@@ -279,7 +277,7 @@ class Task(object):
     def __init__(
             self, task_id, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            token_storage_path, completion_condition):
+            token_storage_path, completion_event):
         """Make a Task.
 
         Parameters:
@@ -305,8 +303,8 @@ class Task(object):
                 of the work token hash.
             token_storage_path (string): path to a directory that exists
                 where task can store a file to indicate completion of task.
-            completion_condition (threading.Condition): this condition should
-                be .notified() when the task successfully completes.
+            completion_event (threading.Event): this Event should
+                be .set() when the task successfully completes.
         """
         self.func = func
         self.args = args
@@ -319,7 +317,7 @@ class Task(object):
         self.token_storage_path = token_storage_path
         self.token_path = None  # not set until dependencies are blocked
         self.task_id = task_id
-        self.completion_condition = completion_condition
+        self.completion_event = completion_event
         self.terminated = False
 
         # Used to ensure only one attempt at executing and also a mechanism
@@ -343,7 +341,7 @@ class Task(object):
                 "token_storage_path": self.token_storage_path,
                 "token_path": self.token_path,
                 "task_id": self.task_id,
-                "completion_condition": self.completion_condition,
+                "completion_event": self.completion_event,
                 "terminated": self.terminated,
             })
 
@@ -409,6 +407,7 @@ class Task(object):
                 LOGGER.info(
                     "Completion token exists for %s so not executing",
                     self.task_id)
+                #traceback.print_stack()
                 return
 
             if global_worker_pool is not None:
@@ -427,8 +426,7 @@ class Task(object):
             raise
         finally:
             self.task_complete_event.set()
-            with self.completion_condition:
-                self.completion_condition.notify()
+            self.completion_event.set()
 
     def _valid_token(self):
         """Determine if `self.token_path` represents a valid token.
