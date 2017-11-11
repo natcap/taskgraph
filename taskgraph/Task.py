@@ -12,7 +12,6 @@ import threading
 import errno
 import Queue
 import inspect
-import traceback
 
 try:
     import psutil
@@ -319,6 +318,7 @@ class Task(object):
         self.task_id = task_id
         self.completion_event = completion_event
         self.terminated = False
+        self.exception_object = None
 
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete
@@ -332,7 +332,7 @@ class Task(object):
                 raise
 
     def __str__(self):
-        return "Task object %s:\n" % (id(self)) + pprint.pformat(
+        return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
             {
                 "target_path_list": self.target_path_list,
                 "dependent_task_list": self.dependent_task_list,
@@ -343,6 +343,7 @@ class Task(object):
                 "task_id": self.task_id,
                 "completion_event": self.completion_event,
                 "terminated": self.terminated,
+                "exception_object": self.exception_object,
             })
 
     def _calculate_token(self):
@@ -407,7 +408,6 @@ class Task(object):
                 LOGGER.info(
                     "Completion token exists for %s so not executing",
                     self.task_id)
-                #traceback.print_stack()
                 return
 
             if global_worker_pool is not None:
@@ -421,8 +421,8 @@ class Task(object):
                 file_stat_list = list(
                     _get_file_stats([self.target_path_list], [], False))
                 token_file.write(json.dumps(file_stat_list))
-        except Exception:
-            self.terminate()
+        except Exception as e:
+            self.terminate(e)
             raise
         finally:
             self.task_complete_event.set()
@@ -466,7 +466,6 @@ class Task(object):
             return True
 
         # If the thread is done and the token is not valid, there was an error
-        #traceback.print_stack()
         raise RuntimeError("Task %s didn't complete correctly" % self.task_id)
 
     def join(self):
@@ -474,9 +473,10 @@ class Task(object):
         self.task_complete_event.wait()
         return self.is_complete()
 
-    def terminate(self):
+    def terminate(self, exception_object=None):
         """Invoke to terminate the Task."""
         self.terminated = True
+        self.exception_object = exception_object
         self.task_complete_event.set()
 
 
