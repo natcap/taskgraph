@@ -14,7 +14,7 @@ def wait(sleep_time):
 def main():
     if os.path.exists(token_dir):
         shutil.rmtree(token_dir)
-    task_graph = taskgraph.TaskGraph(token_dir, 0)
+    task_graph = taskgraph.TaskGraph(os.path.join(token_dir, 'test.db'), 0)
     task_set = set()
     for index in xrange(10000):
         task = task_graph.add_task(

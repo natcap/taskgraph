@@ -41,15 +41,16 @@ class TaskGraph(object):
         """
         # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
         try:
-            os.makedirs(db_storage_path)
+            os.makedirs(os.path.dirname(db_storage_path))
         except OSError as exception:
             if exception.errno != errno.EEXIST:
                 raise
         self.db_storage_path = db_storage_path
         db_connection = sqlite3.connect(self.db_storage_path)
-        self.db_cursor = db_connection.cursor()
-        self.db_cursor.execute(
-            """CREATE TABLE IF NOT EXISTS task_tokens (hash text))""")
+        with db_connection.cursor() as cursor:
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS task_tokens "
+                "((hash text PRIMARY KEY, json_data text));")
 
         # the work queue is the feeder to active worker threads
         self.work_queue = Queue.Queue()
@@ -305,8 +306,11 @@ class Task(object):
             ignore_directories (boolean): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
-            db_storage_path (string): path to a directory that exists
-                where task can store a file to indicate completion of task.
+            db_storage_path (string): path to an SQLite database file that
+                as a table of the form
+
+                    task_tokens (hash text PRIMARY KEY, json_data text)
+
             completion_event (threading.Event): this Event should
                 be .set() when the task successfully completes.
         """
@@ -407,8 +411,7 @@ class Task(object):
                 for task in self.dependent_task_list:
                     task.join()
 
-            token_id = self._calculate_token()
-            self.token_path = os.path.join(self.db_storage_path, token_id)
+            self.token_id = self._calculate_token()
             if self._valid_token():
                 LOGGER.info(
                     "Completion token exists for %s so not executing",
@@ -421,11 +424,15 @@ class Task(object):
                 result.get()
             else:
                 self.func(*self.args, **self.kwargs)
-            with open(self.token_path, 'w') as token_file:
-                # write json string as target paths, file modified, file size
-                file_stat_list = list(
-                    _get_file_stats([self.target_path_list], [], False))
-                token_file.write(json.dumps(file_stat_list))
+            # write json string as target paths, file modified, file size
+            file_stat_list = list(
+                _get_file_stats([self.target_path_list], [], False))
+            json_data = json.dumps(file_stat_list)
+            with sqlite3.connect(self.db_storage_path) as db_connection:
+                cursor = db_connection.cursor()
+                cursor.execute(
+                    'INSERT INTO task_tokens VALUES (?, ?);',
+                    (self.token_id, json_data))
         except Exception as e:
             self.terminate(e)
             raise
@@ -442,12 +449,18 @@ class Task(object):
             token record, and the size is the same as in the recorded record.
         """
         try:
-            with open(self.token_path, 'r') as token_file:
-                for path, modified_time, size in json.loads(token_file.read()):
-                    if not (os.path.exists(path) and
-                            modified_time == os.path.getmtime(path) and
-                            size == os.path.getsize(path)):
-                        return False
+            with sqlite3.connect(self.db_storage_path) as db_connection:
+                cursor = db_connection.cursor()
+                cursor.execute(
+                    'SELECT json_data FROM task_tokens WHERE hash=?',
+                    self.token_id)
+                json_data = cursor.fetchone()
+
+            for path, modified_time, size in json.loads(json_data):
+                if not (os.path.exists(path) and
+                        modified_time == os.path.getmtime(path) and
+                        size == os.path.getsize(path)):
+                    return False
         except Exception:
             return False
         return True
