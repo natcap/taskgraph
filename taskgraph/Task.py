@@ -12,6 +12,7 @@ import threading
 import errno
 import Queue
 import inspect
+import sqlite3
 
 try:
     import psutil
@@ -25,26 +26,30 @@ LOGGER = logging.getLogger('Task')
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
-    def __init__(self, token_storage_path, n_workers):
+    def __init__(self, db_storage_path, n_workers):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
         parallelizing independent work notes, and avoiding repeated calls.
 
         Parameters:
-            token_storage_path (string): path to a directory where work tokens
-                (files) can be stored.  Task graph checks this directory to
-                see if a task has already been completed.
+            db_storage_path (string): path to a file that either contains
+                an existing SQLite database, or will create one if none
+                exists.
             n_workers (int): number of parallel workers to allow during
                 task graph execution.  If set to 0, use current process.
         """
         # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
         try:
-            os.makedirs(token_storage_path)
+            os.makedirs(db_storage_path)
         except OSError as exception:
             if exception.errno != errno.EEXIST:
                 raise
-        self.token_storage_path = token_storage_path
+        self.db_storage_path = db_storage_path
+        db_connection = sqlite3.connect(self.db_storage_path)
+        self.db_cursor = db_connection.cursor()
+        self.db_cursor.execute(
+            """CREATE TABLE IF NOT EXISTS task_tokens (hash text))""")
 
         # the work queue is the feeder to active worker threads
         self.work_queue = Queue.Queue()
@@ -192,7 +197,7 @@ class TaskGraph(object):
             task = Task(
                 task_id, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.token_storage_path, self.process_pending_tasks_event)
+                self.db_storage_path, self.process_pending_tasks_event)
             self.task_set.add(task)
 
             if self.n_workers > 0:
@@ -276,7 +281,7 @@ class Task(object):
     def __init__(
             self, task_id, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            token_storage_path, completion_event):
+            db_storage_path, completion_event):
         """Make a Task.
 
         Parameters:
@@ -300,7 +305,7 @@ class Task(object):
             ignore_directories (boolean): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
-            token_storage_path (string): path to a directory that exists
+            db_storage_path (string): path to a directory that exists
                 where task can store a file to indicate completion of task.
             completion_event (threading.Event): this Event should
                 be .set() when the task successfully completes.
@@ -313,7 +318,7 @@ class Task(object):
         self.target_path_list = target_path_list
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
-        self.token_storage_path = token_storage_path
+        self.db_storage_path = db_storage_path
         self.token_path = None  # not set until dependencies are blocked
         self.task_id = task_id
         self.completion_event = completion_event
@@ -326,7 +331,7 @@ class Task(object):
 
         # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
         try:
-            os.makedirs(token_storage_path)
+            os.makedirs(db_storage_path)
         except OSError as exception:
             if exception.errno != errno.EEXIST:
                 raise
@@ -338,7 +343,7 @@ class Task(object):
                 "dependent_task_list": self.dependent_task_list,
                 "ignore_path_list": self.ignore_path_list,
                 "ignore_directories": self.ignore_directories,
-                "token_storage_path": self.token_storage_path,
+                "db_storage_path": self.db_storage_path,
                 "token_path": self.token_path,
                 "task_id": self.task_id,
                 "completion_event": self.completion_event,
@@ -403,7 +408,7 @@ class Task(object):
                     task.join()
 
             token_id = self._calculate_token()
-            self.token_path = os.path.join(self.token_storage_path, token_id)
+            self.token_path = os.path.join(self.db_storage_path, token_id)
             if self._valid_token():
                 LOGGER.info(
                     "Completion token exists for %s so not executing",
