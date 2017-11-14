@@ -25,7 +25,7 @@ def main():
     task_graph.join()
 
 if __name__ == '__main__':
-    #main()
-    cProfile.run('main()', 'taskgraph_profile_stats')
-    p = pstats.Stats('taskgraph_profile_stats')
-    p.sort_stats('tottime').print_stats(10)
+    main()
+    #cProfile.run('main()', 'taskgraph_profile_stats')
+    #p = pstats.Stats('taskgraph_profile_stats')
+    #p.sort_stats('tottime').print_stats(10)

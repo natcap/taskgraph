@@ -102,6 +102,11 @@ class TaskGraph(object):
         # tasks that haven't been evaluated for dependencies go in here
         # to be processed by the process_pending_tasks thread
         self.pending_task_queue = Queue.Queue()
+
+        # Tasks will send their completed tokens along this queue. Another
+        # worker will read it and write to the database.
+        self.completed_tokens_queue = multiprocessing.Queue()
+
         # launch thread to monitor the pending task set
         pending_task_thread = threading.Thread(
             target=self.process_pending_tasks,
@@ -124,6 +129,11 @@ class TaskGraph(object):
                     subprocess_exception)
                 self._terminate()
                 return
+
+    def token_inserter(self, token_queue):
+        pass
+        # TODO: loop and stop on STOP and also set up thread to run it and include this in terminate and shutdown procedures.
+        #self.completed_tokens_queue.put((self.token_id, json_data))
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
@@ -200,7 +210,8 @@ class TaskGraph(object):
             task = Task(
                 task_id, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.db_storage_path, self.process_pending_tasks_event)
+                self.completed_tokens_queue, self.db_storage_path,
+                self.process_pending_tasks_event)
             self.task_set.add(task)
 
             if self.n_workers > 0:
@@ -284,7 +295,7 @@ class Task(object):
     def __init__(
             self, task_id, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            db_storage_path, completion_event):
+            completed_tokens_queue, db_storage_path, completion_event):
         """Make a Task.
 
         Parameters:
@@ -308,6 +319,8 @@ class Task(object):
             ignore_directories (boolean): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
+            completed_tokens_queue (multiprocessing.Queue): completed tokens
+                are put in this queue to signal a successful run.
             db_storage_path (string): path to an SQLite database file that
                 as a table of the form
 
@@ -324,6 +337,7 @@ class Task(object):
         self.target_path_list = target_path_list
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
+        self.completed_tokens_queue = completed_tokens_queue
         self.db_storage_path = db_storage_path
         self.token_path = None  # not set until dependencies are blocked
         self.task_id = task_id
@@ -386,7 +400,7 @@ class Task(object):
 
         return hashlib.sha1(task_string).hexdigest()
 
-    #@profile
+    @profile
     def __call__(
             self, global_worker_pool):
         """Invoke this method when ready to execute task.
@@ -432,13 +446,7 @@ class Task(object):
             file_stat_list = list(
                 _get_file_stats([self.target_path_list], [], False))
             json_data = json.dumps(file_stat_list)
-            db_connection = sqlite3.connect(self.db_storage_path)
-            with db_connection:
-                db_connection.execute('PRAGMA synchronous=OFF;')
-                db_connection.execute(
-                    'INSERT INTO task_tokens VALUES (?, ?);',
-                    (self.token_id, json_data))
-            db_connection.close()
+            self.completed_tokens_queue.put((self.token_id, json_data))
         except Exception as e:
             self.terminate(e)
             raise
@@ -446,6 +454,7 @@ class Task(object):
             self.task_complete_event.set()
             self.completion_event.set()
 
+    @profile
     def _valid_token(self):
         """Determine if `self.token_path` represents a valid token.
 
