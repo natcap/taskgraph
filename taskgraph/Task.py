@@ -106,14 +106,20 @@ class TaskGraph(object):
         # Tasks will send their completed tokens along this queue. Another
         # worker will read it and write to the database.
         self.completed_tokens_queue = multiprocessing.Queue()
+        completed_tokens_worker = threading.Thread(
+            target=self.process_completed_tokens,
+            name='process_completed_tokens')
+        completed_tokens_worker.daemon = True
+        completed_tokens_worker.start()
+        self.thread_set.add(completed_tokens_worker)
 
         # launch thread to monitor the pending task set
-        pending_task_thread = threading.Thread(
+        pending_task_worker = threading.Thread(
             target=self.process_pending_tasks,
             name='process_pending_tasks')
-        pending_task_thread.daemon = True
-        pending_task_thread.start()
-        self.thread_set.add(pending_task_thread)
+        pending_task_worker.daemon = True
+        pending_task_worker.start()
+        self.thread_set.add(pending_task_worker)
 
     def worker(self, work_queue):
         """Worker taking (func, args, kwargs) tuple from `work_queue`."""
@@ -130,10 +136,45 @@ class TaskGraph(object):
                 self._terminate()
                 return
 
-    def token_inserter(self, token_queue):
-        pass
-        # TODO: loop and stop on STOP and also set up thread to run it and include this in terminate and shutdown procedures.
-        #self.completed_tokens_queue.put((self.token_id, json_data))
+    def process_completed_tokens(self):
+        """A worker that inserts finished tokens into the database.
+
+            Results are stored in the `task_tokens` table in
+            self.db_storage_path.
+
+            self.completed_tokens_queue is a queue of (hash, json_txt) tuples
+            that come from completed Tasks. If this tuple is the queue it
+            means the Task successfully completed. All tuples will be
+            inserted into the `task_tokens` table. A sentinel of 'STOP' will
+            indicate that the worker should insert any remaining tuples, close
+            the database, and exit.
+
+        Returns:
+            None.
+        """
+        db_connection = sqlite3.connect(self.db_storage_path)
+        try:
+            stop_work = False
+            while not stop_work:
+                try:
+                    # drain the queue until its empty
+                    token_list = []
+                    token_tuple = self.completed_tokens_queue.get()
+                    while True:
+                        if token_tuple == 'STOP':
+                            stop_work = True
+                            break
+                        token_list.append(token_tuple)
+                        token_tuple = self.completed_tokens_queue.get(False)
+                except Queue.Empty:
+                    pass
+                finally:
+                    db_connection.executemany(
+                        'INSERT into task_tokens (hash, json_data) '
+                        'VALUES (?,?)', token_list)
+        finally:
+            db_connection.close()
+
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
@@ -154,6 +195,7 @@ class TaskGraph(object):
         for _ in xrange(self.n_workers):
             self.work_queue.put('STOP')
         self.pending_task_queue.put('STOP')
+        self.completed_tokens_queue.put('STOP')
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -447,6 +489,8 @@ class Task(object):
                 _get_file_stats([self.target_path_list], [], False))
             json_data = json.dumps(file_stat_list)
             self.completed_tokens_queue.put((self.token_id, json_data))
+            # we can shortcut _valid_token since we just evaluated it
+            self._valid_token = lambda: True
         except Exception as e:
             self.terminate(e)
             raise
@@ -465,11 +509,10 @@ class Task(object):
         """
         try:
             db_connection = sqlite3.connect(self.db_storage_path)
-            cursor = db_connection.cursor()
-            cursor.execute(
+            db_connection.execute(
                 'SELECT json_data FROM task_tokens WHERE hash=?;',
                 (self.token_id,))
-            json_data = cursor.fetchone()[0]
+            json_data = db_connection.fetchone()[0]
 
             for path, modified_time, size in json.loads(json_data):
                 if not (os.path.exists(path) and
@@ -480,6 +523,8 @@ class Task(object):
             return False
         finally:
             db_connection.close()
+        # if we made it this far we don't need to check again
+        self._valid_token = True
         return True
 
     def is_complete(self):
