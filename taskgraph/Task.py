@@ -386,6 +386,7 @@ class Task(object):
 
         return hashlib.sha1(task_string).hexdigest()
 
+    #@profile
     def __call__(
             self, global_worker_pool):
         """Invoke this method when ready to execute task.
@@ -433,6 +434,7 @@ class Task(object):
             json_data = json.dumps(file_stat_list)
             db_connection = sqlite3.connect(self.db_storage_path)
             with db_connection:
+                db_connection.execute('PRAGMA synchronous=OFF;')
                 db_connection.execute(
                     'INSERT INTO task_tokens VALUES (?, ?);',
                     (self.token_id, json_data))

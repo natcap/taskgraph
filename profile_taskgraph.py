@@ -16,15 +16,16 @@ def main():
         shutil.rmtree(token_dir)
     task_graph = taskgraph.TaskGraph(os.path.join(token_dir, 'test.db'), 0)
     task_set = set()
-    for index in xrange(1000):
+    for index in xrange(100):
         task = task_graph.add_task(
             func=wait,
-            args=(random.uniform(1e-7, 2e-7),),
+            args=(random.uniform(1e-10, 2e-10),),
             dependent_task_list=random.sample(task_set, min(len(task_set), 10)))
         task_set.add(task)
     task_graph.join()
 
 if __name__ == '__main__':
+    #main()
     cProfile.run('main()', 'taskgraph_profile_stats')
     p = pstats.Stats('taskgraph_profile_stats')
     p.sort_stats('tottime').print_stats(10)
