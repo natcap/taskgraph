@@ -13,6 +13,7 @@ import errno
 import Queue
 import inspect
 import sqlite3
+import traceback
 
 try:
     import psutil
@@ -47,10 +48,11 @@ class TaskGraph(object):
                 raise
         self.db_storage_path = db_storage_path
         db_connection = sqlite3.connect(self.db_storage_path)
-        with db_connection.cursor() as cursor:
-            cursor.execute(
-                "CREATE TABLE IF NOT EXISTS task_tokens "
-                "((hash text PRIMARY KEY, json_data text));")
+        with db_connection:
+            db_connection.execute(
+                'CREATE TABLE IF NOT EXISTS task_tokens '
+                '(hash text PRIMARY KEY, json_data text);')
+        db_connection.close()
 
         # the work queue is the feeder to active worker threads
         self.work_queue = Queue.Queue()
@@ -333,6 +335,8 @@ class Task(object):
         # to see when Task is complete
         self.task_complete_event = threading.Event()
 
+        self.token_id = self._calculate_token()
+
         # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
         try:
             os.makedirs(db_storage_path)
@@ -411,7 +415,6 @@ class Task(object):
                 for task in self.dependent_task_list:
                     task.join()
 
-            self.token_id = self._calculate_token()
             if self._valid_token():
                 LOGGER.info(
                     "Completion token exists for %s so not executing",
@@ -428,11 +431,12 @@ class Task(object):
             file_stat_list = list(
                 _get_file_stats([self.target_path_list], [], False))
             json_data = json.dumps(file_stat_list)
-            with sqlite3.connect(self.db_storage_path) as db_connection:
-                cursor = db_connection.cursor()
-                cursor.execute(
+            db_connection = sqlite3.connect(self.db_storage_path)
+            with db_connection:
+                db_connection.execute(
                     'INSERT INTO task_tokens VALUES (?, ?);',
                     (self.token_id, json_data))
+            db_connection.close()
         except Exception as e:
             self.terminate(e)
             raise
@@ -449,20 +453,22 @@ class Task(object):
             token record, and the size is the same as in the recorded record.
         """
         try:
-            with sqlite3.connect(self.db_storage_path) as db_connection:
-                cursor = db_connection.cursor()
-                cursor.execute(
-                    'SELECT json_data FROM task_tokens WHERE hash=?',
-                    self.token_id)
-                json_data = cursor.fetchone()
+            db_connection = sqlite3.connect(self.db_storage_path)
+            cursor = db_connection.cursor()
+            cursor.execute(
+                'SELECT json_data FROM task_tokens WHERE hash=?;',
+                (self.token_id,))
+            json_data = cursor.fetchone()[0]
 
             for path, modified_time, size in json.loads(json_data):
                 if not (os.path.exists(path) and
                         modified_time == os.path.getmtime(path) and
                         size == os.path.getsize(path)):
                     return False
-        except Exception:
+        except Exception as e:
             return False
+        finally:
+            db_connection.close()
         return True
 
     def is_complete(self):

@@ -16,7 +16,7 @@ def main():
         shutil.rmtree(token_dir)
     task_graph = taskgraph.TaskGraph(os.path.join(token_dir, 'test.db'), 0)
     task_set = set()
-    for index in xrange(10000):
+    for index in xrange(1000):
         task = task_graph.add_task(
             func=wait,
             args=(random.uniform(1e-7, 2e-7),),
