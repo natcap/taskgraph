@@ -13,8 +13,6 @@ import errno
 import Queue
 import inspect
 import sqlite3
-import traceback
-import glob
 
 try:
     import psutil
@@ -119,12 +117,12 @@ class TaskGraph(object):
         """
         for task_object, args, kwargs in iter(self.work_queue.get, 'STOP'):
             try:
-                task_object(*args, **kwargs)
+                task_object._call(*args, **kwargs)
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.error(
-                    "A taskgraph _task_worker failed on function \"%s(%s, %s)\" "
-                    "with exception \"%s\". "
+                    "A taskgraph _task_worker failed on function "
+                    "\"%s(%s, %s)\" with exception \"%s\". "
                     "Terminating taskgraph.", task_object, args, kwargs,
                     subprocess_exception)
                 self._terminate()
@@ -135,9 +133,6 @@ class TaskGraph(object):
             target_path_list=None, ignore_path_list=None,
             dependent_task_list=None, ignore_directories=True):
         """Add a task to the task graph.
-
-        See the docstring for Task.__call__ to determine how it determines
-        if it should execute.
 
         Parameters:
             func (callable): target function
@@ -160,7 +155,9 @@ class TaskGraph(object):
                 of the work token hash.
 
         Returns:
-            Task which was just added to the graph.
+            Task which was just added to the graph or an existing Task that
+            has the same signature and has already been added to the
+            TaskGraph.
         """
         try:
             if self.closed:
@@ -182,16 +179,22 @@ class TaskGraph(object):
                 func = lambda: None
 
             task_name = '%s_%d' % (task_name, len(self.task_set))
-            task = Task(
+            new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
                 self.process_pending_tasks_event)
-            self.task_set.add(task)
+            task_hash = new_task.task_hash
 
-            self.pending_task_queue.put(task)
+            # it may be this task was already created in an earlier call,
+            # use that object in its place
+            if task_hash in self.task_id_map:
+                return self.task_id_map[task_hash]
+
+            self.task_id_map[task_hash] = new_task
+            self.pending_task_queue.put(new_task)
             self.process_pending_tasks_event.set()
+            return new_task
 
-            return task
         except Exception:
             # something went wrong, shut down the taskgraph
             self._terminate()
@@ -268,15 +271,12 @@ class TaskGraph(object):
         for _ in xrange(self.n_workers):
             self.work_queue.put('STOP')
         self.pending_task_queue.put('STOP')
-        self.completed_tokens_queue.put('STOP')
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
         if self.terminated:
             return
         self.close()
-        for task in self.task_set:
-            task.terminate()
         if self.n_workers > 0:
             self.worker_pool.terminate()
         self.terminated = True
@@ -286,9 +286,8 @@ class Task(object):
     """Encapsulates work/task state for multiprocessing."""
 
     def __init__(
-            self, task_id, func, args, kwargs, target_path_list,
-            ignore_path_list, dependent_task_list, ignore_directories,
-            completion_event):
+            self, task_name, func, args, kwargs, target_path_list,
+            ignore_path_list, dependent_task_list, ignore_directories):
         """Make a Task.
 
         Parameters:
@@ -312,9 +311,8 @@ class Task(object):
             ignore_directories (boolean): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
-            completion_event (threading.Event): this Event should
-                be .set() when the task successfully completes.
         """
+        self.task_name = task_name
         self.func = func
         self.args = args
         self.kwargs = kwargs
@@ -323,9 +321,7 @@ class Task(object):
         self.target_path_list = target_path_list
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
-        self.token_path = None  # not set until dependencies are blocked
-        self.task_name = task_name
-        self.completion_event = completion_event
+
         self.terminated = False
         self.exception_object = None
 
@@ -333,25 +329,7 @@ class Task(object):
         # to see when Task is complete
         self.task_complete_event = threading.Event()
 
-        self.token_id = self._calculate_token()
-
-    def __str__(self):
-        return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
-            {
-                "target_path_list": self.target_path_list,
-                "dependent_task_list": self.dependent_task_list,
-                "ignore_path_list": self.ignore_path_list,
-                "ignore_directories": self.ignore_directories,
-                "taskgraph_cache_path": self.taskgraph_cache_path,
-                "token_path": self.token_path,
-                "task_id": self.task_id,
-                "completion_event": self.completion_event,
-                "terminated": self.terminated,
-                "exception_object": self.exception_object,
-            })
-
-    def _calculate_token(self):
-        """Make a unique hash of the call. Standalone so it can be threaded."""
+        # calculate the unique hash of the Task
         try:
             if not hasattr(Task, 'func_source_map'):
                 Task.func_source_map = {}
@@ -362,9 +340,14 @@ class Task(object):
                     inspect.getsource(self.func))
             source_code = Task.func_source_map[self.func]
         except (IOError, TypeError):
-            # many reasons for this, so just leave blank
+            # many reasons for this, for example, frozen Python code won't
+            # have source code, so just leave blank
             source_code = ''
 
+        # This gets a list of the files and their file stats that can be found
+        # in args and kwargs but ignores anything specifically targeted or
+        # an expected result. This will allow a task to change its hash in
+        # case a different version of a file was passed in.
         file_stat_list = list(_get_file_stats(
             [self.args, self.kwargs],
             self.target_path_list+self.ignore_path_list,
@@ -375,43 +358,45 @@ class Task(object):
             json.dumps(self.kwargs, sort_keys=True), source_code,
             self.target_path_list, str(file_stat_list))
 
-        return hashlib.sha1(task_string).hexdigest()
+        self.task_hash = hashlib.sha1(task_string).hexdigest()
+
+    def __str__(self):
+        return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
+            {
+                "task_name": self.task_name,
+                "target_path_list": self.target_path_list,
+                "dependent_task_list": self.dependent_task_list,
+                "ignore_path_list": self.ignore_path_list,
+                "ignore_directories": self.ignore_directories,
+                "task_hash": self.task_hash,
+                "terminated": self.terminated,
+                "exception_object": self.exception_object,
+            })
 
     @profile
-    def __call__(
+    def _call(
             self, global_worker_pool):
-        """Invoke this method when ready to execute task.
+        """TaskGraph should invoke this method when ready to execute task.
 
-        This function will execute `func` on `args`/`kwargs` under the
-        following circumstances:
-            * if no work token exists (a work token is a hashed combination
-                of the source code, arguments, target files, and associated
-                time stamps).
-            * if any input filepath arguments have a newer timestamp than the
-              work token or any path in `target_path_list`.
-            * AND all the tasks in `dependant_task_list` have been joined.
-
+        Precondition is that the Task dependencies are satisfied.
 
         Parameters:
             global_worker_pool (multiprocessing.Pool): a process pool used to
                 execute subprocesses.  If None, use current process.
 
+        Raises:
+            RuntimeError if any target paths are not generated after the
+                function call is complete.
+
         Returns:
-            None
+            A list of file parameters of the target path list.
+
+
         """
         try:
             if self.terminated:
                 raise RuntimeError(
                     "Task %s was called after termination.", self.task_id)
-            if self.dependent_task_list:
-                for task in self.dependent_task_list:
-                    task.join()
-
-            if self._valid_token():
-                LOGGER.info(
-                    "Completion token exists for %s so not executing",
-                    self.task_id)
-                return
 
             if global_worker_pool is not None:
                 result = global_worker_pool.apply_async(
@@ -419,19 +404,19 @@ class Task(object):
                 result.get()
             else:
                 self.func(*self.args, **self.kwargs)
-            # write json string as target paths, file modified, file size
-            file_stat_list = list(
+
+            missing_target_paths = [
+                target_path for target_path in self.target_path_list
+                if not os.path.exists(path)]
+            if len(missing_target_paths) > 0:
+                raise RuntimeError(
+                        "The following paths were expected but not found "
+                        "after the function call: %s" % missing_target_paths)
+            # otherwise successful run, return the target path expected stats.
+            return list(
                 _get_file_stats([self.target_path_list], [], False))
-            json_data = json.dumps(file_stat_list)
-            self.completed_tokens_queue.put((self.token_id, json_data))
-            # we can shortcut _valid_token since we just evaluated it
-            self._valid_token = lambda: True
-        except Exception as e:
-            self.terminate(e)
-            raise
         finally:
             self.task_complete_event.set()
-            self.completion_event.set()
 
     @profile
     def _valid_token(self):
@@ -447,7 +432,7 @@ class Task(object):
             cursor = db_connection.cursor()
             cursor.execute(
                 """SELECT json_data FROM task_tokens WHERE hash=?;""",
-                (self.token_id,))
+                (self.task_hash,))
             result = cursor.fetchone()
             if result is None:
                 return False
@@ -462,8 +447,7 @@ class Task(object):
             return False
         finally:
             db_connection.close()
-        # if we made it this far we don't need to check again
-        self._valid_token = lambda: True
+
         return True
 
     def is_complete(self):
@@ -481,11 +465,7 @@ class Task(object):
         if not self.task_complete_event.isSet():
             # lock is still acquired, so it's not done yet.
             return False
-        if self._valid_token():
-            return True
-
-        # If the thread is done and the token is not valid, there was an error
-        raise RuntimeError("Task %s didn't complete correctly" % self.task_id)
+        return True
 
     def join(self):
         """Block until task is complete, raise exception if runtime failed."""
