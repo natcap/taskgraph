@@ -14,6 +14,7 @@ import Queue
 import inspect
 import sqlite3
 import traceback
+import glob
 
 try:
     import psutil
@@ -48,10 +49,14 @@ class TaskGraph(object):
                 raise
         self.db_storage_path = db_storage_path
         db_connection = sqlite3.connect(self.db_storage_path)
+        db_connection.execute('PRAGMA synchronous=OFF')
+        db_connection.execute('PRAGMA journal_mode=WA')
+        #print list(db_connection.execute(
+        #    """SELECT * FROM task_tokens"""))
         with db_connection:
             db_connection.execute(
                 'CREATE TABLE IF NOT EXISTS task_tokens '
-                '(hash text PRIMARY KEY, json_data text);')
+                '(hash text PRIMARY KEY, json_data text)')
         db_connection.close()
 
         # the work queue is the feeder to active worker threads
@@ -172,6 +177,7 @@ class TaskGraph(object):
                     db_connection.executemany(
                         'INSERT into task_tokens (hash, json_data) '
                         'VALUES (?,?)', token_list)
+                    db_connection.commit()
         finally:
             db_connection.close()
 
@@ -392,13 +398,6 @@ class Task(object):
         self.task_complete_event = threading.Event()
 
         self.token_id = self._calculate_token()
-
-        # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
-        try:
-            os.makedirs(db_storage_path)
-        except OSError as exception:
-            if exception.errno != errno.EEXIST:
-                raise
 
     def __str__(self):
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
