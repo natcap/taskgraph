@@ -510,7 +510,7 @@ class Task(object):
             db_connection = sqlite3.connect(self.db_storage_path)
             cursor = db_connection.cursor()
             cursor.execute(
-                'SELECT json_data FROM task_tokens WHERE hash=?;',
+                """SELECT json_data FROM task_tokens WHERE hash=?;""",
                 (self.token_id,))
             result = cursor.fetchone()
             if result is None:
