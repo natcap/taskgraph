@@ -14,7 +14,7 @@ def wait(sleep_time):
 def main():
     task_graph = taskgraph.TaskGraph(os.path.join(token_dir, 'test.db'), 0)
     task_set = set()
-    for index in xrange(1000):
+    for index in xrange(5000):
         task = task_graph.add_task(
             func=wait,
             args=(index*1e-9,),

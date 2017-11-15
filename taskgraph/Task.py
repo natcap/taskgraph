@@ -512,9 +512,11 @@ class Task(object):
             cursor.execute(
                 'SELECT json_data FROM task_tokens WHERE hash=?;',
                 (self.token_id,))
-            json_data = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            if result is None:
+                return False
 
-            for path, modified_time, size in json.loads(json_data):
+            for path, modified_time, size in json.loads(result[0]):
                 if not (os.path.exists(path) and
                         modified_time == os.path.getmtime(path) and
                         size == os.path.getsize(path)):
