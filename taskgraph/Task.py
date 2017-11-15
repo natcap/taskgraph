@@ -508,10 +508,11 @@ class Task(object):
         """
         try:
             db_connection = sqlite3.connect(self.db_storage_path)
-            db_connection.execute(
+            cursor = db_connection.cursor()
+            cursor.execute(
                 'SELECT json_data FROM task_tokens WHERE hash=?;',
                 (self.token_id,))
-            json_data = db_connection.fetchone()[0]
+            json_data = cursor.fetchone()[0]
 
             for path, modified_time, size in json.loads(json_data):
                 if not (os.path.exists(path) and
@@ -519,11 +520,12 @@ class Task(object):
                         size == os.path.getsize(path)):
                     return False
         except Exception as e:
+            print e
             return False
         finally:
             db_connection.close()
         # if we made it this far we don't need to check again
-        self._valid_token = True
+        self._valid_token = lambda: True
         return True
 
     def is_complete(self):
