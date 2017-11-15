@@ -28,36 +28,25 @@ LOGGER = logging.getLogger('Task')
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
-    def __init__(self, db_storage_path, n_workers):
+    def __init__(self, taskgraph_cache_path, n_workers):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
         parallelizing independent work notes, and avoiding repeated calls.
 
         Parameters:
-            db_storage_path (string): path to a file that either contains
-                an existing SQLite database, or will create one if none
-                exists.
+            taskgraph_cache_path (string): path to a file that either contains
+                a taskgraph cache from a previous instance or will create
+                one if none exists.
             n_workers (int): number of parallel workers to allow during
                 task graph execution.  If set to 0, use current process.
         """
         # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
         try:
-            os.makedirs(os.path.dirname(db_storage_path))
+            os.makedirs(taskgraph_cache_path)
         except OSError as exception:
             if exception.errno != errno.EEXIST:
                 raise
-        self.db_storage_path = db_storage_path
-        db_connection = sqlite3.connect(self.db_storage_path)
-        db_connection.execute('PRAGMA synchronous=OFF')
-        db_connection.execute('PRAGMA journal_mode=WA')
-        #print list(db_connection.execute(
-        #    """SELECT * FROM task_tokens"""))
-        with db_connection:
-            db_connection.execute(
-                'CREATE TABLE IF NOT EXISTS task_tokens '
-                '(hash text PRIMARY KEY, json_data text)')
-        db_connection.close()
 
         # the work queue is the feeder to active worker threads
         self.work_queue = Queue.Queue()
@@ -70,6 +59,9 @@ class TaskGraph(object):
         # keep track if the task graph has been forcibly terminated
         self.terminated = False
 
+        # if n_workers > 0 this will be a multiprocessing pool used to execute
+        # the __call__ functions in Tasks
+        self.worker_pool = None
         if n_workers > 0:
             self.worker_pool = multiprocessing.Pool(n_workers)
             if HAS_PSUTIL:
@@ -83,11 +75,11 @@ class TaskGraph(object):
                             "NoSuchProcess exception encountered when trying "
                             "to nice %s. This might be a bug in `psutil` so "
                             "it should be okay to ignore.")
-        else:
-            self.worker_pool = None
 
-        # use this to keep track of all the tasks added to the graph
-        self.task_set = set()
+        # use this to keep track of all the tasks added to the graph by their
+        # task ids. Used to determine if an identical task has been added
+        # to the taskgraph during `add_task`
+        self.task_id_map = dict()
 
         # used to remember if task_graph has been closed
         self.closed = False
@@ -98,110 +90,45 @@ class TaskGraph(object):
         # launch threads to manage the workers
         for thread_id in xrange(n_workers):
             worker_thread = threading.Thread(
-                target=self.worker, args=(self.work_queue,),
-                name='worker_thread_%d' % thread_id)
+                target=self._task_worker, args=(self.work_queue,),
+                name='taskgraph_worker_thread_%d' % thread_id)
             worker_thread.daemon = True
             worker_thread.start()
             self.thread_set.add(worker_thread)
 
-        # tasks that haven't been evaluated for dependencies go in here
-        # to be processed by the process_pending_tasks thread
+        # tasks that get passed right to add_task get put in this queue for
+        # scheduling
         self.pending_task_queue = Queue.Queue()
 
-        # Tasks will send their completed tokens along this queue. Another
-        # worker will read it and write to the database.
-        self.completed_tokens_queue = multiprocessing.Queue()
-        completed_tokens_worker = threading.Thread(
-            target=self.process_completed_tokens,
-            name='process_completed_tokens')
-        completed_tokens_worker.daemon = True
-        completed_tokens_worker.start()
-        self.thread_set.add(completed_tokens_worker)
-
         # launch thread to monitor the pending task set
-        pending_task_worker = threading.Thread(
-            target=self.process_pending_tasks,
-            name='process_pending_tasks')
-        pending_task_worker.daemon = True
-        pending_task_worker.start()
-        self.thread_set.add(pending_task_worker)
+        pending_task_scheduler = threading.Thread(
+            target=self._process_pending_tasks,
+            name='_process_pending_task_scheduler')
+        pending_task_scheduler.daemon = True
+        pending_task_scheduler.start()
+        self.thread_set.add(pending_task_scheduler)
 
-    def worker(self, work_queue):
-        """Worker taking (func, args, kwargs) tuple from `work_queue`."""
-        for func, args, kwargs in iter(work_queue.get, 'STOP'):
+    def _task_worker(self):
+        """Execute and manage Task objects.
+
+        This worker extracts (task object, args, kwargs) tuples from
+        `self.work_queue`, processes the return value to ensure either a
+        successful completion OR handle an error.  On successful completion
+        the task's hash and dependent files are recorded in TaskGraph's
+        cache structure to test and prevent future-re-executions.
+        """
+        for task_object, args, kwargs in iter(self.work_queue.get, 'STOP'):
             try:
-                func(*args, **kwargs)
+                task_object(*args, **kwargs)
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.error(
-                    "A taskgraph worker failed on function \"%s(%s, %s)\" "
+                    "A taskgraph _task_worker failed on function \"%s(%s, %s)\" "
                     "with exception \"%s\". "
-                    "Terminating taskgraph.", func, args, kwargs,
+                    "Terminating taskgraph.", task_object, args, kwargs,
                     subprocess_exception)
                 self._terminate()
                 return
-
-    def process_completed_tokens(self):
-        """A worker that inserts finished tokens into the database.
-
-            Results are stored in the `task_tokens` table in
-            self.db_storage_path.
-
-            self.completed_tokens_queue is a queue of (hash, json_txt) tuples
-            that come from completed Tasks. If this tuple is the queue it
-            means the Task successfully completed. All tuples will be
-            inserted into the `task_tokens` table. A sentinel of 'STOP' will
-            indicate that the worker should insert any remaining tuples, close
-            the database, and exit.
-
-        Returns:
-            None.
-        """
-        db_connection = sqlite3.connect(self.db_storage_path)
-        try:
-            stop_work = False
-            while not stop_work:
-                try:
-                    # drain the queue until its empty
-                    token_list = []
-                    token_tuple = self.completed_tokens_queue.get()
-                    while True:
-                        if token_tuple == 'STOP':
-                            stop_work = True
-                            break
-                        token_list.append(token_tuple)
-                        token_tuple = self.completed_tokens_queue.get(False)
-                except Queue.Empty:
-                    pass
-                finally:
-                    db_connection.executemany(
-                        'INSERT into task_tokens (hash, json_data) '
-                        'VALUES (?,?)', token_list)
-                    db_connection.commit()
-        finally:
-            db_connection.close()
-
-
-    def _terminate(self):
-        """Forcefully terminate remaining task graph computation."""
-        if self.terminated:
-            return
-        self.close()
-        for task in self.task_set:
-            task.terminate()
-        if self.n_workers > 0:
-            self.worker_pool.terminate()
-        self.terminated = True
-
-    def close(self):
-        """Prevent future tasks from being added to the work queue."""
-        if self.closed:
-            return
-        self.closed = True
-        for _ in xrange(self.n_workers):
-            self.work_queue.put('STOP')
-        self.pending_task_queue.put('STOP')
-        self.completed_tokens_queue.put('STOP')
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -254,26 +181,23 @@ class TaskGraph(object):
             if func is None:
                 func = lambda: None
 
-            task_id = '%s_%d' % (task_name, len(self.task_set))
+            task_name = '%s_%d' % (task_name, len(self.task_set))
             task = Task(
-                task_id, func, args, kwargs, target_path_list,
+                task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.completed_tokens_queue, self.db_storage_path,
                 self.process_pending_tasks_event)
             self.task_set.add(task)
 
-            if self.n_workers > 0:
-                self.pending_task_queue.put(task)
-                self.process_pending_tasks_event.set()
-            else:
-                task(self.worker_pool)
+            self.pending_task_queue.put(task)
+            self.process_pending_tasks_event.set()
+
             return task
         except Exception:
             # something went wrong, shut down the taskgraph
             self._terminate()
             raise
 
-    def process_pending_tasks(self):
+    def _process_pending_tasks(self):
         """Drain work queue and iterate through pending task set for tasks."""
 
         # this will hold all the tasks whose dependencies have not been
@@ -336,6 +260,27 @@ class TaskGraph(object):
             self._terminate()
             raise
 
+    def close(self):
+        """Prevent future tasks from being added to the work queue."""
+        if self.closed:
+            return
+        self.closed = True
+        for _ in xrange(self.n_workers):
+            self.work_queue.put('STOP')
+        self.pending_task_queue.put('STOP')
+        self.completed_tokens_queue.put('STOP')
+
+    def _terminate(self):
+        """Forcefully terminate remaining task graph computation."""
+        if self.terminated:
+            return
+        self.close()
+        for task in self.task_set:
+            task.terminate()
+        if self.n_workers > 0:
+            self.worker_pool.terminate()
+        self.terminated = True
+
 
 class Task(object):
     """Encapsulates work/task state for multiprocessing."""
@@ -343,11 +288,11 @@ class Task(object):
     def __init__(
             self, task_id, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            completed_tokens_queue, db_storage_path, completion_event):
+            completion_event):
         """Make a Task.
 
         Parameters:
-            task_id (int): unique task id from the task graph.
+            task_name (int): unique task id from the task graph.
             func (function): a function that takes the argument list
                 `args`
             args (tuple): a list of arguments to pass to `func`.  Can be
@@ -367,13 +312,6 @@ class Task(object):
             ignore_directories (boolean): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
-            completed_tokens_queue (multiprocessing.Queue): completed tokens
-                are put in this queue to signal a successful run.
-            db_storage_path (string): path to an SQLite database file that
-                as a table of the form
-
-                    task_tokens (hash text PRIMARY KEY, json_data text)
-
             completion_event (threading.Event): this Event should
                 be .set() when the task successfully completes.
         """
@@ -385,10 +323,8 @@ class Task(object):
         self.target_path_list = target_path_list
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
-        self.completed_tokens_queue = completed_tokens_queue
-        self.db_storage_path = db_storage_path
         self.token_path = None  # not set until dependencies are blocked
-        self.task_id = task_id
+        self.task_name = task_name
         self.completion_event = completion_event
         self.terminated = False
         self.exception_object = None
@@ -406,7 +342,7 @@ class Task(object):
                 "dependent_task_list": self.dependent_task_list,
                 "ignore_path_list": self.ignore_path_list,
                 "ignore_directories": self.ignore_directories,
-                "db_storage_path": self.db_storage_path,
+                "taskgraph_cache_path": self.taskgraph_cache_path,
                 "token_path": self.token_path,
                 "task_id": self.task_id,
                 "completion_event": self.completion_event,
@@ -507,7 +443,7 @@ class Task(object):
             token record, and the size is the same as in the recorded record.
         """
         try:
-            db_connection = sqlite3.connect(self.db_storage_path)
+            db_connection = sqlite3.connect(self.taskgraph_cache_path)
             cursor = db_connection.cursor()
             cursor.execute(
                 """SELECT json_data FROM task_tokens WHERE hash=?;""",
