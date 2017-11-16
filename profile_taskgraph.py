@@ -23,7 +23,8 @@ def main():
         task = task_graph.add_task(
             func=wait,
             args=(index*1e-9,),
-            dependent_task_list=random.sample(task_set, min(len(task_set), 10)))
+            dependent_task_list=random.sample(
+                task_set, min(len(task_set), 10)))
         task_set.add(task)
     task_graph.close()
     task_graph.join()
@@ -33,3 +34,4 @@ if __name__ == '__main__':
     cProfile.run('main()', 'taskgraph_profile_stats')
     p = pstats.Stats('taskgraph_profile_stats')
     p.sort_stats('tottime').print_stats(10)
+    p.sort_stats('cumtime').print_stats(10)
