@@ -13,16 +13,15 @@ logging.basicConfig(
 
 taskgraph_cache_dir = 'taskgraph_cache_dir'
 
-def wait(sleep_time):
-    time.sleep(sleep_time)
+def wait():
+    time.sleep(1e-9)
 
 def main():
     task_graph = taskgraph.TaskGraph(taskgraph_cache_dir, 4)
     task_set = set()
-    for index in xrange(10):
+    for index in xrange(100000):
         task = task_graph.add_task(
             func=wait,
-            args=(index*1e-9,),
             dependent_task_list=random.sample(
                 task_set, min(len(task_set), 10)))
         task_set.add(task)

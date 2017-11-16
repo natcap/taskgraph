@@ -444,7 +444,9 @@ class Task(object):
         # for each so we don't blowup the filesystem with a bunch of files in
         # one directory
         self.task_cache_path = os.path.join(
-            cache_dir, *[self.task_hash[0:3]] + [self.task_hash + '.json'])
+            cache_dir, *(
+                [x for x in self.task_hash[0:3]] +
+                [self.task_hash + '.json']))
 
     def __str__(self):
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
