@@ -301,7 +301,16 @@ class TaskGraph(object):
             self.work_queue.put('STOP')
 
     def join(self, timeout=None):
-        """Join all threads in the graph."""
+        """Join all threads in the graph.
+
+        Parameters:
+            timeout (float): if not none will attempt to join subtasks with
+                this value. If a subtask times out, the whole function will
+                timeout.
+
+        Returns:
+            True if successful join, False if timed out.
+        """
         try:
             timedout = False
             for task in self.task_id_map.itervalues():
