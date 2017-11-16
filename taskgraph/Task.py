@@ -38,14 +38,8 @@ class TaskGraph(object):
             n_workers (int): number of parallel workers to allow during
                 task graph execution.  If set to 0, use current process.
         """
-        # https://stackoverflow.com/questions/273192/how-can-i-create-a-directory-if-it-does-not-exist
-        try:
-            os.makedirs(taskgraph_cache_path)
-        except OSError as exception:
-            if exception.errno != errno.EEXIST:
-                raise
-
         # the work queue is the feeder to active worker threads
+        self.taskgraph_cache_path = taskgraph_cache_path
         self.work_queue = Queue.Queue()
         self.n_workers = n_workers
 
@@ -192,7 +186,7 @@ class TaskGraph(object):
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.worker_pool)
+                self.worker_pool, self.taskgraph_cache_path)
             task_hash = new_task.task_hash
 
             # it may be this task was already created in an earlier call,
@@ -364,7 +358,7 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            worker_pool):
+            worker_pool, cache_dir):
         """Make a Task.
 
         Parameters:
@@ -390,6 +384,8 @@ class Task(object):
                 of the work token hash.
             worker_pool (multiprocessing.Pool): if not None, is a
                 multiprocessing pool that can be used for `_call` execution.
+            cache_dir (string): path to a directory to both write and expect
+                data recorded from a previous Taskgraph run.
         """
         self.task_name = task_name
         self.func = func
@@ -440,6 +436,13 @@ class Task(object):
 
         self.task_hash = hashlib.sha1(task_string).hexdigest()
 
+        # get ready to make a directory and target based on hashname
+        # take the first 3 characters of the hash and make a subdirectory
+        # for each so we don't blowup the filesystem with a bunch of files in
+        # one directory
+        self.task_cache_path = os.path.join(
+            cache_dir, *[self.task_hash[0:3]] + [self.task_hash + '.json'])
+
     def __str__(self):
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
             {
@@ -485,7 +488,7 @@ class Task(object):
                     "The following paths were expected but not found "
                     "after the function call: %s" % missing_target_paths)
 
-            # check that the target paths exist and record their stats
+            # check that the target paths exist
             result_target_path_stats = list(
                 _get_file_stats([self.target_path_list], [], False))
             target_path_set = set(self.target_path_list)
@@ -497,6 +500,17 @@ class Task(object):
                     "Expected: %s\nObserved: %s\n" % (
                         self.task_name, target_path_list,
                         result_target_path_set))
+
+            # otherwise record target path stats in a file located at
+            # self.task_cache_path
+            try:
+                os.makedirs(os.path.dirname(self.task_cache_path))
+            except OSError as exception:
+                if exception.errno != errno.EEXIST:
+                    raise
+            with open(self.task_cache_path, 'wb') as task_cache_file:
+                pickle.dump(result_target_path_stats, task_cache_file)
+
             # successful run, return target path stats
             return result_target_path_stats
         except Exception as e:
@@ -524,6 +538,24 @@ class Task(object):
         if not self.task_complete_event.isSet():
             # lock is still acquired, so it's not done yet.
             return False
+        return True
+
+    def is_precalcualted(self):
+        """Return true Task can be skipped.
+
+        Returns:
+            True if the Task's target paths exist in the same state as the
+            last recorded run. False otherwise.
+        """
+        if not os.path.exists(self.task_cache_path):
+            return False
+        with open(self.task_cache_path, 'rb') as task_cache_file:
+            result_target_path_stats = pickle.load(task_cache_file)
+        for path, modified_time, size in result_target_path_stats:
+            if not (os.path.exists(path) and
+                    modified_time == os.path.getmtime(path) and
+                    size == os.path.getsize(path)):
+                return False
         return True
 
     def join(self, timeout=None):
