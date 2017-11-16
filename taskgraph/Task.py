@@ -300,16 +300,18 @@ class TaskGraph(object):
         for _ in xrange(max(1, self.n_workers)):
             self.work_queue.put('STOP')
 
-    def join(self):
+    def join(self, timeout=None):
         """Join all threads in the graph."""
         try:
+            timedout = False
             for task in self.task_id_map.itervalues():
-                task.join()
+                timedout = timedout or not task.join(timeout)
             if self.closed:
                 # inject sentinels to the queues
                 self.waiting_task_queue.put('STOP')
                 for _ in xrange(max(1, self.n_workers)):
                     self.work_queue.put('STOP')
+            return not timedout
         except Exception as e:
             # If there's an exception on a join it means that a task failed
             # to execute correctly. Print a helpful message then terminate the
@@ -332,11 +334,14 @@ class TaskGraph(object):
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
+        LOGGER.debug("********* calling _terminate")
         if self.terminated:
             return
         self.close()
         if self.n_workers > 0:
             self.worker_pool.terminate()
+        for task in self.task_id_map.itervalues():
+            task._terminate()
         self.terminated = True
 
 
@@ -481,6 +486,10 @@ class Task(object):
                         result_target_path_set))
             # successful run, return target path stats
             return result_target_path_stats
+        except Exception as e:
+            LOGGER.error("Exception %s in Task: %s" % (e, self))
+            self._terminate(e)
+            raise
         finally:
             self.task_complete_event.set()
 
@@ -496,17 +505,20 @@ class Task(object):
             RuntimeError if the task thread is stopped but no completion
             token
         """
+        if self.terminated:
+            raise RuntimeError(
+                "is_complete invoked on a terminated task %s" % str(self))
         if not self.task_complete_event.isSet():
             # lock is still acquired, so it's not done yet.
             return False
         return True
 
-    def join(self):
+    def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
-        self.task_complete_event.wait()
+        self.task_complete_event.wait(timeout)
         return self.is_complete()
 
-    def terminate(self, exception_object=None):
+    def _terminate(self, exception_object=None):
         """Invoke to terminate the Task."""
         self.terminated = True
         self.exception_object = exception_object
