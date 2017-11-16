@@ -305,7 +305,11 @@ class TaskGraph(object):
         try:
             timedout = False
             for task in self.task_id_map.itervalues():
-                timedout = timedout or not task.join(timeout)
+                timedout = not task.join(timeout)
+                # if the last task timed out then we want to timeout for all
+                # of the task graph
+                if timedout:
+                    break
             if self.closed:
                 # inject sentinels to the queues
                 self.waiting_task_queue.put('STOP')
