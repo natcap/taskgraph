@@ -19,12 +19,13 @@ def wait(sleep_time):
 def main():
     task_graph = taskgraph.TaskGraph(taskgraph_cache_dir, 0)
     task_set = set()
-    for index in xrange(40000):
+    for index in xrange(1000):
         task = task_graph.add_task(
             func=wait,
             args=(index*1e-9,),
             dependent_task_list=random.sample(task_set, min(len(task_set), 10)))
         task_set.add(task)
+    task_graph.close()
     task_graph.join()
 
 if __name__ == '__main__':

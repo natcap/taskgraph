@@ -115,7 +115,9 @@ class TaskGraph(object):
         the task's hash and dependent files are recorded in TaskGraph's
         cache structure to test and prevent future-re-executions.
         """
+        tasks_processed = 0
         for task, args, kwargs in iter(self.work_queue.get, 'STOP'):
+            tasks_processed += 1
             try:
                 target_path_stats = task._call(*args, **kwargs)
                 # task complete, signal to pending task scheduler that this
@@ -130,6 +132,7 @@ class TaskGraph(object):
                     subprocess_exception)
                 self._terminate()
                 raise
+            LOGGER.debug("Tasks processed %d", tasks_processed)
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -211,11 +214,13 @@ class TaskGraph(object):
         """
         tasks_sent_to_work = set()
         task_dependent_map = collections.defaultdict(list)
+        pending_tasks_processed = 0
         for task in iter(self.pending_task_queue.get, 'STOP'):
             # invariant: a task coming in was put in the queue before it was
             #   complete and because it was a dependent task of another task
             #   that completed. OR a task is complete and alerting that any
             #   tasks that were dependent on it can be processed.
+            pending_tasks_processed += 1
             if task == 'STOP':
                 break
 
@@ -243,6 +248,7 @@ class TaskGraph(object):
                 tasks_sent_to_work.add(task.task_hash)
                 self.work_queue.put(
                     (task, (self.worker_pool,), {}))
+            LOGGER.debug("pending_tasks_processed %s", pending_tasks_processed)
 
 
     def join(self):
@@ -268,9 +274,6 @@ class TaskGraph(object):
         if self.closed:
             return
         self.closed = True
-        for _ in xrange(self.n_workers):
-            self.work_queue.put('STOP')
-        self.pending_task_queue.put('STOP')
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
@@ -373,7 +376,6 @@ class Task(object):
                 "exception_object": self.exception_object,
             })
 
-    @profile
     def _call(self, global_worker_pool):
         """TaskGraph should invoke this method when ready to execute task.
 
