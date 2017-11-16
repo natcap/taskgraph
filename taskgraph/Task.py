@@ -119,7 +119,10 @@ class TaskGraph(object):
         """
         for task in iter(self.work_queue.get, 'STOP'):
             try:
-                target_path_stats = task._call()
+                if not task.is_precalcualted():
+                    target_path_stats = task._call()
+                else:
+                    task._task_complete_event.set()
                 # task complete, signal to pending task scheduler that this
                 # task is complete
                 self.waiting_task_queue.put((task, 'done'))
@@ -403,7 +406,7 @@ class Task(object):
 
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete
-        self.task_complete_event = threading.Event()
+        self._task_complete_event = threading.Event()
 
         # calculate the unique hash of the Task
         try:
@@ -518,7 +521,7 @@ class Task(object):
             self._terminate(e)
             raise
         finally:
-            self.task_complete_event.set()
+            self._task_complete_event.set()
 
     def is_complete(self):
         """Test to determine if Task is complete.
@@ -535,7 +538,7 @@ class Task(object):
         if self.terminated:
             raise RuntimeError(
                 "is_complete invoked on a terminated task %s" % str(self))
-        if not self.task_complete_event.isSet():
+        if not self._task_complete_event.isSet():
             # lock is still acquired, so it's not done yet.
             return False
         return True
@@ -560,14 +563,14 @@ class Task(object):
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
-        self.task_complete_event.wait(timeout)
+        self._task_complete_event.wait(timeout)
         return self.is_complete()
 
     def _terminate(self, exception_object=None):
         """Invoke to terminate the Task."""
         self.terminated = True
         self.exception_object = exception_object
-        self.task_complete_event.set()
+        self._task_complete_event.set()
 
 
 def _get_file_stats(base_value, ignore_list, ignore_directories):
