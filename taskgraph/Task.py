@@ -86,9 +86,9 @@ class TaskGraph(object):
         self.thread_set = set()
 
         # launch threads to manage the workers
-        for thread_id in xrange(n_workers):
+        for thread_id in xrange(max(1, n_workers)):
             worker_thread = threading.Thread(
-                target=self._task_worker, args=(self.work_queue,),
+                target=self._task_worker,
                 name='taskgraph_worker_thread_%d' % thread_id)
             worker_thread.daemon = True
             worker_thread.start()
@@ -115,18 +115,21 @@ class TaskGraph(object):
         the task's hash and dependent files are recorded in TaskGraph's
         cache structure to test and prevent future-re-executions.
         """
-        for task_object, args, kwargs in iter(self.work_queue.get, 'STOP'):
+        for task, args, kwargs in iter(self.work_queue.get, 'STOP'):
             try:
-                task_object._call(*args, **kwargs)
+                target_path_stats = task._call(*args, **kwargs)
+                # task complete, signal to pending task scheduler that this
+                # task is complete
+                self.pending_task_queue.put(task)
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.error(
                     "A taskgraph _task_worker failed on function "
                     "\"%s(%s, %s)\" with exception \"%s\". "
-                    "Terminating taskgraph.", task_object, args, kwargs,
+                    "Terminating taskgraph.", task, args, kwargs,
                     subprocess_exception)
                 self._terminate()
-                return
+                raise
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -178,11 +181,10 @@ class TaskGraph(object):
             if func is None:
                 func = lambda: None
 
-            task_name = '%s_%d' % (task_name, len(self.task_set))
+            task_name = '%s_%d' % (task_name, len(self.task_id_map))
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
-                ignore_path_list, dependent_task_list, ignore_directories,
-                self.process_pending_tasks_event)
+                ignore_path_list, dependent_task_list, ignore_directories)
             task_hash = new_task.task_hash
 
             # it may be this task was already created in an earlier call,
@@ -192,7 +194,6 @@ class TaskGraph(object):
 
             self.task_id_map[task_hash] = new_task
             self.pending_task_queue.put(new_task)
-            self.process_pending_tasks_event.set()
             return new_task
 
         except Exception:
@@ -201,55 +202,53 @@ class TaskGraph(object):
             raise
 
     def _process_pending_tasks(self):
-        """Drain work queue and iterate through pending task set for tasks."""
+        """Process pending task queue, send ready tasks to work queue.
 
-        # this will hold all the tasks whose dependencies have not been
-        # satisfied on a previous iteration, but may now be
-        pending_task_set = set()
+        There are two reasons a task will be on the pending_task_queue. One
+        is to potentially process it for work. The other is to alert that
+        the task is complete and any tasks that were dependent on it may
+        now be processed.
+        """
+        tasks_sent_to_work = set()
+        task_dependent_map = collections.defaultdict(list)
+        for task in iter(self.pending_task_queue.get, 'STOP'):
+            # invariant: a task coming in was put in the queue before it was
+            #   complete and because it was a dependent task of another task
+            #   that completed. OR a task is complete and alerting that any
+            #   tasks that were dependent on it can be processed.
+            if task == 'STOP':
+                break
 
-        # this will remember if we've encountered a STOP sentinel
-        stop_work = False
-        # this is the main processing loop
-        while True:
-            # this will remember the tasks that were queued to the work queue
-            # on this iteration
-            queued_task_set = set()
-            while not stop_work:
-                # drain the pending task queue into the pending task set
-                try:
-                    task = self.pending_task_queue.get(False)
-                    if task == 'STOP':
-                        stop_work = True
-                        break
-                    pending_task_set.add(task)
-                except Queue.Empty:
-                    break
+            if task.is_complete():
+                # must be an alert that task is complete, put any tasks that
+                # were dependent on it into the queue
+                for delayed_task in task_dependent_map[task]:
+                    self.pending_task_queue.put(delayed_task)
+                del task_dependent_map[task]
+                continue
 
-            # Process all pending tasks and put them on the work
-            # queue if their dependencies are satisfied
-            for task in pending_task_set:
-                try:
-                    if all([dep_task.is_complete()
-                            for dep_task in task.dependent_task_list]):
-                        self.work_queue.put(
-                            (task, (self.worker_pool,), {}))
-                        queued_task_set.add(task)
-                except Exception as e:
-                    LOGGER.error("Dependent task failed. Exception: %s", e)
-                    self._terminate()
-                    return
+            # it's a new task, check and see if its dependencies are complete
+            outstanding_dependent_task_list = [
+                dep_task for dep_task in task.dependent_task_list
+                if not dep_task.is_complete()]
 
-            pending_task_set = pending_task_set.difference(
-                queued_task_set)
-            if not pending_task_set and stop_work:
-                return
-            self.process_pending_tasks_event.wait()
-            self.process_pending_tasks_event.clear()
+            if outstanding_dependent_task_list:
+                # if outstanding tasks, delay execution and put a reminder
+                # that this task is dependent on another
+                for dep_task in outstanding_dependent_task_list:
+                    task_dependent_map[dep_task].append(task)
+            elif task.task_hash not in tasks_sent_to_work:
+                # otherwise if not already sent to work, put in the work queue
+                # and record it was sent
+                tasks_sent_to_work.add(task.task_hash)
+                self.work_queue.put(
+                    (task, (self.worker_pool,), {}))
+
 
     def join(self):
         """Join all threads in the graph."""
         try:
-            for task in self.task_set:
+            for task in self.task_id_map.itervalues():
                 task.join()
         except Exception as e:
             # If there's an exception on a join it means that a task failed
@@ -265,6 +264,7 @@ class TaskGraph(object):
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
+        print 'calling closed'
         if self.closed:
             return
         self.closed = True
@@ -374,8 +374,7 @@ class Task(object):
             })
 
     @profile
-    def _call(
-            self, global_worker_pool):
+    def _call(self, global_worker_pool):
         """TaskGraph should invoke this method when ready to execute task.
 
         Precondition is that the Task dependencies are satisfied.
@@ -390,8 +389,6 @@ class Task(object):
 
         Returns:
             A list of file parameters of the target path list.
-
-
         """
         try:
             if self.terminated:
@@ -412,43 +409,23 @@ class Task(object):
                 raise RuntimeError(
                         "The following paths were expected but not found "
                         "after the function call: %s" % missing_target_paths)
-            # otherwise successful run, return the target path expected stats.
-            return list(
+
+            # check that the target paths exist and record their stats
+            result_target_path_stats = list(
                 _get_file_stats([self.target_path_list], [], False))
+            target_path_set = set(self.target_path_list)
+            result_target_path_set = set(
+                [x[0] for x in result_target_path_stats])
+            if target_path_set != result_target_path_set:
+                raise RuntimeError(
+                    "In Task: %s\nMissing expected target path results.\n"
+                    "Expected: %s\nObserved: %s\n" % (
+                        self.task_name, target_path_list,
+                        result_target_path_set))
+            # successful run, return target path stats
+            return result_target_path_stats
         finally:
             self.task_complete_event.set()
-
-    @profile
-    def _valid_token(self):
-        """Determine if `self.token_path` represents a valid token.
-
-        Returns:
-            True if files referenced in json file at `self.token_path` exist,
-            modified times are equal to the modified times recorded in the
-            token record, and the size is the same as in the recorded record.
-        """
-        try:
-            db_connection = sqlite3.connect(self.taskgraph_cache_path)
-            cursor = db_connection.cursor()
-            cursor.execute(
-                """SELECT json_data FROM task_tokens WHERE hash=?;""",
-                (self.task_hash,))
-            result = cursor.fetchone()
-            if result is None:
-                return False
-
-            for path, modified_time, size in json.loads(result[0]):
-                if not (os.path.exists(path) and
-                        modified_time == os.path.getmtime(path) and
-                        size == os.path.getsize(path)):
-                    return False
-        except Exception as e:
-            print e
-            return False
-        finally:
-            db_connection.close()
-
-        return True
 
     def is_complete(self):
         """Test to determine if Task is complete.
@@ -514,3 +491,18 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
+
+def _valid_token(json_data):
+    """Determine if `self.token_path` represents a valid token.
+
+    Returns:
+        True if files referenced in json file at `self.token_path` exist,
+        modified times are equal to the modified times recorded in the
+        token record, and the size is the same as in the recorded record.
+    """
+    for path, modified_time, size in json.loads(json_data):
+        if not (os.path.exists(path) and
+                modified_time == os.path.getmtime(path) and
+                size == os.path.getsize(path)):
+            return False
+    return True
