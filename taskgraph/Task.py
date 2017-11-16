@@ -12,7 +12,6 @@ import threading
 import errno
 import Queue
 import inspect
-import sqlite3
 
 try:
     import psutil
@@ -101,10 +100,19 @@ class TaskGraph(object):
         # launch thread to monitor the pending task set
         pending_task_scheduler = threading.Thread(
             target=self._process_pending_tasks,
-            name='_process_pending_task_scheduler')
+            name='_pending_task_scheduler')
         pending_task_scheduler.daemon = True
         pending_task_scheduler.start()
         self.thread_set.add(pending_task_scheduler)
+
+        self.waiting_task_queue = Queue.Queue()
+
+        waiting_task_scheduler = threading.Thread(
+            target=self._process_waiting_tasks,
+            name='_waiting_task_scheduler')
+        waiting_task_scheduler.daemon = True
+        waiting_task_scheduler.start()
+        self.thread_set.add(waiting_task_scheduler)
 
     def _task_worker(self):
         """Execute and manage Task objects.
@@ -115,24 +123,20 @@ class TaskGraph(object):
         the task's hash and dependent files are recorded in TaskGraph's
         cache structure to test and prevent future-re-executions.
         """
-        tasks_processed = 0
-        for task, args, kwargs in iter(self.work_queue.get, 'STOP'):
-            tasks_processed += 1
+        for task in iter(self.work_queue.get, 'STOP'):
             try:
-                target_path_stats = task._call(*args, **kwargs)
+                target_path_stats = task._call()
                 # task complete, signal to pending task scheduler that this
                 # task is complete
-                self.pending_task_queue.put(task)
+                self.waiting_task_queue.put((task, 'done'))
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.error(
-                    "A taskgraph _task_worker failed on function "
-                    "\"%s(%s, %s)\" with exception \"%s\". "
-                    "Terminating taskgraph.", task, args, kwargs,
-                    subprocess_exception)
+                    'A taskgraph _task_worker failed on Task '
+                    '%s with exception "%s". '
+                    'Terminating taskgraph.', task, subprocess_exception)
                 self._terminate()
                 raise
-            LOGGER.debug("Tasks processed %d", tasks_processed)
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -187,7 +191,8 @@ class TaskGraph(object):
             task_name = '%s_%d' % (task_name, len(self.task_id_map))
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
-                ignore_path_list, dependent_task_list, ignore_directories)
+                ignore_path_list, dependent_task_list, ignore_directories,
+                self.worker_pool)
             task_hash = new_task.task_hash
 
             # it may be this task was already created in an earlier call,
@@ -213,24 +218,11 @@ class TaskGraph(object):
         now be processed.
         """
         tasks_sent_to_work = set()
-        task_dependent_map = collections.defaultdict(list)
-        pending_tasks_processed = 0
         for task in iter(self.pending_task_queue.get, 'STOP'):
             # invariant: a task coming in was put in the queue before it was
             #   complete and because it was a dependent task of another task
             #   that completed. OR a task is complete and alerting that any
             #   tasks that were dependent on it can be processed.
-            pending_tasks_processed += 1
-            if task == 'STOP':
-                break
-
-            if task.is_complete():
-                # must be an alert that task is complete, put any tasks that
-                # were dependent on it into the queue
-                for delayed_task in task_dependent_map[task]:
-                    self.pending_task_queue.put(delayed_task)
-                del task_dependent_map[task]
-                continue
 
             # it's a new task, check and see if its dependencies are complete
             outstanding_dependent_task_list = [
@@ -240,22 +232,84 @@ class TaskGraph(object):
             if outstanding_dependent_task_list:
                 # if outstanding tasks, delay execution and put a reminder
                 # that this task is dependent on another
-                for dep_task in outstanding_dependent_task_list:
-                    task_dependent_map[dep_task].append(task)
+                self.waiting_task_queue.put((task, 'wait'))
             elif task.task_hash not in tasks_sent_to_work:
                 # otherwise if not already sent to work, put in the work queue
                 # and record it was sent
                 tasks_sent_to_work.add(task.task_hash)
-                self.work_queue.put(
-                    (task, (self.worker_pool,), {}))
-            LOGGER.debug("pending_tasks_processed %s", pending_tasks_processed)
+                self.work_queue.put(task)
 
+    def _process_waiting_tasks(self):
+        """Process any tasks that are waiting on dependencies.
+
+        This worker monitors the self.waiting_task_queue Queue and looks for
+        (task, 'wait'), or (task, 'done') tuples.
+
+            If mode is 'wait' the task is indexed locally with reference to
+            its incomplete tasks. If its depedent tasks are complete, the
+            task is sent to the work queue. If mode is 'done' this signals the
+            worker to re-'wait' any task that was dependent on the one that
+            arrived in the queue.
+        """
+        task_dependent_map = collections.defaultdict(set)
+        dependent_task_map = collections.defaultdict(set)
+        completed_tasks = set()
+        for task, mode in iter(self.waiting_task_queue.get, 'STOP'):
+            if mode == 'wait':
+                # invariant: task has come directly from `add_task` and has
+                # been determined that is has at least one unsatisfied
+                # dependency
+
+                outstanding_dependent_task_list = [
+                    dep_task for dep_task in task.dependent_task_list
+                    if dep_task not in completed_tasks]
+                # possible a dependency has been satisfied since `add_task`
+                # was able to add this task to the waiting queue.
+                if not outstanding_dependent_task_list:
+                    # if nothing is outstanding, send to work queue
+                    self.work_queue.put(task)
+                    continue
+
+                # there are unresolved tasks that the waiting process
+                # scheduler has not been notified of. Record dependencies.
+                for dep_task in outstanding_dependent_task_list:
+                    # keep track of the tasks that are dependent on dep_task
+                    task_dependent_map[dep_task].add(task)
+                    # keep track of the tasks that prevent this one from
+                    # executing
+                    dependent_task_map[task].add(dep_task)
+            elif mode == 'done':
+                # invariant: task has not previously been sent as a 'done'
+                # notification and task is done.
+                completed_tasks.add(task)
+                for waiting_task in task_dependent_map[task]:
+                    # remove `task` from the set of tasks that `waiting_task`
+                    # was waiting on.
+                    dependent_task_map[waiting_task].remove(task)
+                    # if there aren't any left, we can push `waiting_task`
+                    # to the work queue
+                    if not dependent_task_map[waiting_task]:
+                        # if we removed the last task we can put it to the
+                        # work queue
+                        self.work_queue.put(waiting_task)
+                del task_dependent_map[task]
+            else:
+                raise RuntimeError("Unknown mode %s" % mode)
+        # if we got here, the waiting task queue is shut down, pass signal
+        # to the workers
+        for _ in xrange(max(1, self.n_workers)):
+            self.work_queue.put('STOP')
 
     def join(self):
         """Join all threads in the graph."""
         try:
             for task in self.task_id_map.itervalues():
                 task.join()
+            if self.closed:
+                # inject sentinels to the queues
+                self.waiting_task_queue.put('STOP')
+                for _ in xrange(max(1, self.n_workers)):
+                    self.work_queue.put('STOP')
         except Exception as e:
             # If there's an exception on a join it means that a task failed
             # to execute correctly. Print a helpful message then terminate the
@@ -274,6 +328,7 @@ class TaskGraph(object):
         if self.closed:
             return
         self.closed = True
+        self.pending_task_queue.put('STOP')
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
@@ -290,7 +345,8 @@ class Task(object):
 
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
-            ignore_path_list, dependent_task_list, ignore_directories):
+            ignore_path_list, dependent_task_list, ignore_directories,
+            worker_pool):
         """Make a Task.
 
         Parameters:
@@ -314,6 +370,8 @@ class Task(object):
             ignore_directories (boolean): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
+            worker_pool (multiprocessing.Pool): if not None, is a
+                multiprocessing pool that can be used for `_call` execution.
         """
         self.task_name = task_name
         self.func = func
@@ -324,6 +382,7 @@ class Task(object):
         self.target_path_list = target_path_list
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
+        self.worker_pool = worker_pool
 
         self.terminated = False
         self.exception_object = None
@@ -376,14 +435,10 @@ class Task(object):
                 "exception_object": self.exception_object,
             })
 
-    def _call(self, global_worker_pool):
+    def _call(self):
         """TaskGraph should invoke this method when ready to execute task.
 
         Precondition is that the Task dependencies are satisfied.
-
-        Parameters:
-            global_worker_pool (multiprocessing.Pool): a process pool used to
-                execute subprocesses.  If None, use current process.
 
         Raises:
             RuntimeError if any target paths are not generated after the
@@ -395,10 +450,10 @@ class Task(object):
         try:
             if self.terminated:
                 raise RuntimeError(
-                    "Task %s was called after termination.", self.task_id)
+                    "Task %s was called after termination.", self.task_hash)
 
-            if global_worker_pool is not None:
-                result = global_worker_pool.apply_async(
+            if self.worker_pool is not None:
+                result = self.worker_pool.apply_async(
                     func=self.func, args=self.args, kwds=self.kwargs)
                 result.get()
             else:
@@ -406,11 +461,11 @@ class Task(object):
 
             missing_target_paths = [
                 target_path for target_path in self.target_path_list
-                if not os.path.exists(path)]
+                if not os.path.exists(target_path)]
             if len(missing_target_paths) > 0:
                 raise RuntimeError(
-                        "The following paths were expected but not found "
-                        "after the function call: %s" % missing_target_paths)
+                    "The following paths were expected but not found "
+                    "after the function call: %s" % missing_target_paths)
 
             # check that the target paths exist and record their stats
             result_target_path_stats = list(
@@ -493,6 +548,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
+
 
 def _valid_token(json_data):
     """Determine if `self.token_path` represents a valid token.
