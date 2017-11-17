@@ -290,8 +290,6 @@ class TaskGraph(object):
                         # work queue
                         self.work_queue.put(waiting_task)
                 del task_dependent_map[task]
-            else:
-                raise RuntimeError("Unknown mode %s" % mode)
         # if we got here, the waiting task queue is shut down, pass signal
         # to the workers
         for _ in xrange(max(1, self.n_workers)):
@@ -610,19 +608,3 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
-
-
-def _valid_token(json_data):
-    """Determine if `self.token_path` represents a valid token.
-
-    Returns:
-        True if files referenced in json file at `self.token_path` exist,
-        modified times are equal to the modified times recorded in the
-        token record, and the size is the same as in the recorded record.
-    """
-    for path, modified_time, size in json.loads(json_data):
-        if not (os.path.exists(path) and
-                modified_time == os.path.getmtime(path) and
-                size == os.path.getsize(path)):
-            return False
-    return True

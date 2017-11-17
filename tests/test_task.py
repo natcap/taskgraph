@@ -69,6 +69,7 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])
+        task_graph.close()
         task_graph.join()
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
