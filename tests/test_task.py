@@ -3,13 +3,19 @@ import glob
 import os
 import tempfile
 import shutil
-import taskgraph
+import time
 import unittest
 import pickle
 import logging
 
+import taskgraph
+
 logging.basicConfig(level=logging.DEBUG)
 
+
+def _long_running_function():
+    """Wait for 5 seconds."""
+    time.sleep(5)
 
 def _create_list_on_disk(value, length, target_path):
     """Create a numpy array on disk filled with value of `size`."""
@@ -58,6 +64,44 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.join()
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
+
+    def test_timeout_task(self):
+        """TaskGraph: Test timeout funcitonality"""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        _ = task_graph.add_task(
+            func=_long_running_function,)
+        timedout = not task_graph.join(0.5)
+        # this should timeout since function runs for 5 seconds
+        self.assertTrue(timedout)
+
+    def test_precomputed_task(self):
+        """TaskGraph: Test that a task reuses old results."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        _ = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path])
+        task_graph.close()
+        task_graph.join()
+        result = pickle.load(open(target_path, 'rb'))
+        self.assertEqual(result, [value]*list_len)
+        result_m_time = os.path.getmtime(target_path)
+
+        del task_graph
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        _ = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path])
+        task_graph.join()
+
+        # taskgraph shouldn't have recomputed the result
+        second_result_m_time = os.path.getmtime(target_path)
+        self.assertEqual(result_m_time, second_result_m_time)
 
     def test_task_chain(self):
         """TaskGraph: Test a task chain."""
@@ -110,7 +154,8 @@ class TaskGraphTests(unittest.TestCase):
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        _ = task_graph.add_task(func=_div_by_zero)
+        _ = task_graph.add_task(
+            func=_div_by_zero, task_name='test_broken_task')
         with self.assertRaises(RuntimeError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
@@ -120,7 +165,8 @@ class TaskGraphTests(unittest.TestCase):
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        base_task = task_graph.add_task(func=_div_by_zero)
+        base_task = task_graph.add_task(
+            func=_div_by_zero, task_name='test_broken_task_chain')
 
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
@@ -164,7 +210,7 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
-        _ = task_graph.add_task(
+        t = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])
