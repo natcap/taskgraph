@@ -1,5 +1,12 @@
 .. :changelog:
 
+0.3.0 (2017-11-17)
+------------------
+* Refactor of core scheduler. Old scheduler used asynchronicity to attempt to test if a Task was complete, occasionally testing all Tasks in potential work queue per task completion. Scheduler now uses bookkeeping to keep track of all dependencies and submits tasks for work only when all dependencies are satisfied.
+* TaskGraph and Task `.join` methods now have a timeout parameter. Additionally `join` now also returns False if `join` terminates because of a timeout.
+* More robust error reporting and shutdown of TaskGraph if any tasks fail during execution using pure threading or multiprocessing.
+
+
 0.2.7 (2017-11-09)
 ------------------
 * Fixed a critical error from the last hotfix that prevented `taskgraph` from avoiding recomputation of already completed tasks.
