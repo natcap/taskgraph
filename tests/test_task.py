@@ -59,6 +59,33 @@ class TaskGraphTests(unittest.TestCase):
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
 
+    def test_precomputed_task(self):
+        """TaskGraph: Test that a task reuses old results."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        _ = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path])
+        task_graph.join()
+        result = pickle.load(open(target_path, 'rb'))
+        self.assertEqual(result, [value]*list_len)
+        result_m_time = os.path.getmtime(target_path)
+
+        del task_graph
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        _ = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path])
+        task_graph.join()
+
+        # taskgraph shouldn't have recomputed the result
+        second_result_m_time = os.path.getmtime(target_path)
+        self.assertEqual(result_m_time, second_result_m_time)
+
     def test_task_chain(self):
         """TaskGraph: Test a task chain."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
