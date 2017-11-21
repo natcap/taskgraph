@@ -334,7 +334,6 @@ class TaskGraph(object):
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
-        print 'calling closed'
         if self.closed:
             return
         self.closed = True
