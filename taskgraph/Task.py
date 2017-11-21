@@ -119,7 +119,7 @@ class TaskGraph(object):
         """
         for task in iter(self.work_queue.get, 'STOP'):
             try:
-                if not task.is_precalcualted():
+                if not task.is_precalculated():
                     target_path_stats = task._call()
                 else:
                     task._task_complete_event.set()
@@ -543,7 +543,7 @@ class Task(object):
             return False
         return True
 
-    def is_precalcualted(self):
+    def is_precalculated(self):
         """Return true Task can be skipped.
 
         Returns:
