@@ -25,21 +25,21 @@ LOGGER = logging.getLogger('Task')
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
-    def __init__(self, taskgraph_cache_path, n_workers):
+    def __init__(self, taskgraph_cache_dir_path, n_workers):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
         parallelizing independent work notes, and avoiding repeated calls.
 
         Parameters:
-            taskgraph_cache_path (string): path to a file that either contains
-                a taskgraph cache from a previous instance or will create
-                one if none exists.
+            taskgraph_cache_dir_path (string): path to a directory that
+                either contains a taskgraph cache from a previous instance or
+                will create a new one if none exists.
             n_workers (int): number of parallel workers to allow during
                 task graph execution.  If set to 0, use current process.
         """
         # the work queue is the feeder to active worker threads
-        self.taskgraph_cache_path = taskgraph_cache_path
+        self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
         self.work_queue = Queue.Queue()
         self.n_workers = n_workers
 
@@ -119,7 +119,7 @@ class TaskGraph(object):
         """
         for task in iter(self.work_queue.get, 'STOP'):
             try:
-                if not task.is_precalcualted():
+                if not task.is_precalculated():
                     target_path_stats = task._call()
                 else:
                     task._task_complete_event.set()
@@ -128,7 +128,7 @@ class TaskGraph(object):
                 self.waiting_task_queue.put((task, 'done'))
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
-                LOGGER.error(
+                LOGGER.exception(
                     'A taskgraph _task_worker failed on Task '
                     '%s with exception "%s". '
                     'Terminating taskgraph.', task, subprocess_exception)
@@ -189,7 +189,7 @@ class TaskGraph(object):
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.worker_pool, self.taskgraph_cache_path)
+                self.worker_pool, self.taskgraph_cache_dir_path)
             task_hash = new_task.task_hash
 
             # it may be this task was already created in an earlier call,
@@ -334,7 +334,6 @@ class TaskGraph(object):
 
     def close(self):
         """Prevent future tasks from being added to the work queue."""
-        print 'calling closed'
         if self.closed:
             return
         self.closed = True
@@ -543,7 +542,7 @@ class Task(object):
             return False
         return True
 
-    def is_precalcualted(self):
+    def is_precalculated(self):
         """Return true Task can be skipped.
 
         Returns:
