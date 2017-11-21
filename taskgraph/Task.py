@@ -128,7 +128,7 @@ class TaskGraph(object):
                 self.waiting_task_queue.put((task, 'done'))
             except Exception as subprocess_exception:
                 # An error occurred on a call, terminate the taskgraph
-                LOGGER.error(
+                LOGGER.exception(
                     'A taskgraph _task_worker failed on Task '
                     '%s with exception "%s". '
                     'Terminating taskgraph.', task, subprocess_exception)
