@@ -35,20 +35,27 @@ class TaskGraph(object):
             taskgraph_cache_dir_path (string): path to a directory that
                 either contains a taskgraph cache from a previous instance or
                 will create a new one if none exists.
-            n_workers (int): number of parallel workers to allow during
-                task graph execution.  If set to 0, use current process.
+            n_workers (int): number of parallel *subprocess* workers to allow
+                during task graph execution.  If set to 0, don't use
+                subprocesses.  If set to <0, use only the main thread for any
+                execution and scheduling. In the case of the latter,
+                `add_task` will be a blocking call.
         """
         # the work queue is the feeder to active worker threads
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
-        self.work_queue = Queue.Queue()
         self.n_workers = n_workers
-
-        # used to synchronize a pass through potential tasks to add to the
-        # work queue
-        self.process_pending_tasks_event = threading.Event()
 
         # keep track if the task graph has been forcibly terminated
         self.terminated = False
+
+        # use this to keep track of all the tasks added to the graph by their
+        # task ids. Used to determine if an identical task has been added
+        # to the taskgraph during `add_task`
+        self.task_id_map = dict()
+
+        # no need to set up schedulers if n_workers is single threaded
+        if n_workers < 0:
+            return
 
         # if n_workers > 0 this will be a multiprocessing pool used to execute
         # the __call__ functions in Tasks
@@ -67,10 +74,10 @@ class TaskGraph(object):
                             "to nice %s. This might be a bug in `psutil` so "
                             "it should be okay to ignore.")
 
-        # use this to keep track of all the tasks added to the graph by their
-        # task ids. Used to determine if an identical task has been added
-        # to the taskgraph during `add_task`
-        self.task_id_map = dict()
+        # used to synchronize a pass through potential tasks to add to the
+        # work queue
+        self.work_queue = Queue.Queue()
+        self.process_pending_tasks_event = threading.Event()
 
         # used to remember if task_graph has been closed
         self.closed = False
@@ -198,7 +205,14 @@ class TaskGraph(object):
                 return self.task_id_map[task_hash]
 
             self.task_id_map[task_hash] = new_task
-            self.pending_task_queue.put(new_task)
+
+            if self.n_workers < 0:
+                # call directly if single threaded
+                new_task._call()
+            else:
+                # send to scheduler
+                self.pending_task_queue.put(new_task)
+
             return new_task
 
         except Exception:
@@ -306,6 +320,9 @@ class TaskGraph(object):
         Returns:
             True if successful join, False if timed out.
         """
+        # if single threaded, nothing to join.
+        if self.n_workers < 0:
+            return True
         try:
             timedout = False
             for task in self.task_id_map.itervalues():
@@ -320,15 +337,15 @@ class TaskGraph(object):
                 for _ in xrange(max(1, self.n_workers)):
                     self.work_queue.put('STOP')
             return not timedout
-        except Exception as e:
+        except Exception:
             # If there's an exception on a join it means that a task failed
             # to execute correctly. Print a helpful message then terminate the
             # taskgraph object.
-            LOGGER.error(
-                "Exception \"%s\" raised when joining task %s. It's possible "
+            LOGGER.exception(
+                "Exception raised when joining task %s. It's possible "
                 "that this task did not cause the exception, rather another "
                 "exception terminated the task_graph. Check the log to see "
-                "if there are other exceptions.", e, task)
+                "if there are other exceptions.", task)
             self._terminate()
             raise
 
@@ -337,11 +354,11 @@ class TaskGraph(object):
         if self.closed:
             return
         self.closed = True
-        self.pending_task_queue.put('STOP')
+        if self.n_workers >= 0:
+            self.pending_task_queue.put('STOP')
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
-        LOGGER.debug("********* calling _terminate")
         if self.terminated:
             return
         self.close()
