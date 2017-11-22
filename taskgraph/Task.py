@@ -210,7 +210,7 @@ class TaskGraph(object):
 
             if self.n_workers < 0:
                 # call directly if single threaded
-                if not task.is_precalculated():
+                if not new_task.is_precalculated():
                     new_task._call()
             else:
                 # send to scheduler
