@@ -53,13 +53,18 @@ class TaskGraph(object):
         # to the taskgraph during `add_task`
         self.task_id_map = dict()
 
-        # no need to set up schedulers if n_workers is single threaded
-        if n_workers < 0:
-            return
+        # used to remember if task_graph has been closed
+        self.closed = False
 
         # if n_workers > 0 this will be a multiprocessing pool used to execute
         # the __call__ functions in Tasks
         self.worker_pool = None
+
+        # no need to set up schedulers if n_workers is single threaded
+        if n_workers < 0:
+            return
+
+        # set up multrpocessing if n_workers > 0
         if n_workers > 0:
             self.worker_pool = multiprocessing.Pool(n_workers)
             if HAS_PSUTIL:
@@ -78,9 +83,6 @@ class TaskGraph(object):
         # work queue
         self.work_queue = Queue.Queue()
         self.process_pending_tasks_event = threading.Event()
-
-        # used to remember if task_graph has been closed
-        self.closed = False
 
         # this is the set of threads created by taskgraph
         self.thread_set = set()

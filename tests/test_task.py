@@ -151,6 +151,54 @@ class TaskGraphTests(unittest.TestCase):
         expected_result = [(value_a*2+value_b)]*list_len
         self.assertEqual(result3, expected_result)
 
+    def test_task_chain_single_thread(self):
+        """TaskGraph: Test a single threaded task chain."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_a_path = os.path.join(self.workspace_dir, 'a.dat')
+        target_b_path = os.path.join(self.workspace_dir, 'b.dat')
+        result_path = os.path.join(self.workspace_dir, 'result.dat')
+        result_2_path = os.path.join(self.workspace_dir, 'result2.dat')
+        value_a = 5
+        value_b = 10
+        list_len = 10
+        task_a = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value_a, list_len, target_a_path),
+            target_path_list=[target_a_path])
+        task_b = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value_b, list_len, target_b_path),
+            target_path_list=[target_b_path])
+        sum_task = task_graph.add_task(
+            func=_sum_lists_from_disk,
+            args=(target_a_path, target_b_path, result_path),
+            target_path_list=[result_path],
+            dependent_task_list=[task_a, task_b])
+        sum_task.join()
+
+        result = pickle.load(open(result_path, 'rb'))
+        self.assertEqual(result, [value_a+value_b]*list_len)
+
+        sum_2_task = task_graph.add_task(
+            func=_sum_lists_from_disk,
+            args=(target_a_path, result_path, result_2_path),
+            target_path_list=[result_2_path],
+            dependent_task_list=[task_a, sum_task])
+        sum_2_task.join()
+        result2 = pickle.load(open(result_2_path, 'rb'))
+        expected_result = [(value_a*2+value_b)]*list_len
+        self.assertEqual(result2, expected_result)
+
+        sum_3_task = task_graph.add_task(
+            func=_sum_lists_from_disk,
+            args=(target_a_path, result_path, result_2_path),
+            target_path_list=[result_2_path],
+            dependent_task_list=[task_a, sum_task])
+        sum_3_task.join()
+        result3 = pickle.load(open(result_2_path, 'rb'))
+        expected_result = [(value_a*2+value_b)]*list_len
+        self.assertEqual(result3, expected_result)
+
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
