@@ -37,7 +37,6 @@ def _div_by_zero():
     """Divide by zero to raise an exception."""
     return 1/0
 
-
 class TaskGraphTests(unittest.TestCase):
     """Tests for the taskgraph."""
 
@@ -288,3 +287,28 @@ class TaskGraphTests(unittest.TestCase):
 
         result = list(_get_file_stats(u'foo', [], False))
         self.assertEqual(result, [])
+
+    def test_encapsulatedtaskop(self):
+        """TaskGraph: Test abstract closure task class."""
+        from taskgraph.Task import EncapsulatedTaskOp
+
+        class TestA(EncapsulatedTaskOp):
+            def __call__(self, x):
+                return x
+
+        class TestB(EncapsulatedTaskOp):
+            def __call__(self, x):
+                return x
+
+        a = TestA()
+        b = TestB()
+        self.assertEqual(a.__call__(5), b.__call__(5))
+        self.assertNotEqual(a.__name__, b.__name__)
+
+        # redefine TestA so we get a different hashed __name__
+        class TestA(EncapsulatedTaskOp):
+            def __call__(self, x):
+                return x*x
+
+        new_a = TestA()
+        self.assertNotEqual(a.__name__, new_a.__name__)
