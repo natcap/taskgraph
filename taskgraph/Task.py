@@ -605,17 +605,18 @@ class EncapsulatedTaskOp:
     def __init__(self, *args, **kwargs):
         # try to get the source code of __call__ so task graph will recompute
         # if the function has changed
-        self.__name__ = (self.__class__.__name__)
+        args_as_str = str([args, kwargs])
         try:
-            self.__name__ += hashlib.sha1(
-                inspect.getsource(
-                    self.__class__.__call__
-                )).hexdigest()
+            # hash the args plus source code of __call__
+            id_hash = hashlib.sha1(args_as_str + inspect.getsource(
+                self.__class__.__call__)).hexdigest()
         except IOError:
-            # this will fail if the code is compiled, that's okay
-            pass
-
-        self.__name__ += str([args, kwargs])
+            # this will fail if the code is compiled, that's okay just do
+            # the args
+            id_hash = hashlib.sha1(args_as_str)
+        # prefix the classname
+        self.__name__ = '%s_%s' % (self.__class__.__name__, id_hash)
+        print self.__name__
 
     @abc.abstractmethod
     def __call__(self, *args, **kwargs):

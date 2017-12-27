@@ -292,6 +292,14 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: Test abstract closure task class."""
         from taskgraph.Task import EncapsulatedTaskOp
 
+        class TestAbstract(EncapsulatedTaskOp):
+            def __init__(self):
+                pass
+
+        # __call__ is abstract so TypeError since it's not implemented
+        with self.assertRaises(TypeError):
+            x = TestAbstract()
+
         class TestA(EncapsulatedTaskOp):
             def __call__(self, x):
                 return x
@@ -302,6 +310,7 @@ class TaskGraphTests(unittest.TestCase):
 
         a = TestA()
         b = TestB()
+        # results of calls should be the same
         self.assertEqual(a.__call__(5), b.__call__(5))
         self.assertNotEqual(a.__name__, b.__name__)
 
@@ -312,3 +321,14 @@ class TaskGraphTests(unittest.TestCase):
 
         new_a = TestA()
         self.assertNotEqual(a.__name__, new_a.__name__)
+
+        class TestA(EncapsulatedTaskOp):
+            def __init__(self, q):
+                super(TestA, self).__init__(q)
+                self.q = q
+
+            def __call__(self, x):
+                return x*x
+
+        init_new_a = TestA(1)
+        self.assertNotEqual(new_a.__name__, init_new_a.__name__)
