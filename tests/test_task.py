@@ -308,11 +308,15 @@ class TaskGraphTests(unittest.TestCase):
             def __call__(self, x):
                 return x
 
+        # TestA and TestB should be different because of different class names
         a = TestA()
         b = TestB()
         # results of calls should be the same
         self.assertEqual(a.__call__(5), b.__call__(5))
         self.assertNotEqual(a.__name__, b.__name__)
+
+        # two instances with same args should be the same
+        self.assertEqual(TestA().__name__, TestA().__name__)
 
         # redefine TestA so we get a different hashed __name__
         class TestA(EncapsulatedTaskOp):
@@ -322,6 +326,7 @@ class TaskGraphTests(unittest.TestCase):
         new_a = TestA()
         self.assertNotEqual(a.__name__, new_a.__name__)
 
+        # change internal class constructor to get different hashes
         class TestA(EncapsulatedTaskOp):
             def __init__(self, q):
                 super(TestA, self).__init__(q)
