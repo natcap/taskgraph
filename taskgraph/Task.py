@@ -616,7 +616,6 @@ class EncapsulatedTaskOp:
             id_hash = hashlib.sha1(args_as_str)
         # prefix the classname
         self.__name__ = '%s_%s' % (self.__class__.__name__, id_hash)
-        print self.__name__
 
     @abc.abstractmethod
     def __call__(self, *args, **kwargs):
