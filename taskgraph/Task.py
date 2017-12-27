@@ -175,7 +175,6 @@ class TaskGraph(object):
             has the same signature and has already been added to the
             TaskGraph.
         """
-        LOGGER.debug('added task %s' % task_name)
         try:
             if self.closed:
                 raise ValueError(
