@@ -229,7 +229,7 @@ class TaskGraph(object):
         stopped = False
         priority_queue = []
         block = True
-        timeout = 0.1
+        timeout = 0.05
         while not stopped:
             while True:
                 try:
@@ -600,16 +600,19 @@ class Task(object):
             True if the Task's target paths exist in the same state as the
             last recorded run. False otherwise.
         """
-        if not os.path.exists(self.task_cache_path):
-            return False
-        with open(self.task_cache_path, 'rb') as task_cache_file:
-            result_target_path_stats = pickle.load(task_cache_file)
-        for path, modified_time, size in result_target_path_stats:
-            if not (os.path.exists(path) and
-                    modified_time == os.path.getmtime(path) and
-                    size == os.path.getsize(path)):
+        try:
+            if not os.path.exists(self.task_cache_path):
                 return False
-        return True
+            with open(self.task_cache_path, 'rb') as task_cache_file:
+                result_target_path_stats = pickle.load(task_cache_file)
+            for path, modified_time, size in result_target_path_stats:
+                if not (os.path.exists(path) and
+                        modified_time == os.path.getmtime(path) and
+                        size == os.path.getsize(path)):
+                    return False
+            return True
+        except EOFError:
+            return False
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
