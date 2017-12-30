@@ -83,8 +83,8 @@ class TaskGraph(object):
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
-        self.work_queue = Queue.Queue(max(n_workers, 1))
-        self.work_cleared_event = threading.Event()
+        self.work_queue = Queue.Queue()
+        self.worker_semaphore = threading.Semaphore(max(1, n_workers))
         # launch threads to manage the workers
         for thread_id in xrange(max(1, n_workers)):
             worker_thread = threading.Thread(
@@ -118,8 +118,8 @@ class TaskGraph(object):
                 # precondition: task wouldn't be in queue if it were
                 # precalculated
                 task._call()
+                self.worker_semaphore.release()
                 self.waiting_task_queue.put((task, 'done'))
-                self.work_cleared_event.set()
             except Exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.exception(
@@ -226,41 +226,31 @@ class TaskGraph(object):
         """
         stopped = False
         priority_queue = []
-        block = True
         while not stopped:
-            block = True
             while True:
                 try:
-                    # initially block is True so it'll wait until a queue put
-                    task = self.work_ready_queue.get(block)
+                    # only block if the priority queque is empty
+                    task = self.work_ready_queue.get(not priority_queue)
                     if task == 'STOP':
                         # encounter STOP so break and don't get more elements
                         stopped = True
                         break
-                    # now that we've got one element, set block to false and
-                    # drain the work_ready_queue
-                    block = False
+                    # push task to priority queue
                     heapq.heappush(priority_queue, task)
                 except Queue.Empty:
-                    # this triggers when work_ready_queue is empty,
+                    # this triggers when work_ready_queue is empty and
+                    # there's something in the work_ready_queue
                     break
-            # clear the work event so some worker can set it again as we add
-            # tasks to the work queue
-            self.work_cleared_event.clear()
+            # only put elements if there are workers available
+            self.worker_semaphore.acquire()
             while priority_queue:
-                try:
-                    # push high priority on the queue until queue is full
-                    # or if stopped, drain the priority queue
-                    # if stopped==False, raise empty exception as soon as
-                    # work queue is full, otherwise block and drain the
-                    # priority queue to wind down.
-                    self.work_queue.put(priority_queue[0], stopped)
-                    heapq.heappop(priority_queue)
-                except Queue.Full:
-                    # work queue is full, wait for a work cleared signal
-                    self.work_cleared_event.wait()
-                    # break and check the work ready queue to see if there are
-                    # more tasks ready that might have a higher priority
+                # push high priority on the queue until queue is full
+                # or if thread is stopped, drain the priority queue
+                self.work_queue.put(priority_queue[0])
+                heapq.heappop(priority_queue)
+                if not stopped:
+                    # by stopping after one put, we can give the chance for
+                    # other higher priority tasks to flow in
                     break
         # got a 'STOP' so signal worker threads to stop too
         for _ in xrange(max(1, self.n_workers)):
