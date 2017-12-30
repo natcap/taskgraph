@@ -431,7 +431,8 @@ class Task(object):
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
         self.worker_pool = worker_pool
-        self.priority = priority
+        # invert the priority since heapq goes smallest to largest
+        self.priority = -priority
 
         self.terminated = False
         self.exception_object = None
