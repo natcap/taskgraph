@@ -84,6 +84,7 @@ class TaskGraph(object):
         # used to synchronize a pass through potential tasks to add to the
         # work queue
         self.work_queue = Queue.Queue(max(n_workers, 1))
+        self.work_cleared_event = threading.Event()
         # launch threads to manage the workers
         for thread_id in xrange(max(1, n_workers)):
             worker_thread = threading.Thread(
@@ -111,22 +112,14 @@ class TaskGraph(object):
 
     def _task_worker(self):
         """Execute and manage Task objects.
-
-        This worker extracts (task object, args, kwargs) tuples from
-        `self.work_queue`, processes the return value to ensure either a
-        successful completion OR handle an error.  On successful completion
-        the task's hash and dependent files are recorded in TaskGraph's
-        cache structure to test and prevent future-re-executions.
         """
         for task in iter(self.work_queue.get, 'STOP'):
             try:
-                if not task.is_precalculated():
-                    task._call()
-                else:
-                    task._task_complete_event.set()
-                # task complete, signal to pending task scheduler that this
-                # task is complete
+                # precondition: task wouldn't be in queue if it were
+                # precalculated
+                task._call()
                 self.waiting_task_queue.put((task, 'done'))
+                self.work_cleared_event.set()
             except Exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.exception(
@@ -211,7 +204,12 @@ class TaskGraph(object):
                     new_task._call()
             else:
                 # send to scheduler
-                self.waiting_task_queue.put((new_task, 'wait'))
+                if not new_task.is_precalculated():
+                    self.waiting_task_queue.put((new_task, 'wait'))
+                else:
+                    # this is a shortcut to clear pre-calculated tasks
+                    new_task._task_complete_event.set()
+                    self.waiting_task_queue.put((new_task, 'done'))
 
             return new_task
 
@@ -229,16 +227,12 @@ class TaskGraph(object):
         stopped = False
         priority_queue = []
         block = True
-        timeout = 0.05
         while not stopped:
+            block = True
             while True:
                 try:
-                    # initially block is True so it'll wait for a timeout
-                    # if there's something in the priority queue to send to
-                    # the work queue. if it times out it will go down and see
-                    # if the work queue can take
-                    task = self.work_ready_queue.get(
-                        block and not priority_queue, timeout)
+                    # initially block is True so it'll wait until a queue put
+                    task = self.work_ready_queue.get(block)
                     if task == 'STOP':
                         # encounter STOP so break and don't get more elements
                         stopped = True
@@ -248,22 +242,27 @@ class TaskGraph(object):
                     block = False
                     heapq.heappush(priority_queue, task)
                 except Queue.Empty:
-                    # we hit this on a timeout, so go back to regular blocking
-                    # behavior
-                    block = True
+                    # this triggers when work_ready_queue is empty,
                     break
-            # while there's something in the priority queue...
+            # clear the work event so some worker can set it again as we add
+            # tasks to the work queue
+            self.work_cleared_event.clear()
             while priority_queue:
                 try:
                     # push high priority on the queue until queue is full
                     # or if stopped, drain the priority queue
-                    task = heapq.heappop(priority_queue)
                     # if stopped==False, raise empty exception as soon as
                     # work queue is full, otherwise block and drain the
                     # priority queue to wind down.
-                    self.work_queue.put(task, stopped)
+                    self.work_queue.put(priority_queue[0], stopped)
+                    heapq.heappop(priority_queue)
                 except Queue.Full:
-                    heapq.heappush(priority_queue, task)
+                    # work queue is full, wait for a work cleared signal
+                    self.work_cleared_event.wait()
+                    # break and check the work ready queue to see if there are
+                    # more tasks ready that might have a higher priority
+                    break
+        # got a 'STOP' so signal worker threads to stop too
         for _ in xrange(max(1, self.n_workers)):
             self.work_queue.put('STOP')
 
@@ -306,6 +305,10 @@ class TaskGraph(object):
                 # invariant: task has not previously been sent as a 'done'
                 # notification and task is done.
                 completed_tasks.add(task)
+                if task not in task_dependent_map:
+                    # this can occur if add_task identifies task is complete
+                    # before any other analysis.
+                    continue
                 for waiting_task in task_dependent_map[task]:
                     # remove `task` from the set of tasks that `waiting_task`
                     # was waiting on.
