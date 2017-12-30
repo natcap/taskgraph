@@ -238,7 +238,7 @@ class TaskGraph(object):
                     # the work queue. if it times out it will go down and see
                     # if the work queue can take
                     task = self.work_ready_queue.get(
-                        block and priority_queue, timeout)
+                        block and not priority_queue, timeout)
                     if task == 'STOP':
                         # encounter STOP so break and don't get more elements
                         stopped = True
