@@ -223,7 +223,6 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
         base_task = task_graph.add_task(
             func=_div_by_zero, task_name='test_broken_task_chain')
-        task_graph.close()
 
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
@@ -233,6 +232,7 @@ class TaskGraphTests(unittest.TestCase):
             args=(value, list_len, target_path),
             target_path_list=[target_path],
             dependent_task_list=[base_task])
+        task_graph.close()
         with self.assertRaises(RuntimeError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
