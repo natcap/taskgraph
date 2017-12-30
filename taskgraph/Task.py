@@ -262,7 +262,7 @@ class TaskGraph(object):
                     # work queue is full, otherwise block and drain the
                     # priority queue to wind down.
                     self.work_queue.put(task, stopped)
-                except Queue.Empty:
+                except Queue.Full:
                     heapq.heappush(priority_queue, task)
         for _ in xrange(max(1, self.n_workers)):
             self.work_queue.put('STOP')
