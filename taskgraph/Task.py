@@ -1,4 +1,5 @@
 """Task graph framework."""
+import heapq
 import pprint
 import types
 import collections
@@ -82,9 +83,7 @@ class TaskGraph(object):
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
-        self.work_queue = Queue.Queue()
-        self.process_pending_tasks_event = threading.Event()
-
+        self.work_queue = Queue.Queue(max(n_workers, 1))
         # launch threads to manage the workers
         for thread_id in xrange(max(1, n_workers)):
             worker_thread = threading.Thread(
@@ -93,15 +92,22 @@ class TaskGraph(object):
             worker_thread.daemon = True
             worker_thread.start()
 
-        # tasks that get passed right to add_task get put in this queue for
-        # scheduling
+        # tasks that get passed add_task get put in this queue for scheduling
         self.waiting_task_queue = Queue.Queue()
-
         waiting_task_scheduler = threading.Thread(
             target=self._process_waiting_tasks,
             name='_waiting_task_scheduler')
         waiting_task_scheduler.daemon = True
         waiting_task_scheduler.start()
+
+        # tasks in the work ready queue have dependencies satisfied but need
+        # priority scheduling
+        self.work_ready_queue = Queue.Queue()
+        priority_task_scheduler = threading.Thread(
+            target=self._schedule_priority_tasks,
+            name='_priority_task_scheduler')
+        priority_task_scheduler.daemon = True
+        priority_task_scheduler.start()
 
     def _task_worker(self):
         """Execute and manage Task objects.
@@ -214,6 +220,53 @@ class TaskGraph(object):
             self._terminate()
             raise
 
+    def _schedule_priority_tasks(self):
+        """Priority schedules the `self.work_ready` queue.
+
+        Reads the `self.work_ready` queue and feeds in highest priority tasks
+        when the self.work_queue is ready for them.
+        """
+        stopped = False
+        priority_queue = []
+        block = True
+        timeout = 0.1
+        while not stopped:
+            while True:
+                try:
+                    # initially block is True so it'll wait for a timeout
+                    # if there's something in the priority queue to send to
+                    # the work queue. if it times out it will go down and see
+                    # if the work queue can take
+                    task = self.work_ready_queue.get(
+                        block and priority_queue, timeout)
+                    if task == 'STOP':
+                        # encounter STOP so break and don't get more elements
+                        stopped = True
+                        break
+                    # now that we've got one element, set block to false and
+                    # drain the work_ready_queue
+                    block = False
+                    heapq.heappush(priority_queue, task)
+                except Queue.Empty:
+                    # we hit this on a timeout, so go back to regular blocking
+                    # behavior
+                    block = True
+                    break
+            # while there's something in the priority queue...
+            while priority_queue:
+                try:
+                    # push high priority on the queue until queue is full
+                    # or if stopped, drain the priority queue
+                    task = heapq.heappop(priority_queue)
+                    # if stopped==False, raise empty exception as soon as
+                    # work queue is full, otherwise block and drain the
+                    # priority queue to wind down.
+                    self.work_queue.put(task, stopped)
+                except Queue.Empty:
+                    heapq.heappush(priority_queue, task)
+        for _ in xrange(max(1, self.n_workers)):
+            self.work_queue.put('STOP')
+
     def _process_waiting_tasks(self):
         """Process any tasks that are waiting on dependencies.
 
@@ -266,12 +319,11 @@ class TaskGraph(object):
                 del task_dependent_map[task]
             for ready_task in sorted(
                     tasks_ready_to_work, key=lambda x: x.priority):
-                self.work_queue.put(ready_task)
+                self.work_ready_queue.put(ready_task)
             tasks_ready_to_work = None
         # if we got here, the waiting task queue is shut down, pass signal
-        # to the workers
-        for _ in xrange(max(1, self.n_workers)):
-            self.work_queue.put('STOP')
+        # to the lower queue
+        self.work_ready_queue.put('STOP')
 
     def join(self, timeout=None):
         """Join all threads in the graph.
@@ -298,8 +350,6 @@ class TaskGraph(object):
             if self.closed:
                 # inject sentinels to the queues
                 self.waiting_task_queue.put('STOP')
-                for _ in xrange(max(1, self.n_workers)):
-                    self.work_queue.put('STOP')
             return not timedout
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -439,6 +489,10 @@ class Task(object):
     def __ne__(self, other):
         """Inverse of __eq__."""
         return not self.__eq__(other)
+
+    def __lt__(self, other):
+        """Less than based on priority."""
+        return self.priority < other.priority
 
     def __str__(self):
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
