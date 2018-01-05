@@ -4,6 +4,7 @@ Unreleased Changes
 ------------------
 * Added an option to `TaskGraph` constructor to allow negative values in the `n_workers` argument to indicate that the entire object should run in the main thread. A value of 0 will indicate that no multiprocessing will be used but concurrency will be allowed for non-blocking `add_task`.
 * Added an abstract class `task.EncapsulatedTaskOp` that can be used to instance a class that needs scope in order to be used as an operation passed to a process. The advantage of using `EncapsulatedTaskOp` is that the `__name__` hash used by `TaskGraph` to determine if a task is unique is calculated in the superclass and the subclass need only worry about implementation of `__call__`.
+* Added a `priority` optional scalar argument to `TaskGraph.add_task` to indicates the priority preference of the task to be executed. A higher priority task whose dependencies are satisfied will executed before one with a lower priority.
 
 0.3.0 (2017-11-17)
 ------------------
