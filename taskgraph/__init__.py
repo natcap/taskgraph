@@ -1,6 +1,5 @@
 """taskgraph module."""
-from taskgraph.Task import TaskGraph
-from taskgraph.Task import Task
+from taskgraph.Task import *
 
 import natcap.versioner
 

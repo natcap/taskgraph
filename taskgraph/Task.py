@@ -12,6 +12,7 @@ import threading
 import errno
 import Queue
 import inspect
+import abc
 
 try:
     import psutil
@@ -590,6 +591,35 @@ class Task(object):
         self.terminated = True
         self.exception_object = exception_object
         self._task_complete_event.set()
+
+
+class EncapsulatedTaskOp:
+    """Used as a superclass for Task operations that need closures.
+
+    This class will automatically hash the subclass's __call__ method source
+    as well as the arguments to its __init__ function to calculate the
+    Task's unique hash.
+    """
+    __metaclass__ = abc.ABCMeta
+
+    def __init__(self, *args, **kwargs):
+        # try to get the source code of __call__ so task graph will recompute
+        # if the function has changed
+        args_as_str = str([args, kwargs])
+        try:
+            # hash the args plus source code of __call__
+            id_hash = hashlib.sha1(args_as_str + inspect.getsource(
+                self.__class__.__call__)).hexdigest()
+        except IOError:
+            # this will fail if the code is compiled, that's okay just do
+            # the args
+            id_hash = hashlib.sha1(args_as_str)
+        # prefix the classname
+        self.__name__ = '%s_%s' % (self.__class__.__name__, id_hash)
+
+    @abc.abstractmethod
+    def __call__(self, *args, **kwargs):
+        pass
 
 
 def _get_file_stats(base_value, ignore_list, ignore_directories):
