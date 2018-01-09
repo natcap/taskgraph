@@ -1,5 +1,9 @@
 .. :changelog:
 
+Unreleased Changes
+------------------
+* Added an option to `TaskGraph` constructor to allow negative values in the `n_workers` argument to indicate that the entire object should run in the main thread. A value of 0 will indicate that no multiprocessing will be used but concurrency will be allowed for non-blocking `add_task`.
+
 0.3.0 (2017-11-17)
 ------------------
 * Refactor of core scheduler. Old scheduler used asynchronicity to attempt to test if a Task was complete, occasionally testing all Tasks in potential work queue per task completion. Scheduler now uses bookkeeping to keep track of all dependencies and submits tasks for work only when all dependencies are satisfied.
