@@ -262,11 +262,11 @@ class TaskGraph(object):
         This worker monitors the self.waiting_task_queue Queue and looks for
         (task, 'wait'), or (task, 'done') tuples.
 
-            If mode is 'wait' the task is indexed locally with reference to
-            its incomplete tasks. If its depedent tasks are complete, the
-            task is sent to the work queue. If mode is 'done' this signals the
-            worker to re-'wait' any task that was dependent on the one that
-            arrived in the queue.
+        If mode is 'wait' the task is indexed locally with reference to
+        its incomplete tasks. If its dependent tasks are complete, the
+        task is sent to the work queue. If mode is 'done' this signals the
+        worker to re-'wait' any task that was dependent on the one that
+        arrived in the queue.
         """
         task_dependent_map = collections.defaultdict(set)
         dependent_task_map = collections.defaultdict(set)
