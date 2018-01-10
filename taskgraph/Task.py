@@ -1,4 +1,5 @@
 """Task graph framework."""
+import heapq
 import pprint
 import types
 import collections
@@ -83,11 +84,7 @@ class TaskGraph(object):
         # used to synchronize a pass through potential tasks to add to the
         # work queue
         self.work_queue = Queue.Queue()
-        self.process_pending_tasks_event = threading.Event()
-
-        # this is the set of threads created by taskgraph
-        self.thread_set = set()
-
+        self.worker_semaphore = threading.Semaphore(max(1, n_workers))
         # launch threads to manage the workers
         for thread_id in xrange(max(1, n_workers)):
             worker_thread = threading.Thread(
@@ -95,60 +92,47 @@ class TaskGraph(object):
                 name='taskgraph_worker_thread_%d' % thread_id)
             worker_thread.daemon = True
             worker_thread.start()
-            self.thread_set.add(worker_thread)
 
-        # tasks that get passed right to add_task get put in this queue for
-        # scheduling
-        self.pending_task_queue = Queue.Queue()
-
-        # launch thread to monitor the pending task set
-        pending_task_scheduler = threading.Thread(
-            target=self._process_pending_tasks,
-            name='_pending_task_scheduler')
-        pending_task_scheduler.daemon = True
-        pending_task_scheduler.start()
-        self.thread_set.add(pending_task_scheduler)
-
+        # tasks that get passed add_task get put in this queue for scheduling
         self.waiting_task_queue = Queue.Queue()
-
         waiting_task_scheduler = threading.Thread(
             target=self._process_waiting_tasks,
             name='_waiting_task_scheduler')
         waiting_task_scheduler.daemon = True
         waiting_task_scheduler.start()
-        self.thread_set.add(waiting_task_scheduler)
+
+        # tasks in the work ready queue have dependencies satisfied but need
+        # priority scheduling
+        self.work_ready_queue = Queue.Queue()
+        priority_task_scheduler = threading.Thread(
+            target=self._schedule_priority_tasks,
+            name='_priority_task_scheduler')
+        priority_task_scheduler.daemon = True
+        priority_task_scheduler.start()
 
     def _task_worker(self):
         """Execute and manage Task objects.
-
-        This worker extracts (task object, args, kwargs) tuples from
-        `self.work_queue`, processes the return value to ensure either a
-        successful completion OR handle an error.  On successful completion
-        the task's hash and dependent files are recorded in TaskGraph's
-        cache structure to test and prevent future-re-executions.
         """
         for task in iter(self.work_queue.get, 'STOP'):
             try:
-                if not task.is_precalculated():
-                    target_path_stats = task._call()
-                else:
-                    task._task_complete_event.set()
-                # task complete, signal to pending task scheduler that this
-                # task is complete
+                # precondition: task wouldn't be in queue if it were
+                # precalculated
+                task._call()
+                self.worker_semaphore.release()
                 self.waiting_task_queue.put((task, 'done'))
-            except Exception as subprocess_exception:
+            except Exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.exception(
                     'A taskgraph _task_worker failed on Task '
-                    '%s with exception "%s". '
-                    'Terminating taskgraph.', task, subprocess_exception)
+                    '%s. Terminating taskgraph.', task)
                 self._terminate()
                 raise
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
-            dependent_task_list=None, ignore_directories=True):
+            dependent_task_list=None, ignore_directories=True,
+            priority=0):
         """Add a task to the task graph.
 
         Parameters:
@@ -170,6 +154,11 @@ class TaskGraph(object):
             ignore_directories (boolean): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
+            priority (numeric): the priority of a task is considered when
+                there is more than one task whose dependencies have been
+                met and are ready for scheduling. Tasks are inserted into the
+                work queue in order of decreasing priority. This value can be
+                positive, negative, and/or floating point.
 
         Returns:
             Task which was just added to the graph or an existing Task that
@@ -199,7 +188,7 @@ class TaskGraph(object):
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.worker_pool, self.taskgraph_cache_dir_path)
+                self.worker_pool, self.taskgraph_cache_dir_path, priority)
             task_hash = new_task.task_hash
 
             # it may be this task was already created in an earlier call,
@@ -215,7 +204,12 @@ class TaskGraph(object):
                     new_task._call()
             else:
                 # send to scheduler
-                self.pending_task_queue.put(new_task)
+                if not new_task.is_precalculated():
+                    self.waiting_task_queue.put((new_task, 'wait'))
+                else:
+                    # this is a shortcut to clear pre-calculated tasks
+                    new_task._task_complete_event.set()
+                    self.waiting_task_queue.put((new_task, 'done'))
 
             return new_task
 
@@ -224,35 +218,43 @@ class TaskGraph(object):
             self._terminate()
             raise
 
-    def _process_pending_tasks(self):
-        """Process pending task queue, send ready tasks to work queue.
+    def _schedule_priority_tasks(self):
+        """Priority schedules the `self.work_ready` queue.
 
-        There are two reasons a task will be on the pending_task_queue. One
-        is to potentially process it for work. The other is to alert that
-        the task is complete and any tasks that were dependent on it may
-        now be processed.
+        Reads the `self.work_ready` queue and feeds in highest priority tasks
+        when the self.work_queue is ready for them.
         """
-        tasks_sent_to_work = set()
-        for task in iter(self.pending_task_queue.get, 'STOP'):
-            # invariant: a task coming in was put in the queue before it was
-            #   complete and because it was a dependent task of another task
-            #   that completed. OR a task is complete and alerting that any
-            #   tasks that were dependent on it can be processed.
-
-            # it's a new task, check and see if its dependencies are complete
-            outstanding_dependent_task_list = [
-                dep_task for dep_task in task.dependent_task_list
-                if not dep_task.is_complete()]
-
-            if outstanding_dependent_task_list:
-                # if outstanding tasks, delay execution and put a reminder
-                # that this task is dependent on another
-                self.waiting_task_queue.put((task, 'wait'))
-            elif task.task_hash not in tasks_sent_to_work:
-                # otherwise if not already sent to work, put in the work queue
-                # and record it was sent
-                tasks_sent_to_work.add(task.task_hash)
-                self.work_queue.put(task)
+        stopped = False
+        priority_queue = []
+        while not stopped:
+            while True:
+                try:
+                    # only block if the priority queque is empty
+                    task = self.work_ready_queue.get(not priority_queue)
+                    if task == 'STOP':
+                        # encounter STOP so break and don't get more elements
+                        stopped = True
+                        break
+                    # push task to priority queue
+                    heapq.heappush(priority_queue, task)
+                except Queue.Empty:
+                    # this triggers when work_ready_queue is empty and
+                    # there's something in the work_ready_queue
+                    break
+            # only put elements if there are workers available
+            self.worker_semaphore.acquire()
+            while priority_queue:
+                # push high priority on the queue until queue is full
+                # or if thread is stopped, drain the priority queue
+                self.work_queue.put(priority_queue[0])
+                heapq.heappop(priority_queue)
+                if not stopped:
+                    # by stopping after one put, we can give the chance for
+                    # other higher priority tasks to flow in
+                    break
+        # got a 'STOP' so signal worker threads to stop too
+        for _ in xrange(max(1, self.n_workers)):
+            self.work_queue.put('STOP')
 
     def _process_waiting_tasks(self):
         """Process any tasks that are waiting on dependencies.
@@ -260,30 +262,26 @@ class TaskGraph(object):
         This worker monitors the self.waiting_task_queue Queue and looks for
         (task, 'wait'), or (task, 'done') tuples.
 
-            If mode is 'wait' the task is indexed locally with reference to
-            its incomplete tasks. If its depedent tasks are complete, the
-            task is sent to the work queue. If mode is 'done' this signals the
-            worker to re-'wait' any task that was dependent on the one that
-            arrived in the queue.
+        If mode is 'wait' the task is indexed locally with reference to
+        its incomplete tasks. If its dependent tasks are complete, the
+        task is sent to the work queue. If mode is 'done' this signals the
+        worker to re-'wait' any task that was dependent on the one that
+        arrived in the queue.
         """
         task_dependent_map = collections.defaultdict(set)
         dependent_task_map = collections.defaultdict(set)
         completed_tasks = set()
         for task, mode in iter(self.waiting_task_queue.get, 'STOP'):
+            tasks_ready_to_work = set()
             if mode == 'wait':
-                # invariant: task has come directly from `add_task` and has
-                # been determined that is has at least one unsatisfied
-                # dependency
-
+                # see if this task's dependencies are satisfied, if so send
+                # to work.
                 outstanding_dependent_task_list = [
                     dep_task for dep_task in task.dependent_task_list
                     if dep_task not in completed_tasks]
-                # possible a dependency has been satisfied since `add_task`
-                # was able to add this task to the waiting queue.
                 if not outstanding_dependent_task_list:
                     # if nothing is outstanding, send to work queue
-                    self.work_queue.put(task)
-                    continue
+                    tasks_ready_to_work.add(task)
 
                 # there are unresolved tasks that the waiting process
                 # scheduler has not been notified of. Record dependencies.
@@ -297,6 +295,10 @@ class TaskGraph(object):
                 # invariant: task has not previously been sent as a 'done'
                 # notification and task is done.
                 completed_tasks.add(task)
+                if task not in task_dependent_map:
+                    # this can occur if add_task identifies task is complete
+                    # before any other analysis.
+                    continue
                 for waiting_task in task_dependent_map[task]:
                     # remove `task` from the set of tasks that `waiting_task`
                     # was waiting on.
@@ -306,12 +308,15 @@ class TaskGraph(object):
                     if not dependent_task_map[waiting_task]:
                         # if we removed the last task we can put it to the
                         # work queue
-                        self.work_queue.put(waiting_task)
+                        tasks_ready_to_work.add(waiting_task)
                 del task_dependent_map[task]
+            for ready_task in sorted(
+                    tasks_ready_to_work, key=lambda x: x.priority):
+                self.work_ready_queue.put(ready_task)
+            tasks_ready_to_work = None
         # if we got here, the waiting task queue is shut down, pass signal
-        # to the workers
-        for _ in xrange(max(1, self.n_workers)):
-            self.work_queue.put('STOP')
+        # to the lower queue
+        self.work_ready_queue.put('STOP')
 
     def join(self, timeout=None):
         """Join all threads in the graph.
@@ -338,8 +343,6 @@ class TaskGraph(object):
             if self.closed:
                 # inject sentinels to the queues
                 self.waiting_task_queue.put('STOP')
-                for _ in xrange(max(1, self.n_workers)):
-                    self.work_queue.put('STOP')
             return not timedout
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -358,8 +361,6 @@ class TaskGraph(object):
         if self.closed:
             return
         self.closed = True
-        if self.n_workers >= 0:
-            self.pending_task_queue.put('STOP')
 
     def _terminate(self):
         """Forcefully terminate remaining task graph computation."""
@@ -379,7 +380,7 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            worker_pool, cache_dir):
+            worker_pool, cache_dir, priority):
         """Make a Task.
 
         Parameters:
@@ -407,6 +408,11 @@ class Task(object):
                 multiprocessing pool that can be used for `_call` execution.
             cache_dir (string): path to a directory to both write and expect
                 data recorded from a previous Taskgraph run.
+            priority (numeric): the priority of a task is considered when
+                there is more than one task whose dependencies have been
+                met and are ready for scheduling. Tasks are inserted into the
+                work queue in order of decreasing priority. This value can be
+                positive, negative, and/or floating point.
         """
         self.task_name = task_name
         self.func = func
@@ -418,6 +424,8 @@ class Task(object):
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
         self.worker_pool = worker_pool
+        # invert the priority since heapq goes smallest to largest
+        self.priority = -priority
 
         self.terminated = False
         self.exception_object = None
@@ -466,10 +474,25 @@ class Task(object):
                 [x for x in self.task_hash[0:3]] +
                 [self.task_hash + '.json']))
 
+    def __eq__(self, other):
+        """Two tasks are equal if their hashes are equal."""
+        if isinstance(self, other.__class__):
+            return self.task_hash == other.task_hash
+        return False
+
+    def __ne__(self, other):
+        """Inverse of __eq__."""
+        return not self.__eq__(other)
+
+    def __lt__(self, other):
+        """Less than based on priority."""
+        return self.priority < other.priority
+
     def __str__(self):
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
             {
                 "task_name": self.task_name,
+                "priority": self.priority,
                 "target_path_list": self.target_path_list,
                 "dependent_task_list": self.dependent_task_list,
                 "ignore_path_list": self.ignore_path_list,
@@ -506,7 +529,7 @@ class Task(object):
             missing_target_paths = [
                 target_path for target_path in self.target_path_list
                 if not os.path.exists(target_path)]
-            if len(missing_target_paths) > 0:
+            if missing_target_paths:
                 raise RuntimeError(
                     "The following paths were expected but not found "
                     "after the function call: %s" % missing_target_paths)
@@ -521,7 +544,7 @@ class Task(object):
                 raise RuntimeError(
                     "In Task: %s\nMissing expected target path results.\n"
                     "Expected: %s\nObserved: %s\n" % (
-                        self.task_name, target_path_list,
+                        self.task_name, self.target_path_list,
                         result_target_path_set))
 
             # otherwise record target path stats in a file located at
@@ -537,7 +560,7 @@ class Task(object):
             # successful run, return target path stats
             return result_target_path_stats
         except Exception as e:
-            LOGGER.error("Exception %s in Task: %s" % (e, self))
+            LOGGER.exception("Exception Task: %s", self)
             self._terminate(e)
             raise
         finally:
@@ -570,16 +593,19 @@ class Task(object):
             True if the Task's target paths exist in the same state as the
             last recorded run. False otherwise.
         """
-        if not os.path.exists(self.task_cache_path):
-            return False
-        with open(self.task_cache_path, 'rb') as task_cache_file:
-            result_target_path_stats = pickle.load(task_cache_file)
-        for path, modified_time, size in result_target_path_stats:
-            if not (os.path.exists(path) and
-                    modified_time == os.path.getmtime(path) and
-                    size == os.path.getsize(path)):
+        try:
+            if not os.path.exists(self.task_cache_path):
                 return False
-        return True
+            with open(self.task_cache_path, 'rb') as task_cache_file:
+                result_target_path_stats = pickle.load(task_cache_file)
+            for path, modified_time, size in result_target_path_stats:
+                if not (os.path.exists(path) and
+                        modified_time == os.path.getmtime(path) and
+                        size == os.path.getsize(path)):
+                    return False
+            return True
+        except EOFError:
+            return False
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""

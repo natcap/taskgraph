@@ -60,6 +60,7 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])
+        task_graph.close()
         task_graph.join()
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
@@ -70,6 +71,7 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         _ = task_graph.add_task(
             func=_long_running_function,)
+        task_graph.close()
         timedout = not task_graph.join(0.5)
         # this should timeout since function runs for 5 seconds
         self.assertTrue(timedout)
@@ -96,6 +98,7 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])
+        task_graph.close()
         task_graph.join()
 
         # taskgraph shouldn't have recomputed the result
@@ -145,10 +148,13 @@ class TaskGraphTests(unittest.TestCase):
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task])
+        task_graph.close()
         sum_3_task.join()
         result3 = pickle.load(open(result_2_path, 'rb'))
         expected_result = [(value_a*2+value_b)]*list_len
         self.assertEqual(result3, expected_result)
+        task_graph.join()
+
 
     def test_task_chain_single_thread(self):
         """TaskGraph: Test a single threaded task chain."""
@@ -193,16 +199,19 @@ class TaskGraphTests(unittest.TestCase):
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task])
+        task_graph.close()
         sum_3_task.join()
         result3 = pickle.load(open(result_2_path, 'rb'))
         expected_result = [(value_a*2+value_b)]*list_len
         self.assertEqual(result3, expected_result)
+        task_graph.join()
 
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
         _ = task_graph.add_task(
             func=_div_by_zero, task_name='test_broken_task')
+        task_graph.close()
         with self.assertRaises(RuntimeError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
@@ -223,6 +232,7 @@ class TaskGraphTests(unittest.TestCase):
             args=(value, list_len, target_path),
             target_path_list=[target_path],
             dependent_task_list=[base_task])
+        task_graph.close()
         with self.assertRaises(RuntimeError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
@@ -233,6 +243,7 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: Test an empty task."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task()
+        task_graph.close()
         task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
         # we should have a file in there that's the token
@@ -250,6 +261,7 @@ class TaskGraphTests(unittest.TestCase):
                 func=_create_list_on_disk,
                 args=(value, list_len, target_path),
                 target_path_list=[target_path])
+        task_graph.join()
 
     def test_single_task_multiprocessing(self):
         """TaskGraph: Test a single task with multiprocessing."""
@@ -261,6 +273,7 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_list_on_disk,
             args=(value, list_len, target_path),
             target_path_list=[target_path])
+        task_graph.close()
         task_graph.join()
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
