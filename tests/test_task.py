@@ -52,7 +52,7 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0.1)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000

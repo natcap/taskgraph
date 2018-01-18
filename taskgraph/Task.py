@@ -1,4 +1,5 @@
 """Task graph framework."""
+import time
 import heapq
 import pprint
 import types
@@ -27,7 +28,9 @@ LOGGER = logging.getLogger('Task')
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
-    def __init__(self, taskgraph_cache_dir_path, n_workers):
+    def __init__(
+            self, taskgraph_cache_dir_path, n_workers,
+            reporting_interval=None):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
@@ -42,6 +45,8 @@ class TaskGraph(object):
                 subprocesses.  If set to <0, use only the main thread for any
                 execution and scheduling. In the case of the latter,
                 `add_task` will be a blocking call.
+            reporting_interval (scalar): if not None, report status of task
+                graph every `reporting_interval` seconds.
         """
         # the work queue is the feeder to active worker threads
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
@@ -54,6 +59,9 @@ class TaskGraph(object):
         # task ids. Used to determine if an identical task has been added
         # to the taskgraph during `add_task`
         self.task_id_map = dict()
+
+        # used in monitoring task graph execution.
+        self.n_tasks_complete = 0
 
         # used to remember if task_graph has been closed
         self.closed = False
@@ -80,6 +88,14 @@ class TaskGraph(object):
                             "NoSuchProcess exception encountered when trying "
                             "to nice %s. This might be a bug in `psutil` so "
                             "it should be okay to ignore.")
+
+        if reporting_interval is not None:
+            monitor_thread = threading.Thread(
+                target=self._execution_monitor,
+                args=(reporting_interval,),
+                name='_execution_monitor')
+            monitor_thread.daemon = True
+            monitor_thread.start()
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
@@ -218,6 +234,22 @@ class TaskGraph(object):
             self._terminate()
             raise
 
+    def _execution_monitor(self, reporting_interval):
+        """Log state of taskgraph every `reporting_interval` seconds."""
+        start_time = time.time()
+        while True:
+            if self.terminated:
+                break
+            LOGGER.info(
+                "tasks added: %d\n"
+                "tasks complete: %d\n"
+                "task graph open: %s" % (
+                    len(self.task_id_map), self.n_tasks_complete,
+                    not self.closed))
+            time.sleep(
+                reporting_interval - (
+                    (time.time() - start_time)) % reporting_interval)
+
     def _schedule_priority_tasks(self):
         """Priority schedules the `self.work_ready` queue.
 
@@ -295,6 +327,7 @@ class TaskGraph(object):
                 # invariant: task has not previously been sent as a 'done'
                 # notification and task is done.
                 completed_tasks.add(task)
+                self.n_tasks_complete += 1
                 if task not in task_dependent_map:
                     # this can occur if add_task identifies task is complete
                     # before any other analysis.
