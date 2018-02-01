@@ -1,6 +1,9 @@
 """taskgraph module."""
+import pkg_resources
 from taskgraph.Task import *
 
-import natcap.versioner
-
-__version__ = natcap.versioner.get_version('taskgraph')
+try:
+    __version__ = pkg_resources.get_distribution(__name__).version
+except pkg_resources.DistributionNotFound:
+    # package is not installed.
+    pass
