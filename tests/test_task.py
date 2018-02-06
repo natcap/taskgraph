@@ -9,6 +9,7 @@ import pickle
 import logging
 
 import taskgraph
+import mock
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -49,6 +50,26 @@ class TaskGraphTests(unittest.TestCase):
     def tearDown(self):
         """Overriding tearDown function to remove temporary directory."""
         shutil.rmtree(self.workspace_dir)
+
+    def version_loaded(self):
+        """TaskGraph: verify we can load the version."""
+        try:
+            import taskgraph
+            # Verifies that there's a version attribute and it has a value.
+            self.assertTrue(len(taskgraph.__version__) > 0)
+        except Exception as error:
+            self.fail('Could not load the taskgraph version as expected.')
+
+    def version_not_loaded(self):
+        """TaskGraph: verify exception when not installed."""
+        from pkg_resources import DistributionNotFound
+
+        with mock.patch('taskgraph.pkg_resources.get_distribution',
+                        side_effect=DistributionNotFound('taskgraph')):
+            with self.assertRaises(RuntimeError):
+                # RuntimeError is a side effect of `import taskgraph`, so we
+                # reload it to retrigger the metadata load.
+                taskgraph = reload(taskgraph)
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
