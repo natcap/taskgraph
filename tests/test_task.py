@@ -51,7 +51,7 @@ class TaskGraphTests(unittest.TestCase):
         """Overriding tearDown function to remove temporary directory."""
         shutil.rmtree(self.workspace_dir)
 
-    def version_loaded(self):
+    def test_version_loaded(self):
         """TaskGraph: verify we can load the version."""
         try:
             import taskgraph
@@ -60,9 +60,10 @@ class TaskGraphTests(unittest.TestCase):
         except Exception as error:
             self.fail('Could not load the taskgraph version as expected.')
 
-    def version_not_loaded(self):
+    def test_version_not_loaded(self):
         """TaskGraph: verify exception when not installed."""
         from pkg_resources import DistributionNotFound
+        import taskgraph
 
         with mock.patch('taskgraph.pkg_resources.get_distribution',
                         side_effect=DistributionNotFound('taskgraph')):
