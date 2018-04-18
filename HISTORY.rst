@@ -1,6 +1,8 @@
 .. :changelog:
 
-Unreleased Changes
+.. Unreleased Changes
+
+0.4.0 (2018-04-18)
 ------------------
 * Auto-versioning now happens via ``setuptools_scm``, replacing previous calls to ``natcap.versioner``.
 * Added an option to `TaskGraph` constructor to allow negative values in the `n_workers` argument to indicate that the entire object should run in the main thread. A value of 0 will indicate that no multiprocessing will be used but concurrency will be allowed for non-blocking `add_task`.
