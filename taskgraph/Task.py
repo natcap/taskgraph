@@ -1,7 +1,6 @@
 """Task graph framework."""
 import heapq
 import pprint
-import types
 import collections
 import hashlib
 import json
@@ -42,14 +41,23 @@ except ImportError:
 LOGGER = logging.getLogger('Task')
 
 
-# range is an iterator in python3.
-if 'xrange' not in __builtins__:
+try:
+    dict.itervalues
+except AttributeError:
+    # Python 3
+    # range is an iterator in python3.
     xrange = range
-
-# In python2, basestring is the common superclass of str and unicode.  In
-# python3, we'll probably only be dealing with str objects.
-if 'basestring' not in __builtins__:
+    # In python2, basestring is the common superclass of str and unicode.  In
+    # python3, we'll probably only be dealing with str objects.
     basestring = str
+    def itervalues(d):
+        """Python 2/3 compatibility iterator over d.values()"""
+        return iter(d.values())
+else:
+    # Python 2
+    def itervalues(d):
+        """Python 2/3 compatibility alias for d.itervalues()"""
+        return d.itervalues()
 
 
 class TaskGraph(object):
@@ -362,7 +370,7 @@ class TaskGraph(object):
             return True
         try:
             timedout = False
-            for task in self.task_id_map.values():
+            for task in itervalues(self.task_id_map):
                 timedout = not task.join(timeout)
                 # if the last task timed out then we want to timeout for all
                 # of the task graph
@@ -397,7 +405,7 @@ class TaskGraph(object):
         self.close()
         if self.n_workers > 0:
             self.worker_pool.terminate()
-        for task in self.task_id_map.values():
+        for task in itervalues(self.task_id_map):
             task._terminate()
         self.terminated = True
 
