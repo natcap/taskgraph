@@ -20,6 +20,12 @@ import inspect
 import abc
 
 try:
+    ABCSuperclass = abc.ABC
+except AttributeError:
+    # Python 2 doesn't define abc.ABC.
+    ABCSuperclass = object
+
+try:
     import psutil
     HAS_PSUTIL = True
 except ImportError:
@@ -635,7 +641,7 @@ class Task(object):
         self._task_complete_event.set()
 
 
-class EncapsulatedTaskOp(abc.ABC):
+class EncapsulatedTaskOp(ABCSuperclass):
     """Used as a superclass for Task operations that need closures.
 
     This class will automatically hash the subclass's __call__ method source
