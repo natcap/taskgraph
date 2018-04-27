@@ -11,7 +11,11 @@ import logging
 import multiprocessing
 import threading
 import errno
-import Queue
+try:
+    import queue as queue
+except ImportError:
+    # Python3 renamed queue as queue
+    import queue
 import inspect
 import abc
 
@@ -83,7 +87,7 @@ class TaskGraph(object):
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
-        self.work_queue = Queue.Queue()
+        self.work_queue = queue.queue()
         self.worker_semaphore = threading.Semaphore(max(1, n_workers))
         # launch threads to manage the workers
         for thread_id in xrange(max(1, n_workers)):
@@ -94,7 +98,7 @@ class TaskGraph(object):
             worker_thread.start()
 
         # tasks that get passed add_task get put in this queue for scheduling
-        self.waiting_task_queue = Queue.Queue()
+        self.waiting_task_queue = queue.queue()
         waiting_task_scheduler = threading.Thread(
             target=self._process_waiting_tasks,
             name='_waiting_task_scheduler')
@@ -103,7 +107,7 @@ class TaskGraph(object):
 
         # tasks in the work ready queue have dependencies satisfied but need
         # priority scheduling
-        self.work_ready_queue = Queue.Queue()
+        self.work_ready_queue = queue.queue()
         priority_task_scheduler = threading.Thread(
             target=self._schedule_priority_tasks,
             name='_priority_task_scheduler')
@@ -237,7 +241,7 @@ class TaskGraph(object):
                         break
                     # push task to priority queue
                     heapq.heappush(priority_queue, task)
-                except Queue.Empty:
+                except queue.Empty:
                     # this triggers when work_ready_queue is empty and
                     # there's something in the work_ready_queue
                     break
@@ -259,7 +263,7 @@ class TaskGraph(object):
     def _process_waiting_tasks(self):
         """Process any tasks that are waiting on dependencies.
 
-        This worker monitors the self.waiting_task_queue Queue and looks for
+        This worker monitors the self.waiting_task_queue queue and looks for
         (task, 'wait'), or (task, 'done') tuples.
 
         If mode is 'wait' the task is indexed locally with reference to
