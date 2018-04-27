@@ -2,22 +2,22 @@ TaskGraph:
 =================================================
 
 About TaskGraph
-===============
+---------------
 
 TaskGraph is great.
 
 TaskGraph Dependencies
-======================
+----------------------
 
 Task Graph is written in pure Python, but if the ``psutils`` package is
 installed the distributed multiprocessing processes will be ``nice``\d.
 
 Example Use
-===========
+-----------
 
 Install taskgraph with
 
-`pip install taskgraph`
+``pip install taskgraph``
 
 Then
 
