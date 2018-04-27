@@ -87,7 +87,7 @@ class TaskGraph(object):
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
-        self.work_queue = queue.queue()
+        self.work_queue = queue.Queue()
         self.worker_semaphore = threading.Semaphore(max(1, n_workers))
         # launch threads to manage the workers
         for thread_id in xrange(max(1, n_workers)):
@@ -98,7 +98,7 @@ class TaskGraph(object):
             worker_thread.start()
 
         # tasks that get passed add_task get put in this queue for scheduling
-        self.waiting_task_queue = queue.queue()
+        self.waiting_task_queue = queue.Queue()
         waiting_task_scheduler = threading.Thread(
             target=self._process_waiting_tasks,
             name='_waiting_task_scheduler')
@@ -107,7 +107,7 @@ class TaskGraph(object):
 
         # tasks in the work ready queue have dependencies satisfied but need
         # priority scheduling
-        self.work_ready_queue = queue.queue()
+        self.work_ready_queue = queue.Queue()
         priority_task_scheduler = threading.Thread(
             target=self._schedule_priority_tasks,
             name='_priority_task_scheduler')
