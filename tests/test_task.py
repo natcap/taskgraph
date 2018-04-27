@@ -13,6 +13,10 @@ import mock
 
 logging.basicConfig(level=logging.DEBUG)
 
+if 'reload' not in __builtins__:
+    import imp
+    reload = imp.reload
+
 
 def _long_running_function():
     """Wait for 5 seconds."""
