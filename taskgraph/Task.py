@@ -19,11 +19,11 @@ except ImportError:
 import inspect
 import abc
 
-try:
-    ABCSuperclass = abc.ABC
-except AttributeError:
-    # Python 2 doesn't define abc.ABC.
-    ABCSuperclass = object
+# Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
+# usage that is no longer clearly documented in python 3 (if it's even present
+# at all ... __metaclass__ has been removed from the python data model docs)
+# Taken from https://stackoverflow.com/a/38668373/299084
+ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
 
 try:
     import psutil
@@ -641,15 +641,13 @@ class Task(object):
         self._task_complete_event.set()
 
 
-class EncapsulatedTaskOp(ABCSuperclass):
+class EncapsulatedTaskOp(ABC):
     """Used as a superclass for Task operations that need closures.
 
     This class will automatically hash the subclass's __call__ method source
     as well as the arguments to its __init__ function to calculate the
     Task's unique hash.
     """
-    __metaclass__ = abc.ABCMeta
-
     def __init__(self, *args, **kwargs):
         # try to get the source code of __call__ so task graph will recompute
         # if the function has changed
