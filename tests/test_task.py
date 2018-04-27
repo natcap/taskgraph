@@ -15,6 +15,11 @@ import taskgraph
 logging.basicConfig(level=logging.DEBUG)
 
 
+# Python 3 relocated the reload function to imp.
+if 'reload' not in __builtins__:
+    from imp import reload
+
+
 def _long_running_function():
     """Wait for 5 seconds."""
     time.sleep(5)
@@ -67,10 +72,6 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: verify exception when not installed."""
         from pkg_resources import DistributionNotFound
         import taskgraph
-
-        # Python 3 relocated the reload function to imp.
-        if 'reload' not in __builtins__:
-            from imp import reload
 
         with mock.patch('taskgraph.pkg_resources.get_distribution',
                         side_effect=DistributionNotFound('taskgraph')):
