@@ -8,21 +8,17 @@ import unittest
 import pickle
 import logging
 
-import taskgraph
 import mock
 
+import taskgraph
+
 logging.basicConfig(level=logging.DEBUG)
-
-
-# Python 3 relocated the reload function to imp.
-if 'reload' not in __builtins__:
-    import imp
-    reload = imp.reload
 
 
 def _long_running_function():
     """Wait for 5 seconds."""
     time.sleep(5)
+
 
 def _create_list_on_disk(value, length, target_path):
     """Create a numpy array on disk filled with value of `size`."""
@@ -43,6 +39,7 @@ def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
 def _div_by_zero():
     """Divide by zero to raise an exception."""
     return 1/0
+
 
 class TaskGraphTests(unittest.TestCase):
     """Tests for the taskgraph."""
@@ -70,6 +67,10 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: verify exception when not installed."""
         from pkg_resources import DistributionNotFound
         import taskgraph
+
+        # Python 3 relocated the reload function to imp.
+        if 'reload' not in __builtins__:
+            from imp import reload
 
         with mock.patch('taskgraph.pkg_resources.get_distribution',
                         side_effect=DistributionNotFound('taskgraph')):
