@@ -1,6 +1,11 @@
 .. :changelog:
 
-.. Unreleased Changes
+Unreleased Changes
+------------------
+* Taskgraph now supports python 3.
+* Fixed an issue with ``taskgraph.TaskGraph`` where process priority could not
+  be set on linux (but it could be set on Windows).
+* Adding a matrix of tests to automate testing via ``tox``.
 
 0.4.0 (2018-04-18)
 ------------------
