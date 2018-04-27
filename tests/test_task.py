@@ -13,6 +13,8 @@ import mock
 
 logging.basicConfig(level=logging.DEBUG)
 
+
+# Python 3 relocated the reload function to imp.
 if 'reload' not in __builtins__:
     import imp
     reload = imp.reload
