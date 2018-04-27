@@ -2,11 +2,11 @@
 
 Unreleased Changes
 ------------------
-* Taskgraph now supports python 3 (tested with python 2.7, 3.5).
-* Fixed an issue with ``taskgraph.TaskGraph`` where process priority could not
-  be set on linux (but it could be set on Windows).
+* Taskgraph now supports python versions 2 and 3 (tested with python 2.7, 3.5).
+* Fixed an issue with ``taskgraph.TaskGraph`` that prevented a multiprocessed
+  graph from executing on POSIX systems when ``psutil`` was installed.
 * Adding matrix-based test automation (python 2.7, python 3.5, with/without
-  ``psutil``) via ``tox.
+  ``psutil``) via ``tox``.
 
 0.4.0 (2018-04-18)
 ------------------
