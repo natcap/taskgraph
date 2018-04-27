@@ -28,6 +28,14 @@ ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
 try:
     import psutil
     HAS_PSUTIL = True
+    if psutil.WINDOWS:
+        # Windows' scheduler doesn't use POSIX niceness.
+        PROCESS_LOW_PRIORITY = psutil.BELOW_NORMAL_PRIORITY_CLASS
+    else:
+        # On POSIX, use system niceness.
+        # -20 is low priority, 0 is normal priority, 19 is low priority.
+        # 10 here is an abritrary selection that's probably nice enough.
+        PROCESS_LOW_PRIORITY = 10
 except ImportError:
     HAS_PSUTIL = False
 
@@ -91,10 +99,10 @@ class TaskGraph(object):
             self.worker_pool = multiprocessing.Pool(n_workers)
             if HAS_PSUTIL:
                 parent = psutil.Process()
-                parent.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                parent.nice(PROCESS_LOW_PRIORITY)
                 for child in parent.children():
                     try:
-                        child.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                        child.nice(PROCESS_LOW_PRIORITY)
                     except psutil.NoSuchProcess:
                         LOGGER.warn(
                             "NoSuchProcess exception encountered when trying "
