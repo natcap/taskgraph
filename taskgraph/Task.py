@@ -12,7 +12,7 @@ import multiprocessing
 import threading
 import errno
 try:
-    import queue as queue
+    import Queue as queue
 except ImportError:
     # Python3 renamed queue as queue
     import queue
@@ -467,10 +467,13 @@ class Task(object):
             self.target_path_list+self.ignore_path_list,
             self.ignore_directories))
 
-        task_string = '%s:%s:%s:%s:%s:%s' % (
-            self.func.__name__, pickle.dumps(self.args),
-            json.dumps(self.kwargs, sort_keys=True), source_code,
-            self.target_path_list, str(file_stat_list))
+        task_string = "{0}:{1}:{2}:{3}:{4}:{5}".format(
+            self.func.__name__,
+            pickle.dumps(self.args),
+            json.dumps(self.kwargs, sort_keys=True),
+            source_code,
+            self.target_path_list,
+            file_stat_list).encode('utf-8')
 
         self.task_hash = hashlib.sha1(task_string).hexdigest()
 
@@ -488,6 +491,10 @@ class Task(object):
         if isinstance(self, other.__class__):
             return self.task_hash == other.task_hash
         return False
+
+    def __hash__(self):
+        """Return the base-16 integer hash of this hash string."""
+        return int(self.task_hash, 16)
 
     def __ne__(self, other):
         """Inverse of __eq__."""
