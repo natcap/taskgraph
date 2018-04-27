@@ -486,15 +486,12 @@ class Task(object):
             self.target_path_list+self.ignore_path_list,
             self.ignore_directories))
 
-        task_string = "{0}:{1}:{2}:{3}:{4}:{5}".format(
-            self.func.__name__,
-            pickle.dumps(self.args),
-            json.dumps(self.kwargs, sort_keys=True),
-            source_code,
-            self.target_path_list,
-            file_stat_list).encode('utf-8')
+        task_string = '%s:%s:%s:%s:%s:%s' % (
+            self.func.__name__, pickle.dumps(self.args),
+            json.dumps(self.kwargs, sort_keys=True), source_code,
+            self.target_path_list, str(file_stat_list))
 
-        self.task_hash = hashlib.sha1(task_string).hexdigest()
+        self.task_hash = hashlib.sha1(task_string.encode('utf-8')).hexdigest()
 
         # get ready to make a directory and target based on hashname
         # take the first 3 characters of the hash and make a subdirectory
