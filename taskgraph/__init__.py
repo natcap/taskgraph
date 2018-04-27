@@ -2,7 +2,11 @@
 from __future__ import unicode_literals
 from __future__ import absolute_import
 import pkg_resources
-from .Task import *
+from .Task import TaskGraph, Task, EncapsulatedTaskOp
+
+
+__all__ = ['TaskGraph', 'Task', 'EncapsulatedTaskOp']
+
 
 try:
     __version__ = pkg_resources.get_distribution(__name__).version
