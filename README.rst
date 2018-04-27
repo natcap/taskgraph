@@ -64,3 +64,23 @@ Then
 
   # expect that result is a list `list_len` long with `value_a+value_b` in it
   result = pickle.load(open(result_path, 'rb'))
+
+Running Tests
+-------------
+
+Taskgraph includes a ``tox`` configuration for automating builds across
+multiple python versions and whether ``psutil`` is installed.  To
+execute all tests, run::
+
+    $ tox
+
+Alternatively, if you're only trying to run tests on a single configuration
+(say, python 3.5 without ``psutil``), you'd run::
+
+    $ tox -e py35-base
+
+Or if you'd like to run the tests for the combination of Python 2.7 with
+``psutil``, you'd run::
+
+    $ tox -e py27-psutil
+
