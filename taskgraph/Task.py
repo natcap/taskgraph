@@ -38,6 +38,11 @@ LOGGER = logging.getLogger('Task')
 if 'xrange' not in __builtins__:
     xrange = range
 
+# In python2, basestring is the common superclass of str and unicode.  In
+# python3, we'll probably only be dealing with str objects.
+if 'basestring' not in __builtins__:
+    basestring = str
+
 
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
@@ -683,7 +688,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
     """
-    if isinstance(base_value, str):
+    if isinstance(base_value, basestring):
         try:
             if base_value not in ignore_list and (
                     not os.path.isdir(base_value) or
