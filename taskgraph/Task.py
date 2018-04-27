@@ -28,6 +28,11 @@ except ImportError:
 LOGGER = logging.getLogger('Task')
 
 
+# range is an iterator in python3.
+if 'xrange' not in __builtins__:
+    xrange = range
+
+
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
@@ -338,7 +343,7 @@ class TaskGraph(object):
             return True
         try:
             timedout = False
-            for task in self.task_id_map.itervalues():
+            for task in self.task_id_map.values():
                 timedout = not task.join(timeout)
                 # if the last task timed out then we want to timeout for all
                 # of the task graph
@@ -373,7 +378,7 @@ class TaskGraph(object):
         self.close()
         if self.n_workers > 0:
             self.worker_pool.terminate()
-        for task in self.task_id_map.itervalues():
+        for task in self.task_id_map.values():
             task._terminate()
         self.terminated = True
 
@@ -677,7 +682,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         except OSError:
             pass
     elif isinstance(base_value, collections.Mapping):
-        for key in sorted(base_value.iterkeys()):
+        for key in sorted(base_value.keys()):
             value = base_value[key]
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
