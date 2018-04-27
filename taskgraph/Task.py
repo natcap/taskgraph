@@ -635,7 +635,7 @@ class Task(object):
         self._task_complete_event.set()
 
 
-class EncapsulatedTaskOp:
+class EncapsulatedTaskOp(abc.ABC):
     """Used as a superclass for Task operations that need closures.
 
     This class will automatically hash the subclass's __call__ method source
@@ -647,11 +647,11 @@ class EncapsulatedTaskOp:
     def __init__(self, *args, **kwargs):
         # try to get the source code of __call__ so task graph will recompute
         # if the function has changed
-        args_as_str = str([args, kwargs])
+        args_as_str = str([args, kwargs]).encode('utf-8')
         try:
             # hash the args plus source code of __call__
             id_hash = hashlib.sha1(args_as_str + inspect.getsource(
-                self.__class__.__call__)).hexdigest()
+                self.__class__.__call__).encode('utf-8')).hexdigest()
         except IOError:
             # this will fail if the code is compiled, that's okay just do
             # the args
