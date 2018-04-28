@@ -32,7 +32,7 @@ try:
         PROCESS_LOW_PRIORITY = psutil.BELOW_NORMAL_PRIORITY_CLASS
     else:
         # On POSIX, use system niceness.
-        # -20 is low priority, 0 is normal priority, 19 is low priority.
+        # -20 is high priority, 0 is normal priority, 19 is low priority.
         # 10 here is an abritrary selection that's probably nice enough.
         PROCESS_LOW_PRIORITY = 10
 except ImportError:
