@@ -7,6 +7,7 @@ Unreleased Changes
   graph from executing on POSIX systems when ``psutil`` was installed.
 * Adding matrix-based test automation (python 2.7, python 3.5, with/without
   ``psutil``) via ``tox``.
+* Updating repository path to ``https://bitbucket.org/natcap/taskgraph``.
 
 0.4.0 (2018-04-18)
 ------------------
