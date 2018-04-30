@@ -2,10 +2,10 @@
 
 Unreleased Changes
 ------------------
-* Taskgraph now supports python versions 2 and 3 (tested with python 2.7, 3.5).
+* Taskgraph now supports python versions 2 and 3 (tested with python 2.7, 3.6).
 * Fixed an issue with ``taskgraph.TaskGraph`` that prevented a multiprocessed
   graph from executing on POSIX systems when ``psutil`` was installed.
-* Adding matrix-based test automation (python 2.7, python 3.5, with/without
+* Adding matrix-based test automation (python 2.7, python 3.6, with/without
   ``psutil``) via ``tox``.
 * Updating repository path to ``https://bitbucket.org/natcap/taskgraph``.
 
