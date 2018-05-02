@@ -21,11 +21,13 @@ setup(
         },
     classifiers=[
         'Intended Audience :: Developers',
+        'Topic :: System :: Distributed Computing',
         'Development Status :: 5 - Production/Stable',
         'Natural Language :: English',
         'Operating System :: MacOS :: MacOS X',
         'Operating System :: Microsoft',
         'Operating System :: POSIX',
-        'Programming Language :: Python :: 2 :: Only',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.6',
         'License :: OSI Approved :: BSD License'
     ])
