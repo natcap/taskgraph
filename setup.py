@@ -12,7 +12,7 @@ setup(
     long_description=README,
     maintainer='Rich Sharp',
     maintainer_email='richpsharp@gmail.com',
-    url='https://bitbucket.org/richsharp/taskgraph',
+    url='https://bitbucket.org/natcap/taskgraph',
     packages=['taskgraph'],
     license='BSD',
     keywords='parallel multiprocessing distributed computing',
@@ -21,11 +21,13 @@ setup(
         },
     classifiers=[
         'Intended Audience :: Developers',
+        'Topic :: System :: Distributed Computing',
         'Development Status :: 5 - Production/Stable',
         'Natural Language :: English',
         'Operating System :: MacOS :: MacOS X',
         'Operating System :: Microsoft',
         'Operating System :: POSIX',
-        'Programming Language :: Python :: 2 :: Only',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.6',
         'License :: OSI Approved :: BSD License'
     ])
