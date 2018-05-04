@@ -1,6 +1,8 @@
 .. :changelog:
 
-Unreleased Changes
+.. Unreleased Changes
+
+0.5.0 (2018-05-04)
 ------------------
 * Taskgraph now supports python versions 2 and 3 (tested with python 2.7, 3.6).
 * Fixed an issue with ``taskgraph.TaskGraph`` that prevented a multiprocessed
