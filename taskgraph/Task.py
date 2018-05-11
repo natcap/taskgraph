@@ -238,19 +238,14 @@ class TaskGraph(object):
                 # call directly if single threaded
                 if not new_task.is_precalculated():
                     new_task._call()
-                else:
-                    LOGGER.info("%s is precalculated", new_task)
             else:
                 # send to scheduler
                 if not new_task.is_precalculated():
                     self.waiting_task_queue.put((new_task, 'wait'))
-                    LOGGER.info("%s is not precalculated, on the queue", new_task)
                 else:
                     # this is a shortcut to clear pre-calculated tasks
                     new_task._task_complete_event.set()
                     self.waiting_task_queue.put((new_task, 'done'))
-                    LOGGER.info("%s is precalculated", new_task)
-
             return new_task
 
         except Exception:
@@ -504,6 +499,17 @@ class Task(object):
                 _ = json.dumps(value)
             except TypeError:
                 kwargs_clean[key] = pickle.dumps(value)
+
+        args_clean = self.args[:]
+        for index, arg in enumerate(self.args):
+            try:
+                _ = json.dumps(arg)
+            except TypeError:
+                args_clean[index] = pickle.dumps(arg)
+
+
+        if not hasattr(self.func, '__name__'):
+            self.func.__name__ = ''
 
         task_string = '%s:%s:%s:%s:%s:%s' % (
             self.func.__name__, pickle.dumps(self.args),
