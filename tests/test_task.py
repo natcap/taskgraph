@@ -13,6 +13,7 @@ import mock
 import taskgraph
 
 logging.basicConfig(level=logging.DEBUG)
+LOGGER = logging.getLogger(__file__)
 
 
 # Python 3 relocated the reload function to imp.
@@ -28,7 +29,7 @@ def _long_running_function():
 def _create_list_on_disk(value, length, target_path):
     """Create a numpy array on disk filled with value of `size`."""
     target_list = [value] * length
-    pickle.dump(target_list, open(target_path, 'wb'))
+    pickle.dump(target_list, open(target_path, 'ab'))
 
 
 def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
@@ -380,3 +381,29 @@ class TaskGraphTests(unittest.TestCase):
 
         init_new_a = TestA(1)
         self.assertNotEqual(new_a.__name__, init_new_a.__name__)
+
+    def test_repeat_targetless_runs(self):
+        """TaskGraph: ensure that repeated runs with no targets reexecute."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        _ = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path))
+        task_graph.close()
+        task_graph.join()
+        task_graph = None
+
+        os.remove(target_path)
+
+        task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
+        _ = task_graph2.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path))
+        task_graph2.close()
+        task_graph2.join()
+
+        self.assertTrue(
+            os.path.exists(target_path),
+            "Expected file to exist because taskgraph should have re-run.")

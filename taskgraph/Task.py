@@ -78,6 +78,7 @@ class TaskGraph(object):
                 subprocesses.  If set to <0, use only the main thread for any
                 execution and scheduling. In the case of the latter,
                 `add_task` will be a blocking call.
+
         """
         # the work queue is the feeder to active worker threads
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
@@ -147,8 +148,7 @@ class TaskGraph(object):
         priority_task_scheduler.start()
 
     def _task_worker(self):
-        """Execute and manage Task objects.
-        """
+        """Execute and manage Task objects."""
         for task in iter(self.work_queue.get, 'STOP'):
             try:
                 # precondition: task wouldn't be in queue if it were
@@ -178,8 +178,15 @@ class TaskGraph(object):
             target_path_list (list): if not None, a list of file paths that
                 are expected to be output by `func`.  If any of these paths
                 don't exist, or their timestamp is earlier than an input
-                arg or work token, func will be executed.  If None, not
-                considered when scheduling task.
+                arg or work token, func will be executed.
+
+                If `None`, any identical calls to `add_task` will be skipped
+                for the TaskGraph object. A future TaskGraph object will
+                re-run an exact call once for its lifetime. The reasoning is
+                that it is likely the user wishes to run a target-less task
+                once for the lifetime of a task-graph, but would otherwise
+                not have a transient result that could be re-used in a
+                future instantiation of a TaskGraph object.
             task_name (string): if not None, this value is used to identify
                 the task in logging messages.
             ignore_path_list (list): list of file paths that could be in
@@ -200,6 +207,7 @@ class TaskGraph(object):
             Task which was just added to the graph or an existing Task that
             has the same signature and has already been added to the
             TaskGraph.
+
         """
         try:
             if self.closed:
@@ -364,6 +372,7 @@ class TaskGraph(object):
 
         Returns:
             True if successful join, False if timed out.
+
         """
         # if single threaded, nothing to join.
         if self.n_workers < 0:
@@ -449,6 +458,7 @@ class Task(object):
                 met and are ready for scheduling. Tasks are inserted into the
                 work queue in order of decreasing priority. This value can be
                 positive, negative, and/or floating point.
+
         """
         self.task_name = task_name
         self.func = func
@@ -529,6 +539,7 @@ class Task(object):
         return self.priority < other.priority
 
     def __str__(self):
+        """Create a string representation of a Task."""
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
             {
                 "task_name": self.task_name,
@@ -553,6 +564,7 @@ class Task(object):
 
         Returns:
             A list of file parameters of the target path list.
+
         """
         try:
             if self.terminated:
@@ -594,9 +606,14 @@ class Task(object):
             except OSError as exception:
                 if exception.errno != errno.EEXIST:
                     raise
-            with open(self.task_cache_path, 'wb') as task_cache_file:
-                pickle.dump(result_target_path_stats, task_cache_file)
+            # this step will only record the run for future processes if
+            # there is a concrete expected file on disk. Otherwise results
+            # must be transient between runs and we'd expect to run again.
+            if self.target_path_list:
+                with open(self.task_cache_path, 'wb') as task_cache_file:
+                    pickle.dump(result_target_path_stats, task_cache_file)
 
+            LOGGER.debug("successful run on task %s", self.task_name)
             # successful run, return target path stats
             return result_target_path_stats
         except Exception as e:
@@ -604,6 +621,8 @@ class Task(object):
             self._terminate(e)
             raise
         finally:
+            LOGGER.debug(
+                "setting _task_complete_event on task %s", self.task_name)
             self._task_complete_event.set()
 
     def is_complete(self):
@@ -617,6 +636,7 @@ class Task(object):
         Raises:
             RuntimeError if the task thread is stopped but no completion
             token
+
         """
         if self.terminated:
             raise RuntimeError(
@@ -632,6 +652,7 @@ class Task(object):
         Returns:
             True if the Task's target paths exist in the same state as the
             last recorded run. False otherwise.
+
         """
         try:
             if not os.path.exists(self.task_cache_path):
@@ -665,6 +686,7 @@ class EncapsulatedTaskOp(ABC):
     This class will automatically hash the subclass's __call__ method source
     as well as the arguments to its __init__ function to calculate the
     Task's unique hash.
+
     """
     def __init__(self, *args, **kwargs):
         # try to get the source code of __call__ so task graph will recompute
@@ -683,6 +705,7 @@ class EncapsulatedTaskOp(ABC):
 
     @abc.abstractmethod
     def __call__(self, *args, **kwargs):
+        """Empty method meant to be overridden by inheritor."""
         pass
 
 
@@ -700,6 +723,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         list of (path, timestamp, filesize) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
+
     """
     if isinstance(base_value, basestring):
         try:
