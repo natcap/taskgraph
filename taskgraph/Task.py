@@ -245,13 +245,27 @@ class TaskGraph(object):
             if self.n_workers < 0:
                 # call directly if single threaded
                 if not new_task.is_precalculated():
+                    LOGGER.debug(
+                        "single thread: %s is not precalculated, "
+                        "invoking call", task_name)
                     new_task._call()
+                else:
+                    LOGGER.debug(
+                        "single thread: %s is precalculated, "
+                        "skipping call", task_name)
+                    new_task._task_complete_event.set()
             else:
                 # send to scheduler
                 if not new_task.is_precalculated():
+                    LOGGER.debug(
+                        "multithreaded: %s is not precalculated, sending to "
+                        "scheduler", task_name)
                     self.waiting_task_queue.put((new_task, 'wait'))
                 else:
                     # this is a shortcut to clear pre-calculated tasks
+                    LOGGER.debug(
+                        "multithreaded: %s is not precalculated, sending to "
+                        "scheduler", task_name)
                     new_task._task_complete_event.set()
                     self.waiting_task_queue.put((new_task, 'done'))
 
