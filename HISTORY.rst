@@ -2,6 +2,13 @@
 
 .. Unreleased Changes
 
+0.5.2 (2018-06-20)
+------------------
+* Fixing an issue where a Task would hang on a `join` if the number of
+  workers in TaskGraph was -1 and a call to `add_task` has a non-`None`
+  passed to `target_path_list` and the resulting task was `.join`ed after a
+  second run of the same program.
+
 0.5.1 (2018-06-20)
 ------------------
 * Fixing an issue where TaskGraph would hang on a `join` if the number of
