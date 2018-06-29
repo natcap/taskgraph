@@ -94,7 +94,7 @@ class TaskGraph(object):
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
         self.n_workers = n_workers
         self.taskgraph_started_event = threading.Event()
-        if not self.delayed_start:
+        if not delayed_start:
             # not a delayed start, so clear the event immediately
             self.taskgraph_started_event.set()
 
@@ -137,29 +137,41 @@ class TaskGraph(object):
         self.work_queue = queue.Queue()
         self.worker_semaphore = threading.Semaphore(max(1, n_workers))
         # launch threads to manage the workers
+        self.worker_thread_list = []
         for thread_id in xrange(max(1, n_workers)):
             worker_thread = threading.Thread(
                 target=self._task_worker,
                 name='taskgraph_worker_thread_%d' % thread_id)
             worker_thread.daemon = True
             worker_thread.start()
+            self.worker_thread_list.append(worker_thread)
 
         # tasks that get passed add_task get put in this queue for scheduling
         self.waiting_task_queue = queue.Queue()
-        waiting_task_scheduler = threading.Thread(
+        self.waiting_task_scheduler = threading.Thread(
             target=self._process_waiting_tasks,
             name='_waiting_task_scheduler')
-        waiting_task_scheduler.daemon = True
-        waiting_task_scheduler.start()
+        self.waiting_task_scheduler.daemon = True
+        self.waiting_task_scheduler.start()
 
         # tasks in the work ready queue have dependencies satisfied but need
         # priority scheduling
         self.work_ready_queue = queue.Queue()
-        priority_task_scheduler = threading.Thread(
+        self.priority_task_scheduler = threading.Thread(
             target=self._schedule_priority_tasks,
             name='_priority_task_scheduler')
-        priority_task_scheduler.daemon = True
-        priority_task_scheduler.start()
+        self.priority_task_scheduler.daemon = True
+        self.priority_task_scheduler.start()
+
+    def __del__(self):
+        """Ensure all threads have been joined for cleanup."""
+        LOGGER.error("joining all the workers")
+        self.priority_task_scheduler.join()
+        self.waiting_task_scheduler.start()
+        for worker_thread in self.worker_thread_list:
+            worker_thread.join()
+        if self.worker_pool:
+            self.worker_pool.join()
 
     def _task_worker(self):
         """Execute and manage Task objects."""
@@ -214,7 +226,8 @@ class TaskGraph(object):
             priority (numeric): the priority of a task is considered when
                 there is more than one task whose dependencies have been
                 met and are ready for scheduling. Tasks are inserted into the
-                work queue in order of decreasing priority. This value can be
+                work queue in order of decreasing priority value
+                (priority 10 is higher than priority 1). This value can be
                 positive, negative, and/or floating point.
 
         Returns:
@@ -246,7 +259,8 @@ class TaskGraph(object):
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
-                self.worker_pool, self.taskgraph_cache_dir_path, priority)
+                self.worker_pool, self.taskgraph_cache_dir_path, priority,
+                self.taskgraph_started_event)
             task_hash = new_task.task_hash
 
             # it may be this task was already created in an earlier call,
@@ -456,7 +470,7 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, dependent_task_list, ignore_directories,
-            worker_pool, cache_dir, priority):
+            worker_pool, cache_dir, priority, taskgraph_started_event):
         """Make a Task.
 
         Parameters:
@@ -489,6 +503,8 @@ class Task(object):
                 met and are ready for scheduling. Tasks are inserted into the
                 work queue in order of decreasing priority. This value can be
                 positive, negative, and/or floating point.
+            taskgraph_started_event (Event): if set, `Task`s can execute, but
+                if not, an exception will be raised if `join` is invoked.
 
         """
         self.task_name = task_name
@@ -501,8 +517,10 @@ class Task(object):
         self.ignore_path_list = ignore_path_list
         self.ignore_directories = ignore_directories
         self.worker_pool = worker_pool
-        # invert the priority since heapq goes smallest to largest
+        # invert the priority since heapq goes smallest to largest and we
+        # want more positive priority values to be executed first.
         self.priority = -priority
+        self.taskgraph_started_event = taskgraph_started_event
 
         self.terminated = False
         self.exception_object = None
@@ -701,6 +719,10 @@ class Task(object):
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
+        if not self.taskgraph_started_event.is_set():
+            raise RuntimeError(
+                "Task joined even though taskgraph has delayed start "
+                "enabled: %s" % self)
         self._task_complete_event.wait(timeout)
         return self.is_complete()
 
