@@ -408,7 +408,6 @@ class TaskGraphTests(unittest.TestCase):
             os.path.exists(target_path),
             "Expected file to exist because taskgraph should have re-run.")
 
-
     def test_repeat_targeted_runs(self):
         """TaskGraph: ensure that repeated runs with targets can join."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -431,3 +430,21 @@ class TaskGraphTests(unittest.TestCase):
         self.assertTrue(task.join(1.0), "join failed after 1 second")
         task_graph2.close()
         task_graph2.join()
+
+    def test_delayed_execution(self):
+        """TaskGraph: test delayed execution."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, delayed_start=True)
+
+        result_list = []
+
+        def append_val(val):
+            result_list.append(val)
+
+        task_graph.add_task(func=append_val, args=(0,), priority=1)
+        task_graph.add_task(func=append_val, args=(1,), priority=0)
+
+        task_graph.close()
+        task_graph.join()
+
+        self.assertEqual(result_list, [0, 1])

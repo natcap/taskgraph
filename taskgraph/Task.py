@@ -63,7 +63,8 @@ else:
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
-    def __init__(self, taskgraph_cache_dir_path, n_workers):
+    def __init__(
+            self, taskgraph_cache_dir_path, n_workers, delayed_start=False):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
@@ -78,11 +79,24 @@ class TaskGraph(object):
                 subprocesses.  If set to <0, use only the main thread for any
                 execution and scheduling. In the case of the latter,
                 `add_task` will be a blocking call.
+            delayed_start (bool): if true, taskgraph does not start executing
+                tasks as `add_task` is called. Instead no execution occurs
+                until `join` is invoked. A value of `True` is incompatible
+                with `n_workers` < 0 and will raise a ValueError on
+                construction.
 
         """
+        if delayed_start and n_workers < 0:
+            raise ValueError(
+                "`n_workers` cannot be set single process mode while "
+                "`delayed_start` is enabled.")
         # the work queue is the feeder to active worker threads
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
         self.n_workers = n_workers
+        self.taskgraph_started_event = threading.Event()
+        if not self.delayed_start:
+            # not a delayed start, so clear the event immediately
+            self.taskgraph_started_event.set()
 
         # keep track if the task graph has been forcibly terminated
         self.terminated = False
@@ -287,7 +301,8 @@ class TaskGraph(object):
         while not stopped:
             while True:
                 try:
-                    # only block if the priority queque is empty
+                    self.taskgraph_started_event.wait()
+                    # only block if the priority queue is empty
                     task = self.work_ready_queue.get(not priority_queue)
                     if task == 'STOP':
                         # encounter STOP so break and don't get more elements
@@ -391,6 +406,8 @@ class TaskGraph(object):
         # if single threaded, nothing to join.
         if self.n_workers < 0:
             return True
+        # start delayed execution if necessary:
+        self.taskgraph_started_event.set()
         try:
             timedout = False
             for task in itervalues(self.task_id_map):
