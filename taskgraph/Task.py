@@ -264,7 +264,7 @@ class TaskGraph(object):
                 else:
                     # this is a shortcut to clear pre-calculated tasks
                     LOGGER.debug(
-                        "multithreaded: %s is not precalculated, sending to "
+                        "multithreaded: %s is precalculated, alerting the "
                         "scheduler", task_name)
                     new_task._task_complete_event.set()
                     self.waiting_task_queue.put((new_task, 'done'))
