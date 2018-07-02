@@ -165,13 +165,15 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        LOGGER.error("joining all the workers")
-        self.priority_task_scheduler.join()
-        self.waiting_task_scheduler.start()
-        for worker_thread in self.worker_thread_list:
-            worker_thread.join()
-        if self.worker_pool:
-            self.worker_pool.join()
+        if self.n_workers >= 0:
+            # there's only something to clean up if there's a worker
+            LOGGER.error("joining all the workers")
+            self.priority_task_scheduler.join()
+            self.waiting_task_scheduler.start()
+            for worker_thread in self.worker_thread_list:
+                worker_thread.join()
+            if self.worker_pool:
+                self.worker_pool.join()
 
     def _task_worker(self):
         """Execute and manage Task objects."""
