@@ -555,7 +555,7 @@ class Task(object):
                     "on a successive run.", index, arg)
 
         kwargs_clean = {}
-        for key, value in self.kwargs.iteritems():
+        for key, value in self.kwargs.items():
             try:
                 _ = pickle.dumps(value)
                 kwargs_clean[key] = value
@@ -571,7 +571,7 @@ class Task(object):
             json.dumps(kwargs_clean, sort_keys=True), source_code,
             self.target_path_list, str(file_stat_list))
 
-        self.task_hash = hashlib.sha1(task_string).hexdigest()
+        self.task_hash = hashlib.sha1(task_string.encode('utf-8')).hexdigest()
 
         # get ready to make a directory and target based on hashname
         # take the first 3 characters of the hash and make a subdirectory
