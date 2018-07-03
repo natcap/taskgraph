@@ -241,9 +241,9 @@ class TaskGraph(object):
             if self.terminated:
                 break
             LOGGER.info(
-                "tasks added: %d\n"
-                "tasks complete: %d\n"
-                "task graph open: %s" % (
+                "taskgraph execution status: tasks added: %d "
+                "tasks complete: %d "
+                "task graph open: %s " % (
                     len(self.task_id_map), self.n_tasks_complete,
                     not self.closed))
             time.sleep(
