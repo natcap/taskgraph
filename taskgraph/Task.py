@@ -360,8 +360,13 @@ class TaskGraph(object):
         task_dependent_map = collections.defaultdict(set)
         dependent_task_map = collections.defaultdict(set)
         completed_tasks = set()
+
+        # it's possible the taskgraph is in delayed execution mode, don't
+        # attempt to schedule until signaled to do so
+        self.taskgraph_started_event.wait()
+
+        tasks_ready_to_work = set()
         for task, mode in iter(self.waiting_task_queue.get, 'STOP'):
-            tasks_ready_to_work = set()
             if mode == 'wait':
                 # see if this task's dependencies are satisfied, if so send
                 # to work.
@@ -399,10 +404,22 @@ class TaskGraph(object):
                         # work queue
                         tasks_ready_to_work.add(waiting_task)
                 del task_dependent_map[task]
-            for ready_task in sorted(
-                    tasks_ready_to_work, key=lambda x: x.priority):
-                self.work_ready_queue.put(ready_task)
-            tasks_ready_to_work = None
+            if self.waiting_task_queue.empty():
+                # this only schedules tasks if the queue is drained, fixes
+                # a race condition where a lower priority task may be
+                # immediately put to the work queue even though there are
+                # higher priority ones still waiting
+                for ready_task in sorted(
+                        tasks_ready_to_work, key=lambda x: x.priority):
+                    self.work_ready_queue.put(ready_task)
+                tasks_ready_to_work = set()
+
+        # it's possible the last element in the queue was 'STOP', this drains
+        # the `tasks_ready_to_work` set so everything gets scheduled
+        for ready_task in sorted(
+                tasks_ready_to_work, key=lambda x: x.priority):
+            self.work_ready_queue.put(ready_task)
+
         # if we got here, the waiting task queue is shut down, pass signal
         # to the lower queue
         self.work_ready_queue.put('STOP')
