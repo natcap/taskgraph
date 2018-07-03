@@ -4,10 +4,11 @@ import pprint
 import collections
 import hashlib
 import json
-import dill as pickle
+import pickle
 import os
 import logging
 import multiprocessing
+import multiprocessing.pool
 import threading
 import errno
 try:

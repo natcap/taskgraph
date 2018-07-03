@@ -408,7 +408,6 @@ class TaskGraphTests(unittest.TestCase):
             os.path.exists(target_path),
             "Expected file to exist because taskgraph should have re-run.")
 
-
     def test_repeat_targeted_runs(self):
         """TaskGraph: ensure that repeated runs with targets can join."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
