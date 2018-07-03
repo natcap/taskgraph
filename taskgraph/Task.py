@@ -9,6 +9,7 @@ import pickle
 import os
 import logging
 import multiprocessing
+import multiprocessing.pool
 import threading
 import errno
 try:
@@ -59,6 +60,23 @@ else:
     def itervalues(d):
         """Python 2/3 compatibility alias for d.itervalues()"""
         return d.itervalues()
+
+
+class NoDaemonProcess(multiprocessing.Process):
+    """Make 'daemon' attribute always return False."""
+
+    def _get_daemon(self):
+        return False
+
+    def _set_daemon(self, value):
+        pass
+    daemon = property(_get_daemon, _set_daemon)
+
+
+class NonDaemonicPool(multiprocessing.pool.Pool):
+    """NonDaemonic Process Pool."""
+
+    Process = NoDaemonProcess
 
 
 class TaskGraph(object):
@@ -113,7 +131,7 @@ class TaskGraph(object):
 
         # set up multrpocessing if n_workers > 0
         if n_workers > 0:
-            self.worker_pool = multiprocessing.Pool(n_workers)
+            self.worker_pool = NonDaemonicPool(n_workers)
             if HAS_PSUTIL:
                 parent = psutil.Process()
                 parent.nice(PROCESS_LOW_PRIORITY)
@@ -284,7 +302,6 @@ class TaskGraph(object):
                         "scheduler", task_name)
                     new_task._task_complete_event.set()
                     self.waiting_task_queue.put((new_task, 'done'))
-
             return new_task
 
         except Exception:
@@ -551,9 +568,40 @@ class Task(object):
             self.target_path_list+self.ignore_path_list,
             self.ignore_directories))
 
+        if not hasattr(self.func, '__name__'):
+            LOGGER.warn(
+                "function does not have a __name__ which means it will not "
+                "be considered when calculating a successive input has "
+                "been changed with another function without __name__.")
+            self.func.__name__ = ''
+
+        args_clean = []
+        for index, arg in enumerate(self.args):
+            try:
+                _ = pickle.dumps(arg)
+                args_clean.append(arg)
+            except TypeError:
+                LOGGER.warn(
+                    "could not pickle argument at index %d (%s). "
+                    "Skipping argument which means it will not be considered "
+                    "when calculating whether inputs have been changed "
+                    "on a successive run.", index, arg)
+
+        kwargs_clean = {}
+        for key, value in self.kwargs.items():
+            try:
+                _ = pickle.dumps(value)
+                kwargs_clean[key] = value
+            except TypeError:
+                LOGGER.warn(
+                    "could not pickle kw argument %s (%s). "
+                    "Skipping argument which means it will not be considered "
+                    "when calculating whether inputs have been changed "
+                    "on a successive run.", key, arg)
+
         task_string = '%s:%s:%s:%s:%s:%s' % (
-            self.func.__name__, pickle.dumps(self.args),
-            json.dumps(self.kwargs, sort_keys=True), source_code,
+            self.func.__name__, pickle.dumps(args_clean),
+            json.dumps(kwargs_clean, sort_keys=True), source_code,
             self.target_path_list, str(file_stat_list))
 
         self.task_hash = hashlib.sha1(task_string.encode('utf-8')).hexdigest()

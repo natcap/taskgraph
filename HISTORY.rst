@@ -5,6 +5,9 @@ Unreleased Changes
 * TaskGraph constructor has an option to report a ongoing logging message
   at a set interval. The message reports how many tasks have been committed
   and completed.
+* Fixing an issue where a non-JSON serializeable object would cause `add_task`
+  to crash. Now TaskGraph is more tolerant of non-JSON serializeable objects
+  and will log warnings when parameters cannot be serialized.
 
 0.5.2 (2018-06-20)
 ------------------

@@ -26,7 +26,7 @@ def _long_running_function(delay):
     time.sleep(delay)
 
 
-def _create_list_on_disk(value, length, target_path):
+def _create_list_on_disk(value, length, target_path=None):
     """Create a numpy array on disk filled with value of `size`."""
     target_list = [value] * length
     pickle.dump(target_list, open(target_path, 'wb'))
@@ -89,7 +89,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -115,7 +118,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -127,7 +133,10 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -148,15 +157,24 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 10
         task_a = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_a, list_len, target_a_path),
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_b, list_len, target_b_path),
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
-            args=(target_a_path, target_b_path, result_path),
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
         sum_task.join()
@@ -199,15 +217,24 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 10
         task_a = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_a, list_len, target_a_path),
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_b, list_len, target_b_path),
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
-            args=(target_a_path, target_b_path, result_path),
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
         sum_task.join()
@@ -260,7 +287,8 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         dependent_task = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
             target_path_list=[target_path],
             dependent_task_list=[base_task])
         task_graph.close()
@@ -290,7 +318,8 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _ = task_graph.add_task(
                 func=_create_list_on_disk,
-                args=(value, list_len, target_path),
+                args=(value, list_len),
+                kwargs={'target_path': target_path},
                 target_path_list=[target_path])
         task_graph.join()
 
@@ -302,7 +331,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         t = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -390,7 +422,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path))
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            })
         task_graph.close()
         task_graph.join()
         task_graph = None
@@ -400,7 +435,11 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         _ = task_graph2.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path))
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            })
+
         task_graph2.close()
         task_graph2.join()
 
@@ -416,7 +455,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -425,7 +467,10 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         task = task_graph2.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         self.assertTrue(task.join(1.0), "join failed after 1 second")
         task_graph2.close()
@@ -443,3 +488,29 @@ class TaskGraphTests(unittest.TestCase):
         timedout = not task_graph.join(5)
         # this should not timeout since function runs for 1 second
         self.assertFalse(timedout, "task timed out")
+
+    def test_task_equality(self):
+        """TaskGraph: test correctness of == and != for Tasks."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        task_a = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+        task_a_same = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+        task_b = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value+1, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+
+        self.assertTrue(task_a == task_a)
+        self.assertTrue(task_a == task_a_same)
+        self.assertTrue(task_a != task_b)
