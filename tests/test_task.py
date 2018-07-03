@@ -12,9 +12,8 @@ import mock
 
 import taskgraph
 
-logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__file__)
-
+LOGGER.addHandler(logging.NullHandler)
 
 # Python 3 relocated the reload function to imp.
 if 'reload' not in __builtins__:
@@ -51,13 +50,13 @@ class TaskGraphTests(unittest.TestCase):
     """Tests for the taskgraph."""
 
     def setUp(self):
-        """Overriding setUp function to create temp workspace directory."""
+        """Create temp workspace directory."""
         # this lets us delete the workspace after its done no matter the
         # the rest result
         self.workspace_dir = tempfile.mkdtemp()
 
     def tearDown(self):
-        """Overriding tearDown function to remove temporary directory."""
+        """Remove temporary directory."""
         shutil.rmtree(self.workspace_dir)
 
     def test_version_loaded(self):
@@ -66,7 +65,7 @@ class TaskGraphTests(unittest.TestCase):
             import taskgraph
             # Verifies that there's a version attribute and it has a value.
             self.assertTrue(len(taskgraph.__version__) > 0)
-        except Exception as error:
+        except Exception:
             self.fail('Could not load the taskgraph version as expected.')
 
     def test_version_not_loaded(self):
@@ -204,7 +203,6 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
         task_graph.join()
 
-
     def test_task_chain_single_thread(self):
         """TaskGraph: Test a single threaded task chain."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -285,7 +283,7 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
-        dependent_task = task_graph.add_task(
+        _ = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value, list_len),
             kwargs={'target_path': target_path},
@@ -329,7 +327,7 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
-        t = task_graph.add_task(
+        _ = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value, list_len),
             kwargs={
@@ -374,7 +372,7 @@ class TaskGraphTests(unittest.TestCase):
 
         # __call__ is abstract so TypeError since it's not implemented
         with self.assertRaises(TypeError):
-            x = TestAbstract()
+            _ = TestAbstract()
 
         class TestA(EncapsulatedTaskOp):
             def __call__(self, x):
@@ -514,3 +512,45 @@ class TaskGraphTests(unittest.TestCase):
         self.assertTrue(task_a == task_a)
         self.assertTrue(task_a == task_a_same)
         self.assertTrue(task_a != task_b)
+
+    def test_delayed_execution(self):
+        """TaskGraph: test delayed execution."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, delayed_start=True)
+
+        result_list = []
+
+        def append_val(val):
+            result_list.append(val)
+
+        # by setting a higher priority of one task than another, we can
+        # guarantee the order in which the elements are inserted
+        for value in range(10):
+            task_graph.add_task(
+                func=append_val, args=(value,), priority=value)
+        task_graph.close()
+        task_graph.join()
+        self.assertEqual(result_list, list(reversed(range(10))))
+
+    def test_join_delayed_execution_error(self):
+        """TaskGraph: test a join on a task on delayed execution fails."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, delayed_start=True)
+
+        result_list = []
+
+        def append_val(val):
+            result_list.append(val)
+
+        task = task_graph.add_task(func=append_val, args=(1,))
+        with self.assertRaises(RuntimeError) as cm:
+            # can't join when
+            task.join()
+        message = str(cm.exception)
+        self.assertTrue(
+            'Task joined even though taskgraph has delayed' in message,
+            message)
+
+        task_graph.close()
+        task_graph.join()
+        self.assertEqual(result_list, [1])
