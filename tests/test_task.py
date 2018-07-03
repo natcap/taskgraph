@@ -21,9 +21,9 @@ if 'reload' not in __builtins__:
     from imp import reload
 
 
-def _long_running_function():
-    """Wait for 5 seconds."""
-    time.sleep(5)
+def _long_running_function(delay):
+    """Wait for `delay` seconds."""
+    time.sleep(delay)
 
 
 def _create_list_on_disk(value, length, target_path):
@@ -97,11 +97,11 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [value]*list_len)
 
     def test_timeout_task(self):
-        """TaskGraph: Test timeout funcitonality"""
+        """TaskGraph: Test timeout functionality."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        target_path = os.path.join(self.workspace_dir, '1000.dat')
         _ = task_graph.add_task(
-            func=_long_running_function,)
+            func=_long_running_function,
+            args=(5,))
         task_graph.close()
         timedout = not task_graph.join(0.5)
         # this should timeout since function runs for 5 seconds
@@ -408,7 +408,6 @@ class TaskGraphTests(unittest.TestCase):
             os.path.exists(target_path),
             "Expected file to exist because taskgraph should have re-run.")
 
-
     def test_repeat_targeted_runs(self):
         """TaskGraph: ensure that repeated runs with targets can join."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -431,3 +430,16 @@ class TaskGraphTests(unittest.TestCase):
         self.assertTrue(task.join(1.0), "join failed after 1 second")
         task_graph2.close()
         task_graph2.join()
+
+    def test_async_logging(self):
+        """TaskGraph: ensure async logging can execute."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, reporting_interval=0.1)
+        _ = task_graph.add_task(
+            func=_long_running_function,
+            args=(1.0,))
+        task_graph.close()
+        task_graph.join()
+        timedout = not task_graph.join(5)
+        # this should not timeout since function runs for 1 second
+        self.assertFalse(timedout, "task timed out")
