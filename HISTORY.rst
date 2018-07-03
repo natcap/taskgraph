@@ -1,6 +1,10 @@
 .. :changelog:
 
-.. Unreleased Changes
+Unreleased Changes
+------------------
+* TaskGraph constructor has an option to report a ongoing logging message
+  at a set interval. The message reports how many tasks have been committed
+  and completed.
 
 0.5.2 (2018-06-20)
 ------------------
