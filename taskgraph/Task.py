@@ -2,7 +2,6 @@
 import time
 import heapq
 import pprint
-import types
 import collections
 import hashlib
 import json
@@ -12,17 +11,54 @@ import logging
 import multiprocessing
 import threading
 import errno
-import Queue
+try:
+    import Queue as queue
+except ImportError:
+    # Python3 renamed queue as queue
+    import queue
 import inspect
 import abc
+
+# Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
+# usage that is no longer clearly documented in python 3 (if it's even present
+# at all ... __metaclass__ has been removed from the python data model docs)
+# Taken from https://stackoverflow.com/a/38668373/299084
+ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
 
 try:
     import psutil
     HAS_PSUTIL = True
+    if psutil.WINDOWS:
+        # Windows' scheduler doesn't use POSIX niceness.
+        PROCESS_LOW_PRIORITY = psutil.BELOW_NORMAL_PRIORITY_CLASS
+    else:
+        # On POSIX, use system niceness.
+        # -20 is high priority, 0 is normal priority, 19 is low priority.
+        # 10 here is an abritrary selection that's probably nice enough.
+        PROCESS_LOW_PRIORITY = 10
 except ImportError:
     HAS_PSUTIL = False
 
 LOGGER = logging.getLogger('Task')
+
+
+try:
+    dict.itervalues
+except AttributeError:
+    # Python 3
+    # range is an iterator in python3.
+    xrange = range
+    # In python2, basestring is the common superclass of str and unicode.  In
+    # python3, we'll probably only be dealing with str objects.
+    basestring = str
+    def itervalues(d):
+        """Python 2/3 compatibility iterator over d.values()"""
+        return iter(d.values())
+else:
+    # Python 2
+    def itervalues(d):
+        """Python 2/3 compatibility alias for d.itervalues()"""
+        return d.itervalues()
 
 
 class TaskGraph(object):
@@ -47,6 +83,7 @@ class TaskGraph(object):
                 `add_task` will be a blocking call.
             reporting_interval (scalar): if not None, report status of task
                 graph every `reporting_interval` seconds.
+
         """
         # the work queue is the feeder to active worker threads
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
@@ -79,10 +116,10 @@ class TaskGraph(object):
             self.worker_pool = multiprocessing.Pool(n_workers)
             if HAS_PSUTIL:
                 parent = psutil.Process()
-                parent.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                parent.nice(PROCESS_LOW_PRIORITY)
                 for child in parent.children():
                     try:
-                        child.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                        child.nice(PROCESS_LOW_PRIORITY)
                     except psutil.NoSuchProcess:
                         LOGGER.warn(
                             "NoSuchProcess exception encountered when trying "
@@ -99,7 +136,7 @@ class TaskGraph(object):
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
-        self.work_queue = Queue.Queue()
+        self.work_queue = queue.Queue()
         self.worker_semaphore = threading.Semaphore(max(1, n_workers))
         # launch threads to manage the workers
         for thread_id in xrange(max(1, n_workers)):
@@ -110,7 +147,7 @@ class TaskGraph(object):
             worker_thread.start()
 
         # tasks that get passed add_task get put in this queue for scheduling
-        self.waiting_task_queue = Queue.Queue()
+        self.waiting_task_queue = queue.Queue()
         waiting_task_scheduler = threading.Thread(
             target=self._process_waiting_tasks,
             name='_waiting_task_scheduler')
@@ -119,7 +156,7 @@ class TaskGraph(object):
 
         # tasks in the work ready queue have dependencies satisfied but need
         # priority scheduling
-        self.work_ready_queue = Queue.Queue()
+        self.work_ready_queue = queue.Queue()
         priority_task_scheduler = threading.Thread(
             target=self._schedule_priority_tasks,
             name='_priority_task_scheduler')
@@ -127,8 +164,7 @@ class TaskGraph(object):
         priority_task_scheduler.start()
 
     def _task_worker(self):
-        """Execute and manage Task objects.
-        """
+        """Execute and manage Task objects."""
         for task in iter(self.work_queue.get, 'STOP'):
             try:
                 # precondition: task wouldn't be in queue if it were
@@ -158,8 +194,15 @@ class TaskGraph(object):
             target_path_list (list): if not None, a list of file paths that
                 are expected to be output by `func`.  If any of these paths
                 don't exist, or their timestamp is earlier than an input
-                arg or work token, func will be executed.  If None, not
-                considered when scheduling task.
+                arg or work token, func will be executed.
+
+                If `None`, any identical calls to `add_task` will be skipped
+                for the TaskGraph object. A future TaskGraph object will
+                re-run an exact call once for its lifetime. The reasoning is
+                that it is likely the user wishes to run a target-less task
+                once for the lifetime of a task-graph, but would otherwise
+                not have a transient result that could be re-used in a
+                future instantiation of a TaskGraph object.
             task_name (string): if not None, this value is used to identify
                 the task in logging messages.
             ignore_path_list (list): list of file paths that could be in
@@ -180,6 +223,7 @@ class TaskGraph(object):
             Task which was just added to the graph or an existing Task that
             has the same signature and has already been added to the
             TaskGraph.
+
         """
         try:
             if self.closed:
@@ -217,13 +261,27 @@ class TaskGraph(object):
             if self.n_workers < 0:
                 # call directly if single threaded
                 if not new_task.is_precalculated():
+                    LOGGER.debug(
+                        "single thread: %s is not precalculated, "
+                        "invoking call", task_name)
                     new_task._call()
+                else:
+                    LOGGER.debug(
+                        "single thread: %s is precalculated, "
+                        "skipping call", task_name)
+                    new_task._task_complete_event.set()
             else:
                 # send to scheduler
                 if not new_task.is_precalculated():
+                    LOGGER.debug(
+                        "multithreaded: %s is not precalculated, sending to "
+                        "scheduler", task_name)
                     self.waiting_task_queue.put((new_task, 'wait'))
                 else:
                     # this is a shortcut to clear pre-calculated tasks
+                    LOGGER.debug(
+                        "multithreaded: %s is precalculated, alerting the "
+                        "scheduler", task_name)
                     new_task._task_complete_event.set()
                     self.waiting_task_queue.put((new_task, 'done'))
 
@@ -269,7 +327,7 @@ class TaskGraph(object):
                         break
                     # push task to priority queue
                     heapq.heappush(priority_queue, task)
-                except Queue.Empty:
+                except queue.Empty:
                     # this triggers when work_ready_queue is empty and
                     # there's something in the work_ready_queue
                     break
@@ -291,7 +349,7 @@ class TaskGraph(object):
     def _process_waiting_tasks(self):
         """Process any tasks that are waiting on dependencies.
 
-        This worker monitors the self.waiting_task_queue Queue and looks for
+        This worker monitors the self.waiting_task_queue queue and looks for
         (task, 'wait'), or (task, 'done') tuples.
 
         If mode is 'wait' the task is indexed locally with reference to
@@ -361,13 +419,14 @@ class TaskGraph(object):
 
         Returns:
             True if successful join, False if timed out.
+
         """
         # if single threaded, nothing to join.
         if self.n_workers < 0:
             return True
         try:
             timedout = False
-            for task in self.task_id_map.itervalues():
+            for task in itervalues(self.task_id_map):
                 timedout = not task.join(timeout)
                 # if the last task timed out then we want to timeout for all
                 # of the task graph
@@ -402,7 +461,7 @@ class TaskGraph(object):
         self.close()
         if self.n_workers > 0:
             self.worker_pool.terminate()
-        for task in self.task_id_map.itervalues():
+        for task in itervalues(self.task_id_map):
             task._terminate()
         self.terminated = True
 
@@ -446,6 +505,7 @@ class Task(object):
                 met and are ready for scheduling. Tasks are inserted into the
                 work queue in order of decreasing priority. This value can be
                 positive, negative, and/or floating point.
+
         """
         self.task_name = task_name
         self.func = func
@@ -496,7 +556,7 @@ class Task(object):
             json.dumps(self.kwargs, sort_keys=True), source_code,
             self.target_path_list, str(file_stat_list))
 
-        self.task_hash = hashlib.sha1(task_string).hexdigest()
+        self.task_hash = hashlib.sha1(task_string.encode('utf-8')).hexdigest()
 
         # get ready to make a directory and target based on hashname
         # take the first 3 characters of the hash and make a subdirectory
@@ -513,6 +573,10 @@ class Task(object):
             return self.task_hash == other.task_hash
         return False
 
+    def __hash__(self):
+        """Return the base-16 integer hash of this hash string."""
+        return int(self.task_hash, 16)
+
     def __ne__(self, other):
         """Inverse of __eq__."""
         return not self.__eq__(other)
@@ -522,6 +586,7 @@ class Task(object):
         return self.priority < other.priority
 
     def __str__(self):
+        """Create a string representation of a Task."""
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
             {
                 "task_name": self.task_name,
@@ -546,6 +611,7 @@ class Task(object):
 
         Returns:
             A list of file parameters of the target path list.
+
         """
         try:
             if self.terminated:
@@ -587,9 +653,14 @@ class Task(object):
             except OSError as exception:
                 if exception.errno != errno.EEXIST:
                     raise
-            with open(self.task_cache_path, 'wb') as task_cache_file:
-                pickle.dump(result_target_path_stats, task_cache_file)
+            # this step will only record the run for future processes if
+            # there is a concrete expected file on disk. Otherwise results
+            # must be transient between runs and we'd expect to run again.
+            if self.target_path_list:
+                with open(self.task_cache_path, 'wb') as task_cache_file:
+                    pickle.dump(result_target_path_stats, task_cache_file)
 
+            LOGGER.debug("successful run on task %s", self.task_name)
             # successful run, return target path stats
             return result_target_path_stats
         except Exception as e:
@@ -597,6 +668,8 @@ class Task(object):
             self._terminate(e)
             raise
         finally:
+            LOGGER.debug(
+                "setting _task_complete_event on task %s", self.task_name)
             self._task_complete_event.set()
 
     def is_complete(self):
@@ -610,6 +683,7 @@ class Task(object):
         Raises:
             RuntimeError if the task thread is stopped but no completion
             token
+
         """
         if self.terminated:
             raise RuntimeError(
@@ -625,6 +699,7 @@ class Task(object):
         Returns:
             True if the Task's target paths exist in the same state as the
             last recorded run. False otherwise.
+
         """
         try:
             if not os.path.exists(self.task_cache_path):
@@ -652,23 +727,22 @@ class Task(object):
         self._task_complete_event.set()
 
 
-class EncapsulatedTaskOp:
+class EncapsulatedTaskOp(ABC):
     """Used as a superclass for Task operations that need closures.
 
     This class will automatically hash the subclass's __call__ method source
     as well as the arguments to its __init__ function to calculate the
     Task's unique hash.
-    """
-    __metaclass__ = abc.ABCMeta
 
+    """
     def __init__(self, *args, **kwargs):
         # try to get the source code of __call__ so task graph will recompute
         # if the function has changed
-        args_as_str = str([args, kwargs])
+        args_as_str = str([args, kwargs]).encode('utf-8')
         try:
             # hash the args plus source code of __call__
             id_hash = hashlib.sha1(args_as_str + inspect.getsource(
-                self.__class__.__call__)).hexdigest()
+                self.__class__.__call__).encode('utf-8')).hexdigest()
         except IOError:
             # this will fail if the code is compiled, that's okay just do
             # the args
@@ -678,6 +752,7 @@ class EncapsulatedTaskOp:
 
     @abc.abstractmethod
     def __call__(self, *args, **kwargs):
+        """Empty method meant to be overridden by inheritor."""
         pass
 
 
@@ -695,8 +770,9 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         list of (path, timestamp, filesize) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
+
     """
-    if isinstance(base_value, types.StringTypes):
+    if isinstance(base_value, basestring):
         try:
             if base_value not in ignore_list and (
                     not os.path.isdir(base_value) or
@@ -706,7 +782,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         except OSError:
             pass
     elif isinstance(base_value, collections.Mapping):
-        for key in sorted(base_value.iterkeys()):
+        for key in sorted(base_value.keys()):
             value = base_value[key]
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):

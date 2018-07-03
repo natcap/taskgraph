@@ -8,14 +8,23 @@ import unittest
 import pickle
 import logging
 
+import mock
+
 import taskgraph
 
 logging.basicConfig(level=logging.DEBUG)
+LOGGER = logging.getLogger(__file__)
+
+
+# Python 3 relocated the reload function to imp.
+if 'reload' not in __builtins__:
+    from imp import reload
 
 
 def _long_running_function():
     """Wait for 5 seconds."""
     time.sleep(5)
+
 
 def _create_list_on_disk(value, length, target_path):
     """Create a numpy array on disk filled with value of `size`."""
@@ -37,6 +46,7 @@ def _div_by_zero():
     """Divide by zero to raise an exception."""
     return 1/0
 
+
 class TaskGraphTests(unittest.TestCase):
     """Tests for the taskgraph."""
 
@@ -49,6 +59,27 @@ class TaskGraphTests(unittest.TestCase):
     def tearDown(self):
         """Overriding tearDown function to remove temporary directory."""
         shutil.rmtree(self.workspace_dir)
+
+    def test_version_loaded(self):
+        """TaskGraph: verify we can load the version."""
+        try:
+            import taskgraph
+            # Verifies that there's a version attribute and it has a value.
+            self.assertTrue(len(taskgraph.__version__) > 0)
+        except Exception as error:
+            self.fail('Could not load the taskgraph version as expected.')
+
+    def test_version_not_loaded(self):
+        """TaskGraph: verify exception when not installed."""
+        from pkg_resources import DistributionNotFound
+        import taskgraph
+
+        with mock.patch('taskgraph.pkg_resources.get_distribution',
+                        side_effect=DistributionNotFound('taskgraph')):
+            with self.assertRaises(RuntimeError):
+                # RuntimeError is a side effect of `import taskgraph`, so we
+                # reload it to retrigger the metadata load.
+                taskgraph = reload(taskgraph)
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
@@ -350,3 +381,53 @@ class TaskGraphTests(unittest.TestCase):
 
         init_new_a = TestA(1)
         self.assertNotEqual(new_a.__name__, init_new_a.__name__)
+
+    def test_repeat_targetless_runs(self):
+        """TaskGraph: ensure that repeated runs with no targets reexecute."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        _ = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path))
+        task_graph.close()
+        task_graph.join()
+        task_graph = None
+
+        os.remove(target_path)
+
+        task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
+        _ = task_graph2.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path))
+        task_graph2.close()
+        task_graph2.join()
+
+        self.assertTrue(
+            os.path.exists(target_path),
+            "Expected file to exist because taskgraph should have re-run.")
+
+
+    def test_repeat_targeted_runs(self):
+        """TaskGraph: ensure that repeated runs with targets can join."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        _ = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path])
+        task_graph.close()
+        task_graph.join()
+        task_graph = None
+
+        task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
+        task = task_graph2.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len, target_path),
+            target_path_list=[target_path])
+        self.assertTrue(task.join(1.0), "join failed after 1 second")
+        task_graph2.close()
+        task_graph2.join()
