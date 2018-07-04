@@ -20,12 +20,12 @@ if 'reload' not in __builtins__:
     from imp import reload
 
 
-def _long_running_function():
-    """Wait for 5 seconds."""
-    time.sleep(5)
+def _long_running_function(delay):
+    """Wait for `delay` seconds."""
+    time.sleep(delay)
 
 
-def _create_list_on_disk(value, length, target_path):
+def _create_list_on_disk(value, length, target_path=None):
     """Create a numpy array on disk filled with value of `size`."""
     target_list = [value] * length
     pickle.dump(target_list, open(target_path, 'wb'))
@@ -82,13 +82,16 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0.1)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -99,7 +102,8 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: Test timeout functionality."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task(
-            func=_long_running_function,)
+            func=_long_running_function,
+            args=(5,))
         task_graph.close()
         timedout = not task_graph.join(0.5)
         # this should timeout since function runs for 5 seconds
@@ -113,7 +117,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -125,7 +132,10 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -146,15 +156,24 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 10
         task_a = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_a, list_len, target_a_path),
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_b, list_len, target_b_path),
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
-            args=(target_a_path, target_b_path, result_path),
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
         sum_task.join()
@@ -196,15 +215,24 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 10
         task_a = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_a, list_len, target_a_path),
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_b, list_len, target_b_path),
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
-            args=(target_a_path, target_b_path, result_path),
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
         sum_task.join()
@@ -257,7 +285,8 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
             target_path_list=[target_path],
             dependent_task_list=[base_task])
         task_graph.close()
@@ -287,7 +316,8 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _ = task_graph.add_task(
                 func=_create_list_on_disk,
-                args=(value, list_len, target_path),
+                args=(value, list_len),
+                kwargs={'target_path': target_path},
                 target_path_list=[target_path])
         task_graph.join()
 
@@ -299,7 +329,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -387,7 +420,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path))
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            })
         task_graph.close()
         task_graph.join()
         task_graph = None
@@ -397,7 +433,11 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         _ = task_graph2.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path))
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            })
+
         task_graph2.close()
         task_graph2.join()
 
@@ -413,7 +453,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -422,7 +465,10 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         task = task_graph2.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         self.assertTrue(task.join(1.0), "join failed after 1 second")
         task_graph2.close()
@@ -469,3 +515,42 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.close()
         task_graph.join()
         self.assertEqual(result_list, [1])
+
+    def test_task_equality(self):
+        """TaskGraph: test correctness of == and != for Tasks."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        task_a = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+        task_a_same = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+        task_b = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value+1, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+
+        self.assertTrue(task_a == task_a)
+        self.assertTrue(task_a == task_a_same)
+        self.assertTrue(task_a != task_b)
+
+    def test_async_logging(self):
+        """TaskGraph: ensure async logging can execute."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, reporting_interval=0.1)
+        _ = task_graph.add_task(
+            func=_long_running_function,
+            args=(1.0,))
+        task_graph.close()
+        task_graph.join()
+        timedout = not task_graph.join(5)
+        # this should not timeout since function runs for 1 second
+        self.assertFalse(timedout, "task timed out")

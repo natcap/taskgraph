@@ -1,4 +1,5 @@
 """Task graph framework."""
+import time
 import heapq
 import pprint
 import collections
@@ -8,6 +9,7 @@ import pickle
 import os
 import logging
 import multiprocessing
+import multiprocessing.pool
 import threading
 import errno
 try:
@@ -60,11 +62,29 @@ else:
         return d.itervalues()
 
 
+class NoDaemonProcess(multiprocessing.Process):
+    """Make 'daemon' attribute always return False."""
+
+    def _get_daemon(self):
+        return False
+
+    def _set_daemon(self, value):
+        pass
+    daemon = property(_get_daemon, _set_daemon)
+
+
+class NonDaemonicPool(multiprocessing.pool.Pool):
+    """NonDaemonic Process Pool."""
+
+    Process = NoDaemonProcess
+
+
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
     def __init__(
-            self, taskgraph_cache_dir_path, n_workers, delayed_start=False):
+            self, taskgraph_cache_dir_path, n_workers, delayed_start=False,
+            reporting_interval=None):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
@@ -84,6 +104,8 @@ class TaskGraph(object):
                 until `join` is invoked. A value of `True` is incompatible
                 with `n_workers` < 0 and will raise a ValueError on
                 construction.
+            reporting_interval (scalar): if not None, report status of task
+                graph every `reporting_interval` seconds.
 
         """
         if delayed_start and n_workers < 0:
@@ -106,6 +128,9 @@ class TaskGraph(object):
         # to the taskgraph during `add_task`
         self.task_id_map = dict()
 
+        # used in monitoring task graph execution.
+        self.n_tasks_complete = 0
+
         # used to remember if task_graph has been closed
         self.closed = False
 
@@ -119,7 +144,7 @@ class TaskGraph(object):
 
         # set up multrpocessing if n_workers > 0
         if n_workers > 0:
-            self.worker_pool = multiprocessing.Pool(n_workers)
+            self.worker_pool = NonDaemonicPool(n_workers)
             if HAS_PSUTIL:
                 parent = psutil.Process()
                 parent.nice(PROCESS_LOW_PRIORITY)
@@ -131,6 +156,14 @@ class TaskGraph(object):
                             "NoSuchProcess exception encountered when trying "
                             "to nice %s. This might be a bug in `psutil` so "
                             "it should be okay to ignore.")
+
+        if reporting_interval is not None:
+            monitor_thread = threading.Thread(
+                target=self._execution_monitor,
+                args=(reporting_interval,),
+                name='_execution_monitor')
+            monitor_thread.daemon = True
+            monitor_thread.start()
 
         # used to synchronize a pass through potential tasks to add to the
         # work queue
@@ -298,13 +331,28 @@ class TaskGraph(object):
                         "scheduler", task_name)
                     new_task._task_complete_event.set()
                     self.waiting_task_queue.put((new_task, 'done'))
-
             return new_task
 
         except Exception:
             # something went wrong, shut down the taskgraph
             self._terminate()
             raise
+
+    def _execution_monitor(self, reporting_interval):
+        """Log state of taskgraph every `reporting_interval` seconds."""
+        start_time = time.time()
+        while True:
+            if self.terminated:
+                break
+            LOGGER.info(
+                "taskgraph execution status: tasks added: %d "
+                "tasks complete: %d "
+                "task graph open: %s " % (
+                    len(self.task_id_map), self.n_tasks_complete,
+                    not self.closed))
+            time.sleep(
+                reporting_interval - (
+                    (time.time() - start_time)) % reporting_interval)
 
     def _schedule_priority_tasks(self):
         """Priority schedules the `self.work_ready` queue.
@@ -389,6 +437,7 @@ class TaskGraph(object):
                 # invariant: task has not previously been sent as a 'done'
                 # notification and task is done.
                 completed_tasks.add(task)
+                self.n_tasks_complete += 1
                 if task not in task_dependent_map:
                     # this can occur if add_task identifies task is complete
                     # before any other analysis.
@@ -572,9 +621,40 @@ class Task(object):
             self.target_path_list+self.ignore_path_list,
             self.ignore_directories))
 
+        if not hasattr(self.func, '__name__'):
+            LOGGER.warn(
+                "function does not have a __name__ which means it will not "
+                "be considered when calculating a successive input has "
+                "been changed with another function without __name__.")
+            self.func.__name__ = ''
+
+        args_clean = []
+        for index, arg in enumerate(self.args):
+            try:
+                _ = pickle.dumps(arg)
+                args_clean.append(arg)
+            except TypeError:
+                LOGGER.warn(
+                    "could not pickle argument at index %d (%s). "
+                    "Skipping argument which means it will not be considered "
+                    "when calculating whether inputs have been changed "
+                    "on a successive run.", index, arg)
+
+        kwargs_clean = {}
+        for key, value in self.kwargs.items():
+            try:
+                _ = pickle.dumps(value)
+                kwargs_clean[key] = value
+            except TypeError:
+                LOGGER.warn(
+                    "could not pickle kw argument %s (%s). "
+                    "Skipping argument which means it will not be considered "
+                    "when calculating whether inputs have been changed "
+                    "on a successive run.", key, arg)
+
         task_string = '%s:%s:%s:%s:%s:%s' % (
-            self.func.__name__, pickle.dumps(self.args),
-            json.dumps(self.kwargs, sort_keys=True), source_code,
+            self.func.__name__, pickle.dumps(args_clean),
+            json.dumps(kwargs_clean, sort_keys=True), source_code,
             self.target_path_list, str(file_stat_list))
 
         self.task_hash = hashlib.sha1(task_string.encode('utf-8')).hexdigest()
