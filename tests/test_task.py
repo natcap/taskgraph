@@ -505,7 +505,8 @@ class TaskGraphTests(unittest.TestCase):
 
         task = task_graph.add_task(func=append_val, args=(1,))
         with self.assertRaises(RuntimeError) as cm:
-            # can't join when
+            # can't join a task when taskgraph has delayed start and hasn't
+            # joined yet
             task.join()
         message = str(cm.exception)
         self.assertTrue(
