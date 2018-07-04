@@ -3,7 +3,7 @@
 Unreleased Changes
 ------------------
 * Added a `delayed_start` flag to TaskGraph to allow for delayed execution of
-  taskgraph tasks. If enabled on threaded or multiprocess model, calls to
+  taskgraph tasks. If enabled on threaded or multiprocess mode, calls to
   `add_task` will not execute tasks until the `join` method is invoked on
   `taskgraph`. This allows for finer control over execution order when tasks
   are passed non-equivalent `priority` levels.
