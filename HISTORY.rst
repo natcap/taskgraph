@@ -2,6 +2,14 @@
 
 Unreleased Changes
 ------------------
+* Added a `delayed_start` flag to TaskGraph to allow for delayed execution of
+  taskgraph tasks. If enabled on threaded or multiprocess mode, calls to
+  `add_task` will not execute tasks until the `join` method is invoked on
+  `taskgraph`. This allows for finer control over execution order when tasks
+  are passed non-equivalent `priority` levels.
+* Fixing an issue where a non-JSON serializeable object would cause `add_task`
+  to crash. Now TaskGraph is more tolerant of non-JSON serializeable objects
+  and will log warnings when parameters cannot be serialized.
 * TaskGraph constructor has an option to report a ongoing logging message
   at a set interval. The message reports how many tasks have been committed
   and completed.
