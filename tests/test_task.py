@@ -6,14 +6,10 @@ import shutil
 import time
 import unittest
 import pickle
-import logging
 
 import mock
 
 import taskgraph
-
-LOGGER = logging.getLogger(__file__)
-LOGGER.addHandler(logging.NullHandler)
 
 # Python 3 relocated the reload function to imp.
 if 'reload' not in __builtins__:
