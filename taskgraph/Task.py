@@ -665,12 +665,12 @@ class Task(object):
 
         reexecution_info = {
             'name': self.func.__name__,
-            'args': pprint.pprint(args_clean),
-            'kwargs': pprint.pprint(kwargs_clean),
+            'args': pprint.pformat(args_clean),
+            'kwargs': pprint.pformat(kwargs_clean),
             'source_code_hash': hashlib.sha1(
                 source_code.encode('utf-8')).hexdigest(),
-            'target_path_list': pprint.pprint(self.target_path_list),
-            'file_stat_list': pprint.pprint(file_stat_list),
+            'target_path_list': pprint.pformat(self.target_path_list),
+            'file_stat_list': pprint.pformat(file_stat_list),
         }
 
         reexecution_string = ':'.join([
