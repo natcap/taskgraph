@@ -107,6 +107,12 @@ class TaskGraph(object):
             reporting_interval (scalar): if not None, report status of task
                 graph every `reporting_interval` seconds.
 
+        Raises:
+            ValueError: `delayed_start` is set to `True` but `n_workers` is
+                set < 0 indicating single process/thread mode. `ValueError`
+                makes sense that `TaskGraph` can't delay the start if only
+                the main thread is executing.
+
         """
         if delayed_start and n_workers < 0:
             raise ValueError(
