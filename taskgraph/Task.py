@@ -4,7 +4,6 @@ import heapq
 import pprint
 import collections
 import hashlib
-import json
 import pickle
 import os
 import logging
@@ -195,7 +194,7 @@ class TaskGraph(object):
 
         # tasks in the work ready queue have dependencies satisfied but need
         # priority scheduling
-        self.work_ready_queue = queue.Queue()
+        self.work_ready_queue = queue.PriorityQueue()
         self.priority_task_scheduler = threading.Thread(
             target=self._schedule_priority_tasks,
             name='_priority_task_scheduler')
@@ -415,11 +414,6 @@ class TaskGraph(object):
         dependent_task_map = collections.defaultdict(set)
         completed_tasks = set()
 
-        # it's possible the taskgraph is in delayed execution mode, don't
-        # attempt to schedule until signaled to do so
-        self.taskgraph_started_event.wait()
-
-        tasks_ready_to_work = set()
         for task, mode in iter(self.waiting_task_queue.get, 'STOP'):
             if mode == 'wait':
                 # see if this task's dependencies are satisfied, if so send
@@ -429,7 +423,7 @@ class TaskGraph(object):
                     if dep_task not in completed_tasks]
                 if not outstanding_dependent_task_list:
                     # if nothing is outstanding, send to work queue
-                    tasks_ready_to_work.add(task)
+                    self.work_ready_queue.put(task)
 
                 # there are unresolved tasks that the waiting process
                 # scheduler has not been notified of. Record dependencies.
@@ -457,23 +451,8 @@ class TaskGraph(object):
                     if not dependent_task_map[waiting_task]:
                         # if we removed the last task we can put it to the
                         # work queue
-                        tasks_ready_to_work.add(waiting_task)
+                        self.work_ready_queue.put(waiting_task)
                 del task_dependent_map[task]
-            if self.waiting_task_queue.empty():
-                # this only schedules tasks if the queue is drained, fixes
-                # a race condition where a lower priority task may be
-                # immediately put to the work queue even though there are
-                # higher priority ones still waiting
-                for ready_task in sorted(
-                        tasks_ready_to_work, key=lambda x: x.priority):
-                    self.work_ready_queue.put(ready_task)
-                tasks_ready_to_work = set()
-
-        # it's possible the last element in the queue was 'STOP', this drains
-        # the `tasks_ready_to_work` set so everything gets scheduled
-        for ready_task in sorted(
-                tasks_ready_to_work, key=lambda x: x.priority):
-            self.work_ready_queue.put(ready_task)
 
         # if we got here, the waiting task queue is shut down, pass signal
         # to the lower queue
