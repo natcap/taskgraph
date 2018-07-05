@@ -106,11 +106,6 @@ class TaskGraph(object):
                 construction.
             reporting_interval (scalar): if not None, report status of task
                 graph every `reporting_interval` seconds.
-            delayed_start (bool): if true, taskgraph does not start executing
-                tasks as `add_task` is called. Instead no execution occurs
-                until `join` is invoked. A value of `True` is incompatible
-                with `n_workers` < 0 and will raise a ValueError on
-                construction.
 
         Raises:
             ValueError: `delayed_start` is set to `True` but `n_workers` is
@@ -213,7 +208,7 @@ class TaskGraph(object):
             # there's only something to clean up if there's a worker
             LOGGER.error("joining all the workers")
             self.priority_task_scheduler.join()
-            self.waiting_task_scheduler.start()
+            self.waiting_task_scheduler.join()
             for worker_thread in self.worker_thread_list:
                 worker_thread.join()
             if self.worker_pool:
