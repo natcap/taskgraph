@@ -301,14 +301,14 @@ class TaskGraph(object):
                 ignore_path_list, dependent_task_list, ignore_directories,
                 self.worker_pool, self.taskgraph_cache_dir_path, priority,
                 self.taskgraph_started_event)
-            task_hash = new_task.task_hash
+            task_arg_signature = new_task.task_arg_signature
 
             # it may be this task was already created in an earlier call,
             # use that object in its place
-            if task_hash in self.task_id_map:
-                return self.task_id_map[task_hash]
+            if task_arg_signature in self.task_id_map:
+                return self.task_id_map[task_arg_signature]
 
-            self.task_id_map[task_hash] = new_task
+            self.task_id_map[task_arg_signature] = new_task
 
             if self.n_workers < 0:
                 # call directly if single threaded
@@ -562,6 +562,7 @@ class Task(object):
         self.func = func
         self.args = args
         self.kwargs = kwargs
+        self.cache_dir = cache_dir
 
         # sort the target path list because the order doesn't matter for
         # a result, but it would cause a task to be reexecuted if the only
@@ -585,7 +586,10 @@ class Task(object):
         # to see when Task is complete
         self._task_complete_event = threading.Event()
 
-        # calculate the unique hash of the Task
+        self._calculate_signature_hash()
+
+    def _calculate_signature_hash(self):
+        """Calculate a hash based only on superficial argument inputs."""
         try:
             if not hasattr(Task, 'func_source_map'):
                 Task.func_source_map = {}
@@ -599,15 +603,6 @@ class Task(object):
             # many reasons for this, for example, frozen Python code won't
             # have source code, so just leave blank
             source_code = ''
-
-        # This gets a list of the files and their file stats that can be found
-        # in args and kwargs but ignores anything specifically targeted or
-        # an expected result. This will allow a task to change its hash in
-        # case a different version of a file was passed in.
-        file_stat_list = list(_get_file_stats(
-            [self.args, self.kwargs],
-            self.target_path_list+self.ignore_path_list,
-            self.ignore_directories))
 
         if not hasattr(self.func, '__name__'):
             LOGGER.warn(
@@ -642,20 +637,47 @@ class Task(object):
                     "when calculating whether inputs have been changed "
                     "on a successive run.", key, arg)
 
-        reexecution_info = {
+        self.reexecution_info = {
             'name': self.func.__name__,
             'args': pprint.pformat(args_clean),
             'kwargs': pprint.pformat(kwargs_clean),
             'source_code_hash': hashlib.sha1(
                 source_code.encode('utf-8')).hexdigest(),
             'target_path_list': pprint.pformat(self.target_path_list),
-            'file_stat_list': pprint.pformat(file_stat_list),
         }
 
-        reexecution_string = ':'.join([
-            reexecution_info[key] for key in sorted(reexecution_info.keys())])
+        argument_hash_string = ':'.join([
+            self.reexecution_info[key]
+            for key in sorted(self.reexecution_info.keys())])
 
-        self.task_hash = hashlib.sha1(
+        self.task_arg_signature = hashlib.sha1(
+            argument_hash_string.encode('utf-8')).hexdigest()
+
+    def _calculate_deep_hash(self):
+        """Calculate a hash that accounts for file size objects at runtime."""
+        if hasattr(Task, 'task_reexecution_hash'):
+            LOGGER.info(
+                '_calculate_deep_hash in %s was called more than once',
+                self.task_name)
+            return
+
+        # This gets a list of the files and their file stats that can be found
+        # in args and kwargs but ignores anything specifically targeted or
+        # an expected result. This will allow a task to change its hash in
+        # case a different version of a file was passed in.
+        file_stat_list = list(_get_file_stats(
+            [self.args, self.kwargs],
+            self.target_path_list+self.ignore_path_list,
+            self.ignore_directories))
+
+        self.reexecution_info['file_stat_list'] = pprint.pformat(
+            file_stat_list)
+
+        reexecution_string = ':'.join([
+            self.reexecution_info[key]
+            for key in sorted(self.reexecution_info.keys())])
+
+        self.task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
 
         # make a directory and target based on hashname
@@ -663,19 +685,19 @@ class Task(object):
         # for each so we don't blowup the filesystem with a bunch of files in
         # one directory
         self.task_cache_path = os.path.join(
-            cache_dir, *(
-                [x for x in self.task_hash[0:3]] +
-                [self.task_hash + '.json']))
+            self.cache_dir, *(
+                [x for x in self.task_reexecution_hash[0:3]] +
+                [self.task_reexecution_hash + '.json']))
 
     def __eq__(self, other):
         """Two tasks are equal if their hashes are equal."""
         if isinstance(self, other.__class__):
-            return self.task_hash == other.task_hash
+            return self.task_arg_signature == other.task_arg_signature
         return False
 
     def __hash__(self):
         """Return the base-16 integer hash of this hash string."""
-        return int(self.task_hash, 16)
+        return int(self.task_arg_signature, 16)
 
     def __ne__(self, other):
         """Inverse of __eq__."""
@@ -695,7 +717,7 @@ class Task(object):
                 "dependent_task_list": self.dependent_task_list,
                 "ignore_path_list": self.ignore_path_list,
                 "ignore_directories": self.ignore_directories,
-                "task_hash": self.task_hash,
+                "task_hash": self.task_reexecution_hash,
                 "terminated": self.terminated,
                 "exception_object": self.exception_object,
             })
@@ -716,7 +738,7 @@ class Task(object):
         try:
             if self.terminated:
                 raise RuntimeError(
-                    "Task %s was called after termination.", self.task_hash)
+                    "Task %s was called after termination.", self.task_name)
 
             if self.worker_pool is not None:
                 result = self.worker_pool.apply_async(
@@ -794,13 +816,17 @@ class Task(object):
         return True
 
     def is_precalculated(self):
-        """Return true Task can be skipped.
+        """Return true if Task can be skipped.
 
         Returns:
             True if the Task's target paths exist in the same state as the
-            last recorded run. False otherwise.
+            last recorded run at the time this function is called. It is
+            possible this value could change without running the Task if
+            input parameter file stats change. False otherwise.
 
         """
+        self._calculate_deep_hash()
+
         try:
             if not os.path.exists(self.task_cache_path):
                 LOGGER.info(
