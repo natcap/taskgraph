@@ -13,6 +13,9 @@ Unreleased Changes
 * TaskGraph constructor has an option to report a ongoing logging message
   at a set interval. The message reports how many tasks have been committed
   and completed.
+* Fixed a bug that would cause TaskGraph to needlessly reexecute a task if
+  the only change was the order of the `target_path_list` or
+  `dependent_task_list` variables.
 
 0.5.2 (2018-06-20)
 ------------------

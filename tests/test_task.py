@@ -21,6 +21,15 @@ def _long_running_function(delay):
     time.sleep(delay)
 
 
+def _create_two_files_on_disk(value, target_a_path, target_b_path):
+    """Create two files and write `value` and append if possible."""
+    with open(target_a_path, 'a') as a_file:
+        a_file.write(value)
+
+    with open(target_b_path, 'a') as b_file:
+        b_file.write(value)
+
+
 def _create_list_on_disk(value, length, target_path=None):
     """Create a numpy array on disk filled with value of `size`."""
     target_list = [value] * length
@@ -552,70 +561,30 @@ class TaskGraphTests(unittest.TestCase):
         # this should not timeout since function runs for 1 second
         self.assertFalse(timedout, "task timed out")
 
-    def test_task_equality(self):
-        """TaskGraph: test correctness of == and != for Tasks."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
-        target_path = os.path.join(self.workspace_dir, '1000.dat')
-        value = 5
-        list_len = 1000
-        task_a = task_graph.add_task(
-            func=_create_list_on_disk,
-            args=(value, list_len),
-            kwargs={'target_path': target_path},
-            target_path_list=[target_path])
-        task_a_same = task_graph.add_task(
-            func=_create_list_on_disk,
-            args=(value, list_len),
-            kwargs={'target_path': target_path},
-            target_path_list=[target_path])
-        task_b = task_graph.add_task(
-            func=_create_list_on_disk,
-            args=(value+1, list_len),
-            kwargs={'target_path': target_path},
-            target_path_list=[target_path])
+    def test_target_path_order(self):
+        """TaskGraph: ensure target path order doesn't matter."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_a_path = os.path.join(self.workspace_dir, 'a.txt')
+        target_b_path = os.path.join(self.workspace_dir, 'b.txt')
 
-        self.assertTrue(task_a == task_a)
-        self.assertTrue(task_a == task_a_same)
-        self.assertTrue(task_a != task_b)
+        task_graph.add_task(
+            func=_create_two_files_on_disk,
+            args=("word", target_a_path, target_b_path),
+            target_path_list=[target_a_path, target_b_path])
 
-    def test_delayed_execution(self):
-        """TaskGraph: test delayed execution."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
-
-        result_list = []
-
-        def append_val(val):
-            result_list.append(val)
-
-        # by setting a higher priority of one task than another, we can
-        # guarantee the order in which the elements are inserted
-        for value in range(10):
-            task_graph.add_task(
-                func=append_val, args=(value,), priority=value)
-        task_graph.close()
-        task_graph.join()
-        self.assertEqual(result_list, list(reversed(range(10))))
-
-    def test_join_delayed_execution_error(self):
-        """TaskGraph: test a join on a task on delayed execution fails."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
-
-        result_list = []
-
-        def append_val(val):
-            result_list.append(val)
-
-        task = task_graph.add_task(func=append_val, args=(1,))
-        with self.assertRaises(RuntimeError) as cm:
-            # can't join when
-            task.join()
-        message = str(cm.exception)
-        self.assertTrue(
-            'Task joined even though taskgraph has delayed' in message,
-            message)
+        task_graph.add_task(
+            func=_create_two_files_on_disk,
+            args=("word", target_a_path, target_b_path),
+            target_path_list=[target_b_path, target_a_path])
 
         task_graph.close()
         task_graph.join()
-        self.assertEqual(result_list, [1])
+
+        with open(target_a_path, 'r') as a_file:
+            a_value = a_file.read()
+
+        with open(target_b_path, 'r') as b_file:
+            b_value = b_file.read()
+
+        self.assertEqual(a_value, "word")
+        self.assertEqual(b_value, "word")
