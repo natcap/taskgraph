@@ -365,12 +365,12 @@ class TaskGraph(object):
         Reads the `self.work_ready` queue and feeds in highest priority tasks
         when the self.work_queue is ready for them.
         """
+        self.taskgraph_started_event.wait()
         stopped = False
         priority_queue = []
         while not stopped:
             while True:
                 try:
-                    self.taskgraph_started_event.wait()
                     # only block if the priority queue is empty
                     task = self.work_ready_queue.get(not priority_queue)
                     if task == 'STOP':
