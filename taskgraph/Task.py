@@ -301,14 +301,14 @@ class TaskGraph(object):
                 ignore_path_list, dependent_task_list, ignore_directories,
                 self.worker_pool, self.taskgraph_cache_dir_path, priority,
                 self.taskgraph_started_event)
-            task_arg_signature = new_task.task_arg_signature
+            task_id_hash = new_task.task_id_hash
 
             # it may be this task was already created in an earlier call,
             # use that object in its place
-            if task_arg_signature in self.task_id_map:
-                return self.task_id_map[task_arg_signature]
+            if task_id_hash in self.task_id_map:
+                return self.task_id_map[task_id_hash]
 
-            self.task_id_map[task_arg_signature] = new_task
+            self.task_id_map[task_id_hash] = new_task
 
             if self.n_workers < 0:
                 # call directly if single threaded
@@ -650,7 +650,7 @@ class Task(object):
             self.reexecution_info[key]
             for key in sorted(self.reexecution_info.keys())])
 
-        self.task_arg_signature = hashlib.sha1(
+        self.task_id_hash = hashlib.sha1(
             argument_hash_string.encode('utf-8')).hexdigest()
 
     def _calculate_deep_hash(self):
@@ -670,12 +670,16 @@ class Task(object):
             self.target_path_list+self.ignore_path_list,
             self.ignore_directories))
 
+        # add the file stat list to the already existing reexecution info
+        # dictionary that contains stats that should not change whether
+        # files have been created/updated/or not.
         self.reexecution_info['file_stat_list'] = pprint.pformat(
             file_stat_list)
 
         reexecution_string = ':'.join([
             self.reexecution_info[key]
             for key in sorted(self.reexecution_info.keys())])
+
 
         self.task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
@@ -692,12 +696,12 @@ class Task(object):
     def __eq__(self, other):
         """Two tasks are equal if their hashes are equal."""
         if isinstance(self, other.__class__):
-            return self.task_arg_signature == other.task_arg_signature
+            return self.task_id_hash == other.task_id_hash
         return False
 
     def __hash__(self):
         """Return the base-16 integer hash of this hash string."""
-        return int(self.task_arg_signature, 16)
+        return int(self.task_id_hash, 16)
 
     def __ne__(self, other):
         """Inverse of __eq__."""
@@ -717,7 +721,8 @@ class Task(object):
                 "dependent_task_list": self.dependent_task_list,
                 "ignore_path_list": self.ignore_path_list,
                 "ignore_directories": self.ignore_directories,
-                "task_hash": self.task_reexecution_hash,
+                "task_id_hash": self.task_id_hash,
+                "task_reexecution_hash": self.task_reexecution_hash,
                 "terminated": self.terminated,
                 "exception_object": self.exception_object,
             })
