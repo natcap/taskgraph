@@ -13,11 +13,6 @@ Unreleased Changes
 * TaskGraph constructor has an option to report a ongoing logging message
   at a set interval. The message reports how many tasks have been committed
   and completed.
-* Added a `delayed_start` flag to TaskGraph to allow for delayed execution of
-  taskgraph tasks. If enabled on threaded or multiprocess model, calls to
-  `add_task` will not execute tasks until the `join` method is invoked on
-  `taskgraph`. This allows for finer control over execution order when tasks
-  are passed non-equivalent `priority` levels.
 
 0.5.2 (2018-06-20)
 ------------------
