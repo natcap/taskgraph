@@ -366,6 +366,7 @@ class TaskGraph(object):
         when the self.work_queue is ready for them.
         """
         self.taskgraph_started_event.wait()
+        self.waiting_task_queue.join()
         stopped = False
         priority_queue = []
         while not stopped:
@@ -441,6 +442,7 @@ class TaskGraph(object):
                 if task not in task_dependent_map:
                     # this can occur if add_task identifies task is complete
                     # before any other analysis.
+                    self.waiting_task_queue.task_done()
                     continue
                 for waiting_task in task_dependent_map[task]:
                     # remove `task` from the set of tasks that `waiting_task`
@@ -453,10 +455,12 @@ class TaskGraph(object):
                         # work queue
                         self.work_ready_queue.put(waiting_task)
                 del task_dependent_map[task]
+            self.waiting_task_queue.task_done()
 
         # if we got here, the waiting task queue is shut down, pass signal
         # to the lower queue
         self.work_ready_queue.put('STOP')
+        self.waiting_task_queue.task_done()
 
     def join(self, timeout=None):
         """Join all threads in the graph.
