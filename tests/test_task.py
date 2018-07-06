@@ -30,6 +30,14 @@ def _create_two_files_on_disk(value, target_a_path, target_b_path):
         b_file.write(value)
 
 
+def _merge_and_append_files(base_a_path, base_b_path, target_path):
+    """Merge two files and append if possible to new file."""
+    with open(target_path, 'a') as target_file:
+        for base_path in [base_a_path, base_b_path]:
+            with open(base_path, 'r') as base_file:
+                target_file.write(base_file.read())
+
+
 def _create_list_on_disk(value, length, target_path=None):
     """Create a numpy array on disk filled with value of `size`."""
     target_list = [value] * length
@@ -588,3 +596,39 @@ class TaskGraphTests(unittest.TestCase):
 
         self.assertEqual(a_value, "word")
         self.assertEqual(b_value, "word")
+
+    def test_task_hash_when_ready(self):
+        """TaskGraph: ensure tasks don't record execution info until ready."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, delayed_start=True)
+        target_a_path = os.path.join(self.workspace_dir, 'a.txt')
+        target_b_path = os.path.join(self.workspace_dir, 'b.txt')
+
+        create_files_task = task_graph.add_task(
+            func=_create_two_files_on_disk,
+            args=("word", target_a_path, target_b_path),
+            target_path_list=[target_a_path, target_b_path])
+
+        target_merged_path = os.path.join(self.workspace_dir, 'merged.txt')
+        task_graph.add_task(
+            func=_merge_and_append_files,
+            args=(target_a_path, target_b_path, target_merged_path),
+            target_path_list=[target_merged_path],
+            dependent_task_list=[create_files_task])
+
+        task_graph.join()
+
+        # this second task shouldn't execute because it's a copy of the first
+        task_graph.add_task(
+            func=_merge_and_append_files,
+            args=(target_a_path, target_b_path, target_merged_path),
+            target_path_list=[target_merged_path],
+            dependent_task_list=[create_files_task])
+
+        task_graph.join()
+        task_graph.close()
+
+        with open(target_merged_path, 'r') as target_file:
+            target_string = target_file.read()
+
+        self.assertEqual(target_string, "wordword")
