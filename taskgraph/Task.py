@@ -4,7 +4,6 @@ import heapq
 import pprint
 import collections
 import hashlib
-import json
 import pickle
 import os
 import logging
@@ -83,8 +82,8 @@ class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
 
     def __init__(
-            self, taskgraph_cache_dir_path, n_workers, delayed_start=False,
-            reporting_interval=None):
+            self, taskgraph_cache_dir_path, n_workers,
+            reporting_interval=None, delayed_start=False):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
@@ -195,7 +194,7 @@ class TaskGraph(object):
 
         # tasks in the work ready queue have dependencies satisfied but need
         # priority scheduling
-        self.work_ready_queue = queue.Queue()
+        self.work_ready_queue = queue.PriorityQueue()
         self.priority_task_scheduler = threading.Thread(
             target=self._schedule_priority_tasks,
             name='_priority_task_scheduler')
@@ -208,7 +207,7 @@ class TaskGraph(object):
             # there's only something to clean up if there's a worker
             LOGGER.error("joining all the workers")
             self.priority_task_scheduler.join()
-            self.waiting_task_scheduler.start()
+            self.waiting_task_scheduler.join()
             for worker_thread in self.worker_thread_list:
                 worker_thread.join()
             if self.worker_pool:
@@ -415,11 +414,6 @@ class TaskGraph(object):
         dependent_task_map = collections.defaultdict(set)
         completed_tasks = set()
 
-        # it's possible the taskgraph is in delayed execution mode, don't
-        # attempt to schedule until signaled to do so
-        self.taskgraph_started_event.wait()
-
-        tasks_ready_to_work = set()
         for task, mode in iter(self.waiting_task_queue.get, 'STOP'):
             if mode == 'wait':
                 # see if this task's dependencies are satisfied, if so send
@@ -429,7 +423,7 @@ class TaskGraph(object):
                     if dep_task not in completed_tasks]
                 if not outstanding_dependent_task_list:
                     # if nothing is outstanding, send to work queue
-                    tasks_ready_to_work.add(task)
+                    self.work_ready_queue.put(task)
 
                 # there are unresolved tasks that the waiting process
                 # scheduler has not been notified of. Record dependencies.
@@ -457,23 +451,8 @@ class TaskGraph(object):
                     if not dependent_task_map[waiting_task]:
                         # if we removed the last task we can put it to the
                         # work queue
-                        tasks_ready_to_work.add(waiting_task)
+                        self.work_ready_queue.put(waiting_task)
                 del task_dependent_map[task]
-            if self.waiting_task_queue.empty():
-                # this only schedules tasks if the queue is drained, fixes
-                # a race condition where a lower priority task may be
-                # immediately put to the work queue even though there are
-                # higher priority ones still waiting
-                for ready_task in sorted(
-                        tasks_ready_to_work, key=lambda x: x.priority):
-                    self.work_ready_queue.put(ready_task)
-                tasks_ready_to_work = set()
-
-        # it's possible the last element in the queue was 'STOP', this drains
-        # the `tasks_ready_to_work` set so everything gets scheduled
-        for ready_task in sorted(
-                tasks_ready_to_work, key=lambda x: x.priority):
-            self.work_ready_queue.put(ready_task)
 
         # if we got here, the waiting task queue is shut down, pass signal
         # to the lower queue
@@ -658,14 +637,23 @@ class Task(object):
                     "when calculating whether inputs have been changed "
                     "on a successive run.", key, arg)
 
-        task_string = '%s:%s:%s:%s:%s:%s' % (
-            self.func.__name__, pickle.dumps(args_clean),
-            json.dumps(kwargs_clean, sort_keys=True), source_code,
-            self.target_path_list, str(file_stat_list))
+        reexecution_info = {
+            'name': self.func.__name__,
+            'args': pprint.pformat(args_clean),
+            'kwargs': pprint.pformat(kwargs_clean),
+            'source_code_hash': hashlib.sha1(
+                source_code.encode('utf-8')).hexdigest(),
+            'target_path_list': pprint.pformat(self.target_path_list),
+            'file_stat_list': pprint.pformat(file_stat_list),
+        }
 
-        self.task_hash = hashlib.sha1(task_string.encode('utf-8')).hexdigest()
+        reexecution_string = ':'.join([
+            reexecution_info[key] for key in sorted(reexecution_info.keys())])
 
-        # get ready to make a directory and target based on hashname
+        self.task_hash = hashlib.sha1(
+            reexecution_string.encode('utf-8')).hexdigest()
+
+        # make a directory and target based on hashname
         # take the first 3 characters of the hash and make a subdirectory
         # for each so we don't blowup the filesystem with a bunch of files in
         # one directory
@@ -810,14 +798,41 @@ class Task(object):
         """
         try:
             if not os.path.exists(self.task_cache_path):
+                LOGGER.info(
+                    "%s: Task Cache file does not exist, so executing task." %
+                    self.task_name)
                 return False
             with open(self.task_cache_path, 'rb') as task_cache_file:
                 result_target_path_stats = pickle.load(task_cache_file)
+            mismatched_target_file_list = []
             for path, modified_time, size in result_target_path_stats:
-                if not (os.path.exists(path) and
-                        modified_time == os.path.getmtime(path) and
-                        size == os.path.getsize(path)):
-                    return False
+                if not os.path.exists(path):
+                    mismatched_target_file_list.append(
+                        'Path not found: %s' % path)
+                    continue
+                target_modified_time = os.path.getmtime(path)
+                if modified_time != target_modified_time:
+                    mismatched_target_file_list.append(
+                        "Modified times don't match "
+                        "desired: (%s) target: (%s)" % (
+                            modified_time, target_modified_time))
+                    continue
+                target_size = os.path.getsize(path)
+                if size != target_size:
+                    mismatched_target_file_list.append(
+                        "File sizes don't match "
+                        "desired: (%s) target: (%s)" % (
+                            size, target_size))
+            if mismatched_target_file_list:
+                LOGGER.warn(
+                    "%s: Task Cache file exists, but re-running because of "
+                    "these mismatches: %s" % (
+                        self.task_name, '\n'.join(
+                            mismatched_target_file_list)))
+                return False
+            LOGGER.info(
+                "%s: Task Cache file exists and all target files are in "
+                "expected state." % self.task_name)
             return True
         except EOFError:
             return False
