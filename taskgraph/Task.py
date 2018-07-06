@@ -831,7 +831,9 @@ class Task(object):
 
         """
         self._calculate_deep_hash()
-
+        LOGGER.info(
+            "attempting to determine if the following task is precalculated: "
+            "%s", self)
         try:
             if not os.path.exists(self.task_cache_path):
                 LOGGER.info(
