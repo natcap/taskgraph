@@ -680,7 +680,6 @@ class Task(object):
             self.reexecution_info[key]
             for key in sorted(self.reexecution_info.keys())])
 
-
         self.task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
 
@@ -725,6 +724,7 @@ class Task(object):
                 "task_reexecution_hash": self.task_reexecution_hash,
                 "terminated": self.terminated,
                 "exception_object": self.exception_object,
+                "self.reexecution_info": self.reexecution_info
             })
 
     def _call(self):
