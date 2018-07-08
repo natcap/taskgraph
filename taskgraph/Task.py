@@ -731,8 +731,8 @@ class Task(object):
         try:
             if not os.path.exists(self.task_cache_path):
                 LOGGER.info(
-                    "%s: Task Cache file does not exist, so executing task." %
-                    self.task_name)
+                    "%s: is not precalculated, Task Cache file does not "
+                    "exist" % self.task_name)
                 return False
             with open(self.task_cache_path, 'rb') as task_cache_file:
                 result_target_path_stats = pickle.load(task_cache_file)
@@ -757,14 +757,14 @@ class Task(object):
                             size, target_size))
             if mismatched_target_file_list:
                 LOGGER.warn(
-                    "%s: Task Cache file exists, but re-running because of "
-                    "these mismatches: %s" % (
+                    "%s: not precalculated, Task Cache file exists, "
+                    "but there are these mismatches: %s" % (
                         self.task_name, '\n'.join(
                             mismatched_target_file_list)))
                 return False
             LOGGER.info(
-                "%s: Task Cache file exists and all target files are in "
-                "expected state." % self.task_name)
+                "%s: precalcualted, Task Cache file exists and all target "
+                "files are in expected state." % self.task_name)
             self._task_complete_event.set()
             return True
         except EOFError:
