@@ -169,6 +169,7 @@ class TaskGraph(object):
                 name='task_executor_%s' % thread_id)
             # make daemons in case there's a catastrophic error the main
             # thread won't hang
+            task_executor_thread.daemon = True
             task_executor_thread.start()
             self.task_executor_thread_list.append(task_executor_thread)
 
