@@ -112,9 +112,6 @@ class TaskGraph(object):
         # to the taskgraph during `add_task`
         self.task_map = dict()
 
-        # used in monitoring task graph execution.
-        self.n_tasks_complete = 0
-
         # used to remember if task_graph has been closed
         self.closed = False
 
@@ -342,8 +339,8 @@ class TaskGraph(object):
                 "taskgraph execution status: tasks added: %d "
                 "tasks complete: %d "
                 "task graph open: %s " % (
-                    len(self.task_map), self.n_tasks_complete,
-                    not self.closed))
+                    len(self.task_map),
+                    len(self.task_manager.completed_tasks), not self.closed))
             time.sleep(
                 self.reporting_interval - (
                     (time.time() - start_time)) % self.reporting_interval)
