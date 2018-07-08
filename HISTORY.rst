@@ -21,6 +21,9 @@ Unreleased Changes
   executed.
 * Made a code change that makes it very likely that tasks will be executed in
   priority order if added to a TaskGraph in delayed execution mode.
+* Refactored internal TaskGraph scheduling to fix a design error that made it
+  likely tasks would be needlessly reexecuted. This also simplified TaskGraph
+  flow control and cause slight performance improvements.
 
 0.5.2 (2018-06-20)
 ------------------
