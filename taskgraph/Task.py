@@ -542,7 +542,13 @@ class Task(object):
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete. This can be set if a Task finishes
         # a _call, tests True on is_precomputed, or after a call to _terminate
-        self._task_complete_event = threading.Event()
+        self.task_complete_event = threading.Event()
+
+        # it's possible for multiple threads to attempt to determine if a
+        # task has been completed. the reexecution hash may change depending
+        # on whether input parameter files have changed. This lock ensures
+        # there's not a race condition when calculating the reexecution hash
+        self.deep_hash_lock = threading.Lock()
 
         # Calculate a hash based only on argument inputs.
         try:
@@ -627,7 +633,6 @@ class Task(object):
             LOGGER.info(
                 '_calculate_deep_hash in %s was called more than once',
                 self.task_name)
-            return
 
         # This gets a list of the files and their file stats that can be found
         # in args and kwargs but ignores anything specifically targeted or
@@ -761,7 +766,7 @@ class Task(object):
         finally:
             LOGGER.debug(
                 "setting _task_complete_event on task %s", self.task_name)
-            self._task_complete_event.set()
+            self.task_complete_event.set()
 
     def is_complete(self):
         """Test to determine if Task is complete.
@@ -779,7 +784,7 @@ class Task(object):
         if self.terminated:
             raise RuntimeError(
                 "is_complete invoked on a terminated task %s" % str(self))
-        if self._task_complete_event.isSet() or self.is_precalculated():
+        if self.task_complete_event.isSet() or self.is_precalculated():
             return True
         return False
 
@@ -793,7 +798,8 @@ class Task(object):
             input parameter file stats change. False otherwise.
 
         """
-        self._calculate_deep_hash()
+        with self.deep_hash_lock:
+            self._calculate_deep_hash()
         LOGGER.info(
             "attempting to determine if the following task is precalculated: "
             "%s", self)
@@ -834,7 +840,7 @@ class Task(object):
             LOGGER.info(
                 "%s: precalcualted, Task Cache file exists and all target "
                 "files are in expected state." % self.task_name)
-            self._task_complete_event.set()
+            self.task_complete_event.set()
             return True
         except EOFError:
             return False
@@ -847,14 +853,14 @@ class Task(object):
                 "enabled: %s" % self)
         if self.is_precalculated():
             return True
-        self._task_complete_event.wait(timeout)
+        self.task_complete_event.wait(timeout)
         return self.is_complete()
 
     def _terminate(self, exception_object=None):
         """Invoke to terminate the Task."""
         self.terminated = True
         self.exception_object = exception_object
-        self._task_complete_event.set()
+        self.task_complete_event.set()
 
 
 class EncapsulatedTaskOp(ABC):
