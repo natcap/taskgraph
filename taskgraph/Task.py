@@ -43,6 +43,10 @@ except ImportError:
 LOGGER = logging.getLogger(__name__)
 
 
+# We want our processing pool to be nondeamonic so that workers could use
+# multiprocessing if desired (deamonic processes cannot start new processes)
+# the following bit of code to do this was taken from
+# https://stackoverflow.com/a/8963618/42897
 class NoDaemonProcess(multiprocessing.Process):
     """Make 'daemon' attribute always return False."""
 
@@ -127,25 +131,44 @@ class TaskGraph(object):
             return
 
         # Synchronization objects:
+        # this lock is used to synchronize the following objects
+        self.taskgraph_lock = threading.Lock()
+        # tasks that have all their dependencies satisfied go in this queue
+        # and can be executed immediately
         self.task_ready_priority_queue = queue.PriorityQueue()
-        self.task_manager = TaskManager(self.task_ready_priority_queue)
+        # maps a list of tasks that need to be executed to a task
+        self.task_dependent_map = collections.defaultdict(set)
+        # maps a list of tasks that are dependent to a task
+        self.dependent_task_map = collections.defaultdict(set)
+        # tasks that complete are added to this set
+        self.completed_tasks = set()
+        # if this is set to true, executors will terminate when the
+        # task_ready_priority_queue is empty
+        self.ready_to_stop = False
+        # executor threads wait on this event that gets set when new tasks are
+        # added to the queue. If the queue is empty an executor will clear
+        # the event to halt other executors
+        self.executor_ready_event = threading.Event()
 
-        # concurrent reporting of taskgraph if set
+        # start concurrent reporting of taskgraph if reporting interval is set
         if reporting_interval is not None:
             self.reporting_interval = reporting_interval
             monitor_thread = threading.Thread(
                 target=self._execution_monitor,
                 name='_execution_monitor')
+            # make it a daemon so we don't have to figure out how to
+            # close it when execution complete
             monitor_thread.daemon = True
             monitor_thread.start()
 
-        # launch threads to manage the workers
+        # launch executor threads
         self.task_executor_thread_list = []
         for thread_id in range(max(1, n_workers)):
             task_executor_thread = threading.Thread(
                 target=self._task_executor,
                 name='task_executor_%s' % thread_id)
-            task_executor_thread.daemon = True
+            # make daemons in case there's a catastrophic error the main
+            # thread won't hang
             task_executor_thread.start()
             self.task_executor_thread_list.append(task_executor_thread)
 
@@ -177,6 +200,7 @@ class TaskGraph(object):
                         "task_executor_thread already complete %s",
                         task_executor_thread)
             if self.worker_pool:
+                LOGGER.info("joining the worker_pool")
                 self.worker_pool.join()
 
     def _task_executor(self):
@@ -184,36 +208,61 @@ class TaskGraph(object):
         # this event blocks until the TaskGraph has signaled ready to execute
         self.taskgraph_started_event.wait()
         while True:
-            # this event blocks until the task manager has signaled it wants
-            # the executors to read the state of the task manager
-            self.task_manager.executor_ready_event.wait()
-            # this lock synchornizes changes between the queue and
-            # executor_event Event
-            self.task_manager.task_manager_lock.acquire()
+            # this event blocks until the task graph has signaled it wants
+            # the executors to read the state of the queue or a stop event
+            self.executor_ready_event.wait()
+            # this lock synchronizes changes between the queue and
+            # executor_ready_event
+            self.taskgraph_lock.acquire()
             try:
                 task = self.task_ready_priority_queue.get(False)
                 # we can release the lock because we got a Task that we can
                 # process
-                self.task_manager.task_manager_lock.release()
+                self.taskgraph_lock.release()
                 if not task.is_precalculated():
                     task._call()
                 else:
                     LOGGER.debug(
                         "executing task: %s is precalculated", task)
-                self.task_manager.task_complete(task)
+
+                LOGGER.debug(
+                    "task %s is complete, checking to see if any dependent "
+                    "tasks can be executed now", task)
+                with self.taskgraph_lock:
+                    self.completed_tasks.add(task)
+                    for waiting_task in self.task_dependent_map[task]:
+                        # remove `task` from the set of tasks that
+                        # `waiting_task` was waiting on.
+                        self.dependent_task_map[waiting_task].remove(task)
+                        # if there aren't any left, we can push `waiting_task`
+                        # to the work queue
+                        if not self.dependent_task_map[waiting_task]:
+                            # if we removed the last task we can put it to the
+                            # work queue
+                            LOGGER.debug(
+                                "a new task is ready for processing: %s",
+                                waiting_task)
+                            self.task_ready_priority_queue.put(waiting_task)
+                            if not self.executor_ready_event.is_set():
+                                # indicate to executors there is work to do
+                                self.executor_ready_event.set()
+                    del self.task_dependent_map[task]
+                LOGGER.debug("tasks %s done processing", task)
             except queue.Empty:
-                if self.task_manager.ready_to_stop:
-                    # the task manager is signaling executors to stop,
+                # the get failed, this could be because the taskgraph is
+                # closed or because the queue is just empty.
+                if self.closed:
+                    self.taskgraph_lock.release()
+                    # the task graph is signaling executors to stop,
                     # since the executor encountered an empty queue and the
                     # ready to stop flag is set, the executor can terminate.
-                    self.task_manager.task_manager_lock.release()
                     break
                 else:
-                    # task manager is still locked, so it's safe to clear
+                    # task graph is still locked, so it's safe to clear
                     # the executor event since there is no chance a Task
                     # could have been added while the lock was acquired
-                    self.task_manager.executor_ready_event.clear()
-                    self.task_manager.task_manager_lock.release()
+                    self.executor_ready_event.clear()
+                    self.taskgraph_lock.release()
             except Exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.exception(
@@ -318,10 +367,29 @@ class TaskGraph(object):
                     # TODO: do i still need task complete event?
                     new_task._task_complete_event.set()
             else:
-                # send to manager
+                # determine if task is ready or is dependent on other tasks
                 LOGGER.debug(
                     "multithreaded: %s sending to new task queue.", task_name)
-                self.task_manager.add_task(new_task)
+                with self.taskgraph_lock:
+                    outstanding_dependent_task_list = [
+                        dep_task for dep_task in new_task.dependent_task_list
+                        if dep_task not in self.completed_tasks]
+                    if not outstanding_dependent_task_list:
+                        self.task_ready_priority_queue.put(new_task)
+                        if not self.executor_ready_event.is_set():
+                            # indicate to executors there is work to do
+                            self.executor_ready_event.set()
+                    else:
+                        # there are unresolved tasks that the waiting process
+                        # scheduler has not been notified of. Record
+                        # dependencies.
+                        for dep_task in outstanding_dependent_task_list:
+                            # keep track of the tasks that are dependent on dep_task
+                            self.task_dependent_map[dep_task].add(new_task)
+                            # keep track of the tasks that prevent this one from
+                            # executing
+                            self.dependent_task_map[new_task].add(dep_task)
+
             return new_task
 
         except Exception:
@@ -340,7 +408,7 @@ class TaskGraph(object):
                 "tasks complete: %d "
                 "task graph open: %s " % (
                     len(self.task_map),
-                    len(self.task_manager.completed_tasks), not self.closed))
+                    len(self.completed_tasks), not self.closed))
             time.sleep(
                 self.reporting_interval - (
                     (time.time() - start_time)) % self.reporting_interval)
@@ -390,7 +458,10 @@ class TaskGraph(object):
         self.closed = True
         if self.n_workers >= 0:
             # we only have a task_manager if running in threaded mode
-            self.task_manager.signal_stop()
+            with self.taskgraph_lock:
+                # wake executors so they can process that the taskgraph is
+                # closed and can shut down if there is no pending work
+                self.executor_ready_event.set()
 
     def _terminate(self):
         """Immediately terminate remaining task graph computation."""
@@ -546,11 +617,12 @@ class Task(object):
     def _calculate_deep_hash(self):
         """Calculate a hash that accounts for file size objects at runtime.
 
-        Assumes that self.reexecution_info
+        It only makes sense to call this function if all dependent tasks have
+        executed. After this call, self.task_cache_path has a valid path
+        defined and self.reexecution_info['file_stat_list'] is defined.
 
-        After this call, self.task_cache_path has a valid path defined and
-        self.reexecution_info['file_stat_list'] is defined.
-
+        Returns:
+            None
 
         """
         if self.task_reexecution_hash:
@@ -851,88 +923,3 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
-
-
-class TaskManager(object):
-    """Abstracts Task dependencies into simple operations."""
-
-    def __init__(self, task_ready_priority_queue):
-        """Construct a new TaskManager."""
-        self.task_ready_priority_queue = task_ready_priority_queue
-
-        self.task_dependent_map = collections.defaultdict(set)
-        self.dependent_task_map = collections.defaultdict(set)
-        self.completed_tasks = set()
-        self.task_manager_lock = threading.Lock()
-        self.ready_to_stop = False
-        self.executor_ready_event = threading.Event()
-
-    def add_task(self, task):
-        """Add a Task object to the manager.
-
-        If this task has no dependencies or all are satisfied, this task
-        will be marked as complete, cause `get_ready_tasks` to unblock and
-        will be included in the return value of `get_ready_tasks`.
-
-        Returns:
-            None
-
-        """
-        with self.task_manager_lock:
-            outstanding_dependent_task_list = [
-                dep_task for dep_task in task.dependent_task_list
-                if dep_task not in self.completed_tasks]
-            if not outstanding_dependent_task_list:
-                self.task_ready_priority_queue.put(task)
-                if not self.executor_ready_event.is_set():
-                    # indicate to executors there is work to do
-                    self.executor_ready_event.set()
-            else:
-                # there are unresolved tasks that the waiting process
-                # scheduler has not been notified of. Record dependencies.
-                for dep_task in outstanding_dependent_task_list:
-                    # keep track of the tasks that are dependent on dep_task
-                    self.task_dependent_map[dep_task].add(task)
-                    # keep track of the tasks that prevent this one from
-                    # executing
-                    self.dependent_task_map[task].add(dep_task)
-
-    def task_complete(self, task):
-        """Indicate that `task` is complete.
-
-        Any internal Tasks that are dependent on Task and not yet executed
-        are updated. If any task has all its dependencies met by `task` it
-        `get_ready_tasks` unblocks and will return at least that value.
-
-        Returns:
-            None.
-
-        """
-        LOGGER.debug("processing that task %s is complete", task)
-        with self.task_manager_lock:
-            self.completed_tasks.add(task)
-            for waiting_task in self.task_dependent_map[task]:
-                # remove `task` from the set of tasks that `waiting_task`
-                # was waiting on.
-                self.dependent_task_map[waiting_task].remove(task)
-                # if there aren't any left, we can push `waiting_task`
-                # to the work queue
-                if not self.dependent_task_map[waiting_task]:
-                    # if we removed the last task we can put it to the
-                    # work queue
-                    LOGGER.debug(
-                        "a new task is ready for processing: %s",
-                        waiting_task)
-                    self.task_ready_priority_queue.put(waiting_task)
-                    if not self.executor_ready_event.is_set():
-                        # indicate to executors there is work to do
-                        self.executor_ready_event.set()
-            del self.task_dependent_map[task]
-        LOGGER.debug("tasks %s done processing", task)
-
-    def signal_stop(self):
-        """Indicate that no more tasks will be added."""
-        with self.task_manager_lock:
-            self.ready_to_stop = True
-            # wake executors so they can process that `ready_to_stop` is set
-            self.executor_ready_event.set()
