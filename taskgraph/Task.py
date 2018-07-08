@@ -1,6 +1,5 @@
 """Task graph framework."""
 import time
-import heapq
 import pprint
 import collections
 import hashlib
@@ -16,6 +15,8 @@ try:
 except ImportError:
     # Python3 renamed queue as queue
     import queue
+    # Python 3, in python 2 basestring is superclass of str and unicode.
+    basestring = str
 import inspect
 import abc
 
@@ -39,26 +40,7 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
-LOGGER = logging.getLogger('Task')
-
-
-try:
-    dict.itervalues
-except AttributeError:
-    # Python 3
-    # range is an iterator in python3.
-    xrange = range
-    # In python2, basestring is the common superclass of str and unicode.  In
-    # python3, we'll probably only be dealing with str objects.
-    basestring = str
-    def itervalues(d):
-        """Python 2/3 compatibility iterator over d.values()"""
-        return iter(d.values())
-else:
-    # Python 2
-    def itervalues(d):
-        """Python 2/3 compatibility alias for d.itervalues()"""
-        return d.itervalues()
+LOGGER = logging.getLogger(__name__)
 
 
 class NoDaemonProcess(multiprocessing.Process):
@@ -117,27 +99,27 @@ class TaskGraph(object):
             raise ValueError(
                 "`n_workers` cannot be set single process mode while "
                 "`delayed_start` is enabled.")
-        # the work queue is the feeder to active worker threads
+
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
         self.n_workers = n_workers
         self.taskgraph_started_event = threading.Event()
         if not delayed_start:
-            # not a delayed start, so clear the event immediately
+            # not a delayed start, so set the event immediately
             self.taskgraph_started_event.set()
-
-        # keep track if the task graph has been forcibly terminated
-        self.terminated = False
 
         # use this to keep track of all the tasks added to the graph by their
         # task ids. Used to determine if an identical task has been added
         # to the taskgraph during `add_task`
-        self.task_id_map = dict()
+        self.task_map = dict()
 
         # used in monitoring task graph execution.
         self.n_tasks_complete = 0
 
         # used to remember if task_graph has been closed
         self.closed = False
+
+        # keep track if the task graph has been forcibly terminated
+        self.terminated = False
 
         # if n_workers > 0 this will be a multiprocessing pool used to execute
         # the __call__ functions in Tasks
@@ -146,6 +128,29 @@ class TaskGraph(object):
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
+
+        # Synchronization objects:
+        self.task_ready_priority_queue = queue.PriorityQueue()
+        self.task_manager = TaskManager(self.task_ready_priority_queue)
+
+        # concurrent reporting of taskgraph if set
+        if reporting_interval is not None:
+            self.reporting_interval = reporting_interval
+            monitor_thread = threading.Thread(
+                target=self._execution_monitor,
+                name='_execution_monitor')
+            monitor_thread.daemon = True
+            monitor_thread.start()
+
+        # launch threads to manage the workers
+        self.task_executor_thread_list = []
+        for thread_id in range(max(1, n_workers)):
+            task_executor_thread = threading.Thread(
+                target=self._task_executor,
+                name='task_executor_%s' % thread_id)
+            task_executor_thread.daemon = True
+            task_executor_thread.start()
+            self.task_executor_thread_list.append(task_executor_thread)
 
         # set up multrpocessing if n_workers > 0
         if n_workers > 0:
@@ -162,70 +167,60 @@ class TaskGraph(object):
                             "to nice %s. This might be a bug in `psutil` so "
                             "it should be okay to ignore.")
 
-        if reporting_interval is not None:
-            monitor_thread = threading.Thread(
-                target=self._execution_monitor,
-                args=(reporting_interval,),
-                name='_execution_monitor')
-            monitor_thread.daemon = True
-            monitor_thread.start()
-
-        # used to synchronize a pass through potential tasks to add to the
-        # work queue
-        self.work_queue = queue.Queue()
-        self.worker_semaphore = threading.Semaphore(max(1, n_workers))
-        # launch threads to manage the workers
-        self.worker_thread_list = []
-        for thread_id in xrange(max(1, n_workers)):
-            worker_thread = threading.Thread(
-                target=self._task_worker,
-                name='taskgraph_worker_thread_%d' % thread_id)
-            worker_thread.daemon = True
-            worker_thread.start()
-            self.worker_thread_list.append(worker_thread)
-
-        # tasks that get passed add_task get put in this queue for scheduling
-        self.waiting_task_queue = queue.Queue()
-        self.waiting_task_scheduler = threading.Thread(
-            target=self._process_waiting_tasks,
-            name='_waiting_task_scheduler')
-        self.waiting_task_scheduler.daemon = True
-        self.waiting_task_scheduler.start()
-
-        # tasks in the work ready queue have dependencies satisfied but need
-        # priority scheduling
-        self.work_ready_queue = queue.PriorityQueue()
-        self.priority_task_scheduler = threading.Thread(
-            target=self._schedule_priority_tasks,
-            name='_priority_task_scheduler')
-        self.priority_task_scheduler.daemon = True
-        self.priority_task_scheduler.start()
-
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
         if self.n_workers >= 0:
             # there's only something to clean up if there's a worker
-            LOGGER.error("joining all the workers")
-            self.priority_task_scheduler.join()
-            self.waiting_task_scheduler.join()
-            for worker_thread in self.worker_thread_list:
-                worker_thread.join()
+            LOGGER.info("joining all the task executors")
+            for task_executor_thread in self.task_executor_thread_list:
+                try:
+                    task_executor_thread.join()
+                except RuntimeError:
+                    LOGGER.info(
+                        "task_executor_thread already complete %s",
+                        task_executor_thread)
             if self.worker_pool:
                 self.worker_pool.join()
 
-    def _task_worker(self):
-        """Execute and manage Task objects."""
-        for task in iter(self.work_queue.get, 'STOP'):
+    def _task_executor(self):
+        """Worker that executes Tasks that have satisfied dependencies."""
+        # this event blocks until the TaskGraph has signaled ready to execute
+        self.taskgraph_started_event.wait()
+        while True:
+            # this event blocks until the task manager has signaled it wants
+            # the executors to read the state of the task manager
+            self.task_manager.executor_ready_event.wait()
+            # this lock synchornizes changes between the queue and
+            # executor_event Event
+            self.task_manager.task_manager_lock.acquire()
             try:
-                # precondition: task wouldn't be in queue if it were
-                # precalculated
-                task._call()
-                self.worker_semaphore.release()
-                self.waiting_task_queue.put((task, 'done'))
+                task = self.task_ready_priority_queue.get(False)
+                # we can release the lock because we got a Task that we can
+                # process
+                self.task_manager.task_manager_lock.release()
+                if not task.is_precalculated():
+                    task._call()
+                else:
+                    LOGGER.debug(
+                        "executing task: %s is precalculated", task)
+                self.task_manager.task_complete(task)
+            except queue.Empty:
+                if self.task_manager.ready_to_stop:
+                    # the task manager is signaling executors to stop,
+                    # since the executor encountered an empty queue and the
+                    # ready to stop flag is set, the executor can terminate.
+                    self.task_manager.task_manager_lock.release()
+                    break
+                else:
+                    # task manager is still locked, so it's safe to clear
+                    # the executor event since there is no chance a Task
+                    # could have been added while the lock was acquired
+                    self.task_manager.executor_ready_event.clear()
+                    self.task_manager.task_manager_lock.release()
             except Exception:
                 # An error occurred on a call, terminate the taskgraph
                 LOGGER.exception(
-                    'A taskgraph _task_worker failed on Task '
+                    'A taskgraph _task_executor failed on Task '
                     '%s. Terminating taskgraph.', task)
                 self._terminate()
                 raise
@@ -293,22 +288,24 @@ class TaskGraph(object):
             if ignore_path_list is None:
                 ignore_path_list = []
             if func is None:
-                func = lambda: None
+                def func(): return None
 
-            task_name = '%s_%d' % (task_name, len(self.task_id_map))
+            task_name = '%s_%d' % (task_name, len(self.task_map))
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, dependent_task_list, ignore_directories,
                 self.worker_pool, self.taskgraph_cache_dir_path, priority,
                 self.taskgraph_started_event)
-            task_id_hash = new_task.task_id_hash
 
             # it may be this task was already created in an earlier call,
             # use that object in its place
-            if task_id_hash in self.task_id_map:
-                return self.task_id_map[task_id_hash]
+            if new_task in self.task_map:
+                LOGGER.warn(
+                    "A duplicate task was submitted: %s original: %s",
+                    new_task, self.task_map[new_task])
+                return self.task_map[new_task]
 
-            self.task_id_map[task_id_hash] = new_task
+            self.task_map[new_task] = new_task
 
             if self.n_workers < 0:
                 # call directly if single threaded
@@ -321,21 +318,13 @@ class TaskGraph(object):
                     LOGGER.debug(
                         "single thread: %s is precalculated, "
                         "skipping call", task_name)
+                    # TODO: do i still need task complete event?
                     new_task._task_complete_event.set()
             else:
-                # send to scheduler
-                if not new_task.is_precalculated():
-                    LOGGER.debug(
-                        "multithreaded: %s is not precalculated, sending to "
-                        "scheduler", task_name)
-                    self.waiting_task_queue.put((new_task, 'wait'))
-                else:
-                    # this is a shortcut to clear pre-calculated tasks
-                    LOGGER.debug(
-                        "multithreaded: %s is precalculated, alerting the "
-                        "scheduler", task_name)
-                    new_task._task_complete_event.set()
-                    self.waiting_task_queue.put((new_task, 'done'))
+                # send to manager
+                LOGGER.debug(
+                    "multithreaded: %s sending to new task queue.", task_name)
+                self.task_manager.add_task(new_task)
             return new_task
 
         except Exception:
@@ -343,8 +332,8 @@ class TaskGraph(object):
             self._terminate()
             raise
 
-    def _execution_monitor(self, reporting_interval):
-        """Log state of taskgraph every `reporting_interval` seconds."""
+    def _execution_monitor(self):
+        """Log state of taskgraph every `self.reporting_interval` seconds."""
         start_time = time.time()
         while True:
             if self.terminated:
@@ -353,114 +342,11 @@ class TaskGraph(object):
                 "taskgraph execution status: tasks added: %d "
                 "tasks complete: %d "
                 "task graph open: %s " % (
-                    len(self.task_id_map), self.n_tasks_complete,
+                    len(self.task_map), self.n_tasks_complete,
                     not self.closed))
             time.sleep(
-                reporting_interval - (
-                    (time.time() - start_time)) % reporting_interval)
-
-    def _schedule_priority_tasks(self):
-        """Priority schedules the `self.work_ready` queue.
-
-        Reads the `self.work_ready` queue and feeds in highest priority tasks
-        when the self.work_queue is ready for them.
-        """
-        self.taskgraph_started_event.wait()
-        self.waiting_task_queue.join()
-        stopped = False
-        priority_queue = []
-        while not stopped:
-            while True:
-                try:
-                    # only block if the priority queue is empty
-                    task = self.work_ready_queue.get(not priority_queue)
-                    if task == 'STOP':
-                        # encounter STOP so break and don't get more elements
-                        stopped = True
-                        break
-                    # push task to priority queue
-                    heapq.heappush(priority_queue, task)
-                except queue.Empty:
-                    # this triggers when work_ready_queue is empty and
-                    # there's something in the work_ready_queue
-                    break
-            # only put elements if there are workers available
-            self.worker_semaphore.acquire()
-            while priority_queue:
-                # push high priority on the queue until queue is full
-                # or if thread is stopped, drain the priority queue
-                self.work_queue.put(priority_queue[0])
-                heapq.heappop(priority_queue)
-                if not stopped:
-                    # by stopping after one put, we can give the chance for
-                    # other higher priority tasks to flow in
-                    break
-        # got a 'STOP' so signal worker threads to stop too
-        for _ in xrange(max(1, self.n_workers)):
-            self.work_queue.put('STOP')
-
-    def _process_waiting_tasks(self):
-        """Process any tasks that are waiting on dependencies.
-
-        This worker monitors the self.waiting_task_queue queue and looks for
-        (task, 'wait'), or (task, 'done') tuples.
-
-        If mode is 'wait' the task is indexed locally with reference to
-        its incomplete tasks. If its dependent tasks are complete, the
-        task is sent to the work queue. If mode is 'done' this signals the
-        worker to re-'wait' any task that was dependent on the one that
-        arrived in the queue.
-        """
-        task_dependent_map = collections.defaultdict(set)
-        dependent_task_map = collections.defaultdict(set)
-        completed_tasks = set()
-
-        for task, mode in iter(self.waiting_task_queue.get, 'STOP'):
-            if mode == 'wait':
-                # see if this task's dependencies are satisfied, if so send
-                # to work.
-                outstanding_dependent_task_list = [
-                    dep_task for dep_task in task.dependent_task_list
-                    if dep_task not in completed_tasks]
-                if not outstanding_dependent_task_list:
-                    # if nothing is outstanding, send to work queue
-                    self.work_ready_queue.put(task)
-
-                # there are unresolved tasks that the waiting process
-                # scheduler has not been notified of. Record dependencies.
-                for dep_task in outstanding_dependent_task_list:
-                    # keep track of the tasks that are dependent on dep_task
-                    task_dependent_map[dep_task].add(task)
-                    # keep track of the tasks that prevent this one from
-                    # executing
-                    dependent_task_map[task].add(dep_task)
-            elif mode == 'done':
-                # invariant: task has not previously been sent as a 'done'
-                # notification and task is done.
-                completed_tasks.add(task)
-                self.n_tasks_complete += 1
-                if task not in task_dependent_map:
-                    # this can occur if add_task identifies task is complete
-                    # before any other analysis.
-                    self.waiting_task_queue.task_done()
-                    continue
-                for waiting_task in task_dependent_map[task]:
-                    # remove `task` from the set of tasks that `waiting_task`
-                    # was waiting on.
-                    dependent_task_map[waiting_task].remove(task)
-                    # if there aren't any left, we can push `waiting_task`
-                    # to the work queue
-                    if not dependent_task_map[waiting_task]:
-                        # if we removed the last task we can put it to the
-                        # work queue
-                        self.work_ready_queue.put(waiting_task)
-                del task_dependent_map[task]
-            self.waiting_task_queue.task_done()
-
-        # if we got here, the waiting task queue is shut down, pass signal
-        # to the lower queue
-        self.work_ready_queue.put('STOP')
-        self.waiting_task_queue.task_done()
+                self.reporting_interval - (
+                    (time.time() - start_time)) % self.reporting_interval)
 
     def join(self, timeout=None):
         """Join all threads in the graph.
@@ -481,15 +367,12 @@ class TaskGraph(object):
         self.taskgraph_started_event.set()
         try:
             timedout = False
-            for task in itervalues(self.task_id_map):
+            for task in self.task_map.values():
                 timedout = not task.join(timeout)
                 # if the last task timed out then we want to timeout for all
                 # of the task graph
                 if timedout:
                     break
-            if self.closed:
-                # inject sentinels to the queues
-                self.waiting_task_queue.put('STOP')
             return not timedout
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -508,15 +391,18 @@ class TaskGraph(object):
         if self.closed:
             return
         self.closed = True
+        if self.n_workers >= 0:
+            # we only have a task_manager if running in threaded mode
+            self.task_manager.signal_stop()
 
     def _terminate(self):
-        """Forcefully terminate remaining task graph computation."""
+        """Immediately terminate remaining task graph computation."""
         if self.terminated:
             return
         self.close()
         if self.n_workers > 0:
             self.worker_pool.terminate()
-        for task in itervalues(self.task_id_map):
+        for task in self.task_map.values():
             task._terminate()
         self.terminated = True
 
@@ -567,6 +453,7 @@ class Task(object):
         self.args = args
         self.kwargs = kwargs
         self.cache_dir = cache_dir
+        self.task_cache_path = None
 
         # sort the target path list because the order doesn't matter for
         # a result, but it would cause a task to be reexecuted if the only
@@ -578,7 +465,7 @@ class Task(object):
         self.ignore_directories = ignore_directories
         self.worker_pool = worker_pool
 
-        # invert the priority since heapq goes smallest to largest and we
+        # invert the priority since sorting goes smallest to largest and we
         # want more positive priority values to be executed first.
         self.priority = -priority
 
@@ -587,13 +474,11 @@ class Task(object):
         self.exception_object = None
 
         # Used to ensure only one attempt at executing and also a mechanism
-        # to see when Task is complete
+        # to see when Task is complete. This can be set if a Task finishes
+        # a _call, tests True on is_precomputed, or after a call to _terminate
         self._task_complete_event = threading.Event()
 
-        self._calculate_signature_hash()
-
-    def _calculate_signature_hash(self):
-        """Calculate a hash based only on superficial argument inputs."""
+        # Calculate a hash based only on argument inputs.
         try:
             if not hasattr(Task, 'func_source_map'):
                 Task.func_source_map = {}
@@ -642,7 +527,7 @@ class Task(object):
                     "on a successive run.", key, arg)
 
         self.reexecution_info = {
-            'name': self.func.__name__,
+            'func_name': self.func.__name__,
             'args': pprint.pformat(args_clean),
             'kwargs': pprint.pformat(kwargs_clean),
             'source_code_hash': hashlib.sha1(
@@ -657,9 +542,21 @@ class Task(object):
         self.task_id_hash = hashlib.sha1(
             argument_hash_string.encode('utf-8')).hexdigest()
 
+        # this will get calculated once dependent tasks are complete and
+        # _calculate_deep_hash is invoked.
+        self.task_reexecution_hash = None
+
     def _calculate_deep_hash(self):
-        """Calculate a hash that accounts for file size objects at runtime."""
-        if hasattr(Task, 'task_reexecution_hash'):
+        """Calculate a hash that accounts for file size objects at runtime.
+
+        Assumes that self.reexecution_info
+
+        After this call, self.task_cache_path has a valid path defined and
+        self.reexecution_info['file_stat_list'] is defined.
+
+
+        """
+        if self.task_reexecution_hash:
             LOGGER.info(
                 '_calculate_deep_hash in %s was called more than once',
                 self.task_name)
@@ -679,11 +576,8 @@ class Task(object):
         # files have been created/updated/or not.
         self.reexecution_info['file_stat_list'] = pprint.pformat(
             file_stat_list)
-
-        reexecution_string = ':'.join([
-            self.reexecution_info[key]
-            for key in sorted(self.reexecution_info.keys())])
-
+        reexecution_string = '%s:%s' % (
+            self.task_id_hash, self.reexecution_info['file_stat_list'])
         self.task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
 
@@ -720,7 +614,6 @@ class Task(object):
             {
                 "task_name": self.task_name,
                 "priority": self.priority,
-                "target_path_list": self.target_path_list,
                 "dependent_task_list": self.dependent_task_list,
                 "ignore_path_list": self.ignore_path_list,
                 "ignore_directories": self.ignore_directories,
@@ -875,6 +768,7 @@ class Task(object):
             LOGGER.info(
                 "%s: Task Cache file exists and all target files are in "
                 "expected state." % self.task_name)
+            self._task_complete_event.set()
             return True
         except EOFError:
             return False
@@ -903,9 +797,9 @@ class EncapsulatedTaskOp(ABC):
     Task's unique hash.
 
     """
+
     def __init__(self, *args, **kwargs):
-        # try to get the source code of __call__ so task graph will recompute
-        # if the function has changed
+        """Attempt to get the source code of __call__."""
         args_as_str = str([args, kwargs]).encode('utf-8')
         try:
             # hash the args plus source code of __call__
@@ -960,3 +854,88 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
+
+
+class TaskManager(object):
+    """Abstracts Task dependencies into simple operations."""
+
+    def __init__(self, task_ready_priority_queue):
+        """Construct a new TaskManager."""
+        self.task_ready_priority_queue = task_ready_priority_queue
+
+        self.task_dependent_map = collections.defaultdict(set)
+        self.dependent_task_map = collections.defaultdict(set)
+        self.completed_tasks = set()
+        self.task_manager_lock = threading.Lock()
+        self.ready_to_stop = False
+        self.executor_ready_event = threading.Event()
+
+    def add_task(self, task):
+        """Add a Task object to the manager.
+
+        If this task has no dependencies or all are satisfied, this task
+        will be marked as complete, cause `get_ready_tasks` to unblock and
+        will be included in the return value of `get_ready_tasks`.
+
+        Returns:
+            None
+
+        """
+        with self.task_manager_lock:
+            outstanding_dependent_task_list = [
+                dep_task for dep_task in task.dependent_task_list
+                if dep_task not in self.completed_tasks]
+            if not outstanding_dependent_task_list:
+                self.task_ready_priority_queue.put(task)
+                if not self.executor_ready_event.is_set():
+                    # indicate to executors there is work to do
+                    self.executor_ready_event.set()
+            else:
+                # there are unresolved tasks that the waiting process
+                # scheduler has not been notified of. Record dependencies.
+                for dep_task in outstanding_dependent_task_list:
+                    # keep track of the tasks that are dependent on dep_task
+                    self.task_dependent_map[dep_task].add(task)
+                    # keep track of the tasks that prevent this one from
+                    # executing
+                    self.dependent_task_map[task].add(dep_task)
+
+    def task_complete(self, task):
+        """Indicate that `task` is complete.
+
+        Any internal Tasks that are dependent on Task and not yet executed
+        are updated. If any task has all its dependencies met by `task` it
+        `get_ready_tasks` unblocks and will return at least that value.
+
+        Returns:
+            None.
+
+        """
+        LOGGER.debug("processing that task %s is complete", task)
+        with self.task_manager_lock:
+            self.completed_tasks.add(task)
+            for waiting_task in self.task_dependent_map[task]:
+                # remove `task` from the set of tasks that `waiting_task`
+                # was waiting on.
+                self.dependent_task_map[waiting_task].remove(task)
+                # if there aren't any left, we can push `waiting_task`
+                # to the work queue
+                if not self.dependent_task_map[waiting_task]:
+                    # if we removed the last task we can put it to the
+                    # work queue
+                    LOGGER.debug(
+                        "a new task is ready for processing: %s",
+                        waiting_task)
+                    self.task_ready_priority_queue.put(waiting_task)
+                    if not self.executor_ready_event.is_set():
+                        # indicate to executors there is work to do
+                        self.executor_ready_event.set()
+            del self.task_dependent_map[task]
+        LOGGER.debug("tasks %s done processing", task)
+
+    def signal_stop(self):
+        """Indicate that no more tasks will be added."""
+        with self.task_manager_lock:
+            self.ready_to_stop = True
+            # wake executors so they can process that `ready_to_stop` is set
+            self.executor_ready_event.set()
