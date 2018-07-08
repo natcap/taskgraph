@@ -364,8 +364,6 @@ class TaskGraph(object):
                     LOGGER.debug(
                         "single thread: %s is precalculated, "
                         "skipping call", task_name)
-                    # TODO: do i still need task complete event?
-                    new_task._task_complete_event.set()
             else:
                 # determine if task is ready or is dependent on other tasks
                 LOGGER.debug(
@@ -384,10 +382,9 @@ class TaskGraph(object):
                         # scheduler has not been notified of. Record
                         # dependencies.
                         for dep_task in outstanding_dependent_task_list:
-                            # keep track of the tasks that are dependent on dep_task
+                            # record tasks that are dependent on dep_task
                             self.task_dependent_map[dep_task].add(new_task)
-                            # keep track of the tasks that prevent this one from
-                            # executing
+                            # record tasks that new_task depends on
                             self.dependent_task_map[new_task].add(dep_task)
 
             return new_task
@@ -781,10 +778,9 @@ class Task(object):
         if self.terminated:
             raise RuntimeError(
                 "is_complete invoked on a terminated task %s" % str(self))
-        if not self._task_complete_event.isSet():
-            # lock is still acquired, so it's not done yet.
-            return False
-        return True
+        if self._task_complete_event.isSet() or self.is_precalculated():
+            return True
+        return False
 
     def is_precalculated(self):
         """Return true if Task can be skipped.
@@ -848,6 +844,8 @@ class Task(object):
             raise RuntimeError(
                 "Task joined even though taskgraph has delayed start "
                 "enabled: %s" % self)
+        if self.is_precalculated():
+            return True
         self._task_complete_event.wait(timeout)
         return self.is_complete()
 
