@@ -99,13 +99,14 @@ class TaskGraph(object):
                 the main thread is executing.
 
         """
+        self.n_workers = n_workers
+
         if delayed_start and n_workers < 0:
             raise ValueError(
                 "`n_workers` cannot be set single process mode while "
                 "`delayed_start` is enabled.")
 
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
-        self.n_workers = n_workers
         self.taskgraph_started_event = threading.Event()
         if not delayed_start:
             # not a delayed start, so set the event immediately
