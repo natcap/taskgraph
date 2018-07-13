@@ -1,4 +1,6 @@
 """Task graph framework."""
+from __future__ import absolute_import
+
 import time
 import pprint
 import collections
@@ -19,6 +21,8 @@ except ImportError:
     basestring = str
 import inspect
 import abc
+
+from . import queuehandler
 
 # Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
 # usage that is no longer clearly documented in python 3 (if it's even present
@@ -62,6 +66,13 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
     Process = NoDaemonProcess
+
+
+def _initialize_logging_to_queue(queue_):
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.NOTSET)
+    handler = queuehandler.QueueHandler(queue_)
+    root_logger.addHandler(handler)
 
 
 class TaskGraph(object):
@@ -176,7 +187,13 @@ class TaskGraph(object):
 
         # set up multrpocessing if n_workers > 0
         if n_workers > 0:
-            self.worker_pool = NonDaemonicPool(n_workers)
+            self.logging_queue = multiprocessing.Queue()
+            self.worker_pool = NonDaemonicPool(
+                n_workers, initializer=_initialize_logging_to_queue,
+                initargs=(self.logging_queue,))
+            self.logging_monitor_thread = threading.Thread(
+                target=self._handle_logs_from_processes,
+                args=(self.logging_queue,))
             if HAS_PSUTIL:
                 parent = psutil.Process()
                 parent.nice(PROCESS_LOW_PRIORITY)
@@ -396,6 +413,17 @@ class TaskGraph(object):
             self._terminate()
             raise
 
+    def _handle_logs_from_processes(self, queue):
+        LOGGER.info('Starting logging worker')
+        while True:
+            record = queue.get()
+            if record is None:
+                break
+            logger = logging.getLogger(record.name)
+            logger.handle(record)
+        LOGGER.info('Stopping logging worker')
+
+
     def _execution_monitor(self):
         """Log state of taskgraph every `self.reporting_interval` seconds."""
         start_time = time.time()
@@ -469,6 +497,7 @@ class TaskGraph(object):
         self.close()
         if self.n_workers > 0:
             self.worker_pool.terminate()
+            self.logging_queue.put(None)  # close down the log monitor thread
         for task in self.task_map.values():
             task._terminate()
         self.terminated = True
