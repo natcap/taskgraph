@@ -28,6 +28,11 @@ Unreleased Changes
   argument and `add_task` crashed on infinite recursion. Type checking of
   arguments has been simplified and now iteration only occurs on the Python
   `set`, `dict`, `list`, and `tuple` types.
+* Fixed an issue where the `TaskGraph` was not `join`ing the worker process
+  pool on a closed/join TaskGraph, or when the `TaskGraph` object was being
+  deconstructed. This would occasionally cause a race condition where the
+  TaskGraph may still have a cache `.json` file open. Discovered through a
+  flaky build test.
 
 0.5.2 (2018-06-20)
 ------------------
