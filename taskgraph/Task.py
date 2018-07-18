@@ -918,13 +918,13 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
                        os.path.getsize(base_value))
         except OSError:
             pass
-    elif isinstance(base_value, collections.Mapping):
+    elif isinstance(base_value, dict):
         for key in sorted(base_value.keys()):
             value = base_value[key]
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
-    elif isinstance(base_value, collections.Iterable):
+    elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):

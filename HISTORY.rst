@@ -24,6 +24,10 @@ Unreleased Changes
 * Refactored internal TaskGraph scheduling to fix a design error that made it
   likely tasks would be needlessly reexecuted. This also simplified TaskGraph
   flow control and cause slight performance improvements.
+* Fixed an issue discovered when a `scipy.sparse` matrix was passed as an
+  argument and `add_task` crashed on infinite recursion. Type checking of
+  arguments has been simplified and now iteration only occurs on the Python
+  `set`, `dict`, `list`, and `tuple` types.
 
 0.5.2 (2018-06-20)
 ------------------
