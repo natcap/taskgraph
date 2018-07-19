@@ -194,6 +194,8 @@ class TaskGraph(object):
             self.logging_monitor_thread = threading.Thread(
                 target=self._handle_logs_from_processes,
                 args=(self.logging_queue,))
+            self.logging_monitor_thread.daemon = True
+            self.logging_monitor_thread.start()
             if HAS_PSUTIL:
                 parent = psutil.Process()
                 parent.nice(PROCESS_LOW_PRIORITY)
@@ -221,6 +223,10 @@ class TaskGraph(object):
             if self.worker_pool:
                 LOGGER.info("joining the worker_pool")
                 self.worker_pool.join()
+
+        if self.n_workers > 0:
+            # Close down the logging monitor thread.
+            self.logging_queue.put(None)
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -413,16 +419,15 @@ class TaskGraph(object):
             self._terminate()
             raise
 
-    def _handle_logs_from_processes(self, queue):
+    def _handle_logs_from_processes(self, queue_):
         LOGGER.info('Starting logging worker')
         while True:
-            record = queue.get()
+            record = queue_.get()
             if record is None:
                 break
             logger = logging.getLogger(record.name)
             logger.handle(record)
         LOGGER.info('Stopping logging worker')
-
 
     def _execution_monitor(self):
         """Log state of taskgraph every `self.reporting_interval` seconds."""
