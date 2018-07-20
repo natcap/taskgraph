@@ -7,6 +7,8 @@ import time
 import unittest
 import pickle
 import logging
+import logging.handlers
+import multiprocessing
 
 import mock
 
@@ -656,23 +658,21 @@ class TaskGraphTests(unittest.TestCase):
         logger_name = 'foo.hello.world'
         log_message = 'This is coming from another process'
         logger = logging.getLogger(logger_name)
-        log_file_name = os.path.join(self.workspace_dir, 'logfile.txt')
-        handler = logging.FileHandler(log_file_name)
+        handler = logging.handlers.MemoryHandler(capacity=100)
         logger.addHandler(handler)
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
         task_graph.add_task(_log_from_another_process,
                             args=(logger_name,
                                   log_message))
-        task_graph.join()
         task_graph.close()
+        task_graph.join()
         del task_graph
 
-        # clean up the file handler
-        logger.removeHandler(handler)
-        handler.close()
-        del handler  # Cleaning up persistent reference to file object
-        del logger
-
-        log_file_text = open(log_file_name).read()
-        self.assertTrue(log_message in log_file_text)
+        # There should be exactly one record in the queue, and it should be
+        # from a different process, but have the message we defined above.
+        self.assertEqual(len(handler.buffer), 1)
+        self.assertTrue(isinstance(handler.buffer[0], logging.LogRecord))
+        self.assertEqual(log_message, handler.buffer[0].message)
+        self.assertNotEqual(handler.buffer[0].processName,
+                            multiprocessing.current_process())
