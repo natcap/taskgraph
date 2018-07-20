@@ -664,7 +664,10 @@ class TaskGraphTests(unittest.TestCase):
                             args=(logger_name,
                                   log_message))
         task_graph.join()
-        del task_graph
+
+        # clean up the file handler
+        logger.removeHandler(handler)
+        handler.close()
 
         with open(log_file_name) as log_file:
             self.assertTrue(log_message in log_file.read())
