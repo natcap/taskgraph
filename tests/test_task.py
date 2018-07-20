@@ -140,8 +140,8 @@ class TaskGraphTests(unittest.TestCase):
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
         result_m_time = os.path.getmtime(target_path)
-
         del task_graph
+
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task(
             func=_create_list_on_disk,
@@ -152,6 +152,7 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
+        del task_graph
 
         # taskgraph shouldn't have recomputed the result
         second_result_m_time = os.path.getmtime(target_path)
