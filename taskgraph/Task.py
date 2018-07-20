@@ -232,19 +232,8 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        if self.n_workers >= 0:
-            # there's only something to clean up if there's a worker
-            LOGGER.info("joining all the task executors")
-            for task_executor_thread in self.task_executor_thread_list:
-                try:
-                    task_executor_thread.join()
-                except RuntimeError:
-                    LOGGER.info(
-                        "task_executor_thread already complete %s",
-                        task_executor_thread)
-            if self.worker_pool:
-                LOGGER.info("joining the worker_pool")
-                self.worker_pool.join()
+        self.close()
+        self.join()
 
         if self.logging_queue:
             # Close down the logging monitor thread.
@@ -480,6 +469,8 @@ class TaskGraph(object):
 
         """
         # if single threaded, nothing to join.
+        if self.terminated:
+            return True
         if self.n_workers < 0:
             return True
         # start delayed execution if necessary:
@@ -492,6 +483,29 @@ class TaskGraph(object):
                 # of the task graph
                 if timedout:
                     break
+            if not timedout and self.closed:
+                # join all the workers and the worker pool
+                if self.n_workers >= 0:
+                    # there's only something to clean up if there's a worker
+                    LOGGER.info("joining all the task executors")
+                    for task_executor_thread in (
+                            self.task_executor_thread_list):
+                        try:
+                            task_executor_thread.join(timeout)
+                        except RuntimeError:
+                            LOGGER.info(
+                                "task_executor_thread already complete %s",
+                                task_executor_thread)
+                    # run through any leftover tasks that are still running
+                    # after executor is dead
+                    for task in self.task_map.values():
+                        timedout = not task.join(timeout)
+                        if timedout:
+                            break
+                    if self.worker_pool and not timedout:
+                        LOGGER.info("joining the worker_pool")
+                        self.worker_pool.close()
+                        self.worker_pool.join()
             return not timedout
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -974,13 +988,13 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
                        os.path.getsize(base_value))
         except OSError:
             pass
-    elif isinstance(base_value, collections.Mapping):
+    elif isinstance(base_value, dict):
         for key in sorted(base_value.keys()):
             value = base_value[key]
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
-    elif isinstance(base_value, collections.Iterable):
+    elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
