@@ -6,6 +6,7 @@ import shutil
 import time
 import unittest
 import pickle
+import logging
 
 import mock
 
@@ -57,6 +58,22 @@ def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
 def _div_by_zero():
     """Divide by zero to raise an exception."""
     return 1/0
+
+
+def _log_from_another_process(logger_name, log_message):
+    """Write a log message to a given logger.
+
+    Parameters:
+        logger_name (string): The string logger name to which ``log_message``
+            will be logged.
+        log_message (string): The string log message to be logged (at INFO
+            level) to the logger at ``logger_name``.
+
+    Returns:
+        ``None``
+    """
+    logger = logging.getLogger(logger_name)
+    logger.info(log_message)
 
 
 class TaskGraphTests(unittest.TestCase):
@@ -632,3 +649,22 @@ class TaskGraphTests(unittest.TestCase):
             target_string = target_file.read()
 
         self.assertEqual(target_string, "wordword")
+
+    def test_multiprocessed_logging(self):
+        """TaskGraph: ensure tasks can log from multiple processes."""
+        logger_name = 'foo.hello.world'
+        log_message = 'This is coming from another process'
+        logger = logging.getLogger(logger_name)
+        log_file_name = os.path.join(self.workspace_dir, 'logfile.txt')
+        handler = logging.FileHandler(log_file_name)
+        logger.addHandler(handler)
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        task_graph.add_task(_log_from_another_process,
+                            args=(logger_name,
+                                  log_message))
+        task_graph.join()
+        del task_graph
+
+        with open(log_file_name) as log_file:
+            self.assertTrue(log_message in log_file.read())

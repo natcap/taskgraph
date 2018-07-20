@@ -69,6 +69,20 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
 
 
 def _initialize_logging_to_queue(queue_):
+    """Add a synchronized queue to a new process.
+
+    This is intended to be called as an initialization function to
+    ``multiprocessing.Pool`` to establish logging from a Pool worker to the
+    main python process via a multiprocessing Queue.
+
+    Parameters:
+        queue_ (multiprocessing.Queue): The queue to use for passing log
+            records back to the main process.
+
+    Returns:
+        ``None``
+
+    """
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.NOTSET)
     handler = queuehandler.QueueHandler(queue_)
@@ -137,6 +151,14 @@ class TaskGraph(object):
         # if n_workers > 0 this will be a multiprocessing pool used to execute
         # the __call__ functions in Tasks
         self.worker_pool = None
+
+        # If n_workers > 0 this will be a threading.Thread used to propagate
+        # log records from another process into the current process.
+        self.logging_monitor_thread = None
+
+        # If n_workers > 0, this will be a multiprocessing.Queue used to pass
+        # log records from the process pool to the parent process.
+        self.logging_queue = None
 
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
@@ -224,7 +246,7 @@ class TaskGraph(object):
                 LOGGER.info("joining the worker_pool")
                 self.worker_pool.join()
 
-        if self.n_workers > 0:
+        if self.logging_queue:
             # Close down the logging monitor thread.
             self.logging_queue.put(None)
 
