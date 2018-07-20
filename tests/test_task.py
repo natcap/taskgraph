@@ -670,5 +670,4 @@ class TaskGraphTests(unittest.TestCase):
         logger.removeHandler(handler)
         handler.close()
 
-        with open(log_file_name) as log_file:
-            self.assertTrue(log_message in log_file.read())
+        self.assertTrue(log_message in open(log_file_name).read())
