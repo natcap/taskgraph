@@ -671,4 +671,5 @@ class TaskGraphTests(unittest.TestCase):
         handler.flush()
         handler.close()
 
-        self.assertTrue(log_message in open(log_file_name).read())
+        log_file_text = open(log_file_name).read()
+        self.assertTrue(log_message in log_file_text)
