@@ -668,8 +668,8 @@ class TaskGraphTests(unittest.TestCase):
 
         # clean up the file handler
         logger.removeHandler(handler)
-        handler.flush()
         handler.close()
+        del handler  # Cleanin up persistent reference to file object
 
         log_file_text = open(log_file_name).read()
         self.assertTrue(log_message in log_file_text)
