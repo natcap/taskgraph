@@ -665,6 +665,8 @@ class TaskGraphTests(unittest.TestCase):
                             args=(logger_name,
                                   log_message))
         task_graph.join()
+        task_graph.close()
+        del task_graph
 
         # clean up the file handler
         logger.removeHandler(handler)
