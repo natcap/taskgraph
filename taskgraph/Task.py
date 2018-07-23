@@ -1030,17 +1030,13 @@ def _scrub_functions(base_value):
             source_code = ''
         return '%s:%s' % (base_value.__name__, source_code)
     elif isinstance(base_value, dict):
+        result_dict = {}
         for key in sorted(base_value.keys()):
-            base_value[key] = _scrub_functions(base_value[key])
+            result_dict[key] = _scrub_functions(base_value[key])
+        return result_dict
     elif isinstance(base_value, (list, set, tuple)):
         result_list = []
         for value in base_value:
             result_list.append(_scrub_functions(value))
-        if isinstance(base_value, list):
-            return result_list
-        if isinstance(base_value, set):
-            return set(result_list)
-        if isinstance(base_value, tuple):
-            return tuple(result_list)
-    else:
-        return base_value
+        return type(base_value)(result_list)
+    return base_value
