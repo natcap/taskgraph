@@ -33,6 +33,9 @@ Unreleased Changes
   deconstructed. This would occasionally cause a race condition where the
   TaskGraph may still have a cache `.json` file open. Discovered through a
   flaky build test.
+* Added functionality to the ``TaskGraph`` object to propagate log messages
+  from workers back to the parent process.  This only applies for cases where a
+  ``TaskGraph`` instance is started with ``n_workers > 0``.
 
 0.5.2 (2018-06-20)
 ------------------

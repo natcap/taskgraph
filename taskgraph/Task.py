@@ -1,4 +1,6 @@
 """Task graph framework."""
+from __future__ import absolute_import
+
 import time
 import pprint
 import collections
@@ -19,6 +21,8 @@ except ImportError:
     basestring = str
 import inspect
 import abc
+
+from . import queuehandler
 
 # Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
 # usage that is no longer clearly documented in python 3 (if it's even present
@@ -62,6 +66,27 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
     Process = NoDaemonProcess
+
+
+def _initialize_logging_to_queue(queue_):
+    """Add a synchronized queue to a new process.
+
+    This is intended to be called as an initialization function to
+    ``multiprocessing.Pool`` to establish logging from a Pool worker to the
+    main python process via a multiprocessing Queue.
+
+    Parameters:
+        queue_ (multiprocessing.Queue): The queue to use for passing log
+            records back to the main process.
+
+    Returns:
+        ``None``
+
+    """
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.NOTSET)
+    handler = queuehandler.QueueHandler(queue_)
+    root_logger.addHandler(handler)
 
 
 class TaskGraph(object):
@@ -127,6 +152,14 @@ class TaskGraph(object):
         # the __call__ functions in Tasks
         self.worker_pool = None
 
+        # If n_workers > 0 this will be a threading.Thread used to propagate
+        # log records from another process into the current process.
+        self.logging_monitor_thread = None
+
+        # If n_workers > 0, this will be a multiprocessing.Queue used to pass
+        # log records from the process pool to the parent process.
+        self.logging_queue = None
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
@@ -176,7 +209,15 @@ class TaskGraph(object):
 
         # set up multrpocessing if n_workers > 0
         if n_workers > 0:
-            self.worker_pool = NonDaemonicPool(n_workers)
+            self.logging_queue = multiprocessing.Queue()
+            self.worker_pool = NonDaemonicPool(
+                n_workers, initializer=_initialize_logging_to_queue,
+                initargs=(self.logging_queue,))
+            self.logging_monitor_thread = threading.Thread(
+                target=self._handle_logs_from_processes,
+                args=(self.logging_queue,))
+            self.logging_monitor_thread.daemon = True
+            self.logging_monitor_thread.start()
             if HAS_PSUTIL:
                 parent = psutil.Process()
                 parent.nice(PROCESS_LOW_PRIORITY)
@@ -193,6 +234,10 @@ class TaskGraph(object):
         """Ensure all threads have been joined for cleanup."""
         self.close()
         self.join()
+
+        if self.logging_queue:
+            # Close down the logging monitor thread.
+            self.logging_queue.put(None)
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -385,6 +430,16 @@ class TaskGraph(object):
             self._terminate()
             raise
 
+    def _handle_logs_from_processes(self, queue_):
+        LOGGER.info('Starting logging worker')
+        while True:
+            record = queue_.get()
+            if record is None:
+                break
+            logger = logging.getLogger(record.name)
+            logger.handle(record)
+        LOGGER.info('Stopping logging worker')
+
     def _execution_monitor(self):
         """Log state of taskgraph every `self.reporting_interval` seconds."""
         start_time = time.time()
@@ -483,6 +538,7 @@ class TaskGraph(object):
         self.close()
         if self.n_workers > 0:
             self.worker_pool.terminate()
+            self.logging_queue.put(None)  # close down the log monitor thread
         for task in self.task_map.values():
             task._terminate()
         self.terminated = True
