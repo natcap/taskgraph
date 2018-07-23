@@ -686,8 +686,8 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_merged_path],
             dependent_task_list=[create_files_task])
 
-        task_graph.join()
         task_graph.close()
+        task_graph.join()
 
         with open(target_merged_path, 'r') as target_file:
             target_string = target_file.read()
