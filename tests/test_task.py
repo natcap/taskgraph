@@ -47,6 +47,17 @@ def _create_list_on_disk(value, length, target_path=None):
     pickle.dump(target_list, open(target_path, 'wb'))
 
 
+def _call_it(target, *args):
+    """Invoke `target` with `args`."""
+    target(*args)
+
+
+def _append_a_one(path):
+    """Append a `1` to file at `path`."""
+    with open(path, 'a') as target_file:
+        target_file.write('1')
+
+
 def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
     """Read two lists, add them and save result."""
     list_a = pickle.load(open(list_a_path, 'rb'))
@@ -676,3 +687,42 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(log_message, handler.buffer[0].message)
         self.assertNotEqual(handler.buffer[0].processName,
                             multiprocessing.current_process())
+
+    def test_repeated_function(self):
+        """TaskGraph: ensure no reruns if argument is a function."""
+        global _append_a_one
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_a_one, target_path),
+            target_path_list=[target_path],
+            ignore_path_list=[target_path],
+            task_name='first _call_it')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        # this causes the address to change
+        def _append_a_one(path):
+            """Append a `1` to file at `path`."""
+            with open(path, 'a') as target_file:
+                target_file.write('1')
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_a_one, target_path),
+            target_path_list=[target_path],
+            ignore_path_list=[target_path],
+            task_name='second _call_it')
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            result = target_file.read()
+
+        # the second call shouldn't happen
+        self.assertEqual(result, '1')
