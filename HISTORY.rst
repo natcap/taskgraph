@@ -40,6 +40,8 @@ Unreleased Changes
 * Fixed an issue where a function that was passed as an argument would cause
   a reexecution on a separate run because the ``__repr__`` of a function
   includes its pointer address.
+* Adjusted logging levels so that detailed task information is shown on DEBUG
+  but basic status updates are shown in INFO.
 
 0.5.2 (2018-06-20)
 ------------------
