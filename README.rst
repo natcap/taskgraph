@@ -1,10 +1,15 @@
-TaskGraph:
-=================================================
-
+===============
 About TaskGraph
----------------
+===============
 
-TaskGraph is great.
+``TaskGraph`` is a library that was developed to help manage complicated
+computational software pipelines consisting of long running individual tasks.
+Many of these tasks could be executed in parallel, almost all of them wrote
+results to disk, and many times results could be reused from part of the
+pipeline. TaskGraph manages all of this for you. With it you can schedule
+tasks with dependencies, avoid recomputing results that have already been
+computed, and allot multiple CPU cores to execute tasks in parallel if
+desired.
 
 TaskGraph Dependencies
 ----------------------
@@ -15,7 +20,7 @@ installed the distributed multiprocessing processes will be ``nice``\d.
 Example Use
 -----------
 
-Install taskgraph with
+Install ``TaskGraph`` with
 
 ``pip install taskgraph``
 
@@ -60,7 +65,9 @@ Then
       args=(target_a_path, target_b_path, result_path),
       target_path_list=[result_path],
       dependent_task_list=[task_a, task_b])
-  sum_task.join()
+
+  task_graph.close()
+  task_graph.join()
 
   # expect that result is a list `list_len` long with `value_a+value_b` in it
   result = pickle.load(open(result_path, 'rb'))
@@ -69,18 +76,17 @@ Running Tests
 -------------
 
 Taskgraph includes a ``tox`` configuration for automating builds across
-multiple python versions and whether ``psutil`` is installed.  To
-execute all tests, run::
+python versions 2.7, 3.6, and whether ``psutil`` is installed.  To execute all
+tests on all platforms, run:
 
     $ tox
 
 Alternatively, if you're only trying to run tests on a single configuration
 (say, python 3.5 without ``psutil``), you'd run::
 
-    $ tox -e py35-base
+    $ tox -e py36
 
 Or if you'd like to run the tests for the combination of Python 2.7 with
 ``psutil``, you'd run::
 
     $ tox -e py27-psutil
-

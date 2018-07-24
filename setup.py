@@ -1,7 +1,9 @@
 """taskgraph setup.py."""
 from setuptools import setup
 
-README = open('README.rst').read()
+LONG_DESCRIPTION = '%s\n\n%s' % (
+    open('README.rst').read(),
+    open('HISTORY.rst').read())
 
 setup(
     name='taskgraph',
@@ -9,7 +11,7 @@ setup(
                      'local_scheme': 'node-and-date'},
     setup_requires=['setuptools_scm'],
     description='Parallel task graph framework.',
-    long_description=README,
+    long_description=LONG_DESCRIPTION,
     maintainer='Rich Sharp',
     maintainer_email='richpsharp@gmail.com',
     url='https://bitbucket.org/natcap/taskgraph',
