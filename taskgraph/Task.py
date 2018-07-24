@@ -68,7 +68,7 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
     Process = NoDaemonProcess
 
 
-def _initialize_logging_to_queue(queue_):
+def _initialize_logging_to_queue(logging_queue):
     """Add a synchronized queue to a new process.
 
     This is intended to be called as an initialization function to
@@ -76,8 +76,8 @@ def _initialize_logging_to_queue(queue_):
     main python process via a multiprocessing Queue.
 
     Parameters:
-        queue_ (multiprocessing.Queue): The queue to use for passing log
-            records back to the main process.
+        logging_queue (multiprocessing.Queue): The queue to use for passing
+            log records back to the main process.
 
     Returns:
         ``None``
@@ -85,7 +85,7 @@ def _initialize_logging_to_queue(queue_):
     """
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.NOTSET)
-    handler = queuehandler.QueueHandler(queue_)
+    handler = queuehandler.QueueHandler(logging_queue)
     root_logger.addHandler(handler)
 
 
@@ -431,14 +431,14 @@ class TaskGraph(object):
             raise
 
     def _handle_logs_from_processes(self, queue_):
-        LOGGER.info('Starting logging worker')
+        LOGGER.debug('Starting logging worker')
         while True:
             record = queue_.get()
             if record is None:
                 break
             logger = logging.getLogger(record.name)
             logger.handle(record)
-        LOGGER.info('Stopping logging worker')
+        LOGGER.debug('Stopping logging worker')
 
     def _execution_monitor(self):
         """Log state of taskgraph every `self.reporting_interval` seconds."""
@@ -446,12 +446,18 @@ class TaskGraph(object):
         while True:
             if self.terminated:
                 break
+            total_tasks = len(self.task_map)
+            completed_tasks = len(self.completed_tasks)
+            percent_complete = 0.0
+            if total_tasks > 0:
+                percent_complete = 100.0 * (
+                    float(completed_tasks) / total_tasks)
+
             LOGGER.info(
                 "taskgraph execution status: tasks added: %d "
-                "tasks complete: %d "
-                "task graph open: %s " % (
-                    len(self.task_map),
-                    len(self.completed_tasks), not self.closed))
+                "tasks complete: %d (%.1f%%)"
+                "task graph %s ", total_tasks, completed_tasks,
+                percent_complete, 'closed' if self.closed else 'open')
             time.sleep(
                 self.reporting_interval - (
                     (time.time() - start_time)) % self.reporting_interval)
@@ -487,14 +493,19 @@ class TaskGraph(object):
                 # join all the workers and the worker pool
                 if self.n_workers >= 0:
                     # there's only something to clean up if there's a worker
-                    LOGGER.info("joining all the task executors")
+                    LOGGER.info(
+                        "TaskGraph closed, joining all the task executor "
+                        "threads.")
                     for task_executor_thread in (
                             self.task_executor_thread_list):
                         try:
                             task_executor_thread.join(timeout)
+                            LOGGER.debug(
+                                "task_executor_thread joined (%s)",
+                                task_executor_thread)
                         except RuntimeError:
-                            LOGGER.info(
-                                "task_executor_thread already complete %s",
+                            LOGGER.warn(
+                                "task_executor_thread already complete (%s)",
                                 task_executor_thread)
                     # run through any leftover tasks that are still running
                     # after executor is dead
@@ -503,7 +514,8 @@ class TaskGraph(object):
                         if timedout:
                             break
                     if self.worker_pool and not timedout:
-                        LOGGER.info("joining the worker_pool")
+                        LOGGER.info(
+                            "TaskGraph closed, joining the worker_pool")
                         self.worker_pool.close()
                         self.worker_pool.join()
             return not timedout
@@ -702,11 +714,6 @@ class Task(object):
             None
 
         """
-        if self.task_reexecution_hash:
-            LOGGER.info(
-                '_calculate_deep_hash in %s was called more than once',
-                self.task_name)
-
         # This gets a list of the files and their file stats that can be found
         # in args and kwargs but ignores anything specifically targeted or
         # an expected result. This will allow a task to change its hash in
@@ -873,14 +880,12 @@ class Task(object):
         """
         with self.deep_hash_lock:
             self._calculate_deep_hash()
-        LOGGER.info(
-            "attempting to determine if the following task is precalculated: "
-            "%s", self)
         try:
             if not os.path.exists(self.task_cache_path):
                 LOGGER.info(
-                    "%s: is not precalculated, Task Cache file does not "
-                    "exist" % self.task_name)
+                    "not precalculated, Task Cache file does not "
+                    "exist (%s)", self.task_name)
+                LOGGER.debug("is_precalculated full task info: %s", self)
                 return False
             with open(self.task_cache_path, 'rb') as task_cache_file:
                 result_target_path_stats = pickle.load(task_cache_file)
@@ -905,14 +910,12 @@ class Task(object):
                             size, target_size))
             if mismatched_target_file_list:
                 LOGGER.warn(
-                    "%s: not precalculated, Task Cache file exists, "
-                    "but there are these mismatches: %s" % (
-                        self.task_name, '\n'.join(
-                            mismatched_target_file_list)))
+                    "not precalculated (%s), Task Cache file exists, "
+                    "but there are these mismatches: %s",
+                    self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
             LOGGER.info(
-                "%s: precalcualted, Task Cache file exists and all target "
-                "files are in expected state." % self.task_name)
+                "precalculated (%s)" % self.task_name)
             self.task_complete_event.set()
             return True
         except EOFError:
