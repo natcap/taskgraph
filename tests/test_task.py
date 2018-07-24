@@ -47,6 +47,18 @@ def _create_list_on_disk(value, length, target_path=None):
     pickle.dump(target_list, open(target_path, 'wb'))
 
 
+def _call_it(target, *args):
+    """Invoke `target` with `args`."""
+    target(*args)
+
+
+def _append_val(path, *val):
+    """Append a `val` to file at `path`."""
+    with open(path, 'a') as target_file:
+        for v in val:
+            target_file.write(str(v))
+
+
 def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
     """Read two lists, add them and save result."""
     list_a = pickle.load(open(list_a_path, 'rb'))
@@ -589,6 +601,35 @@ class TaskGraphTests(unittest.TestCase):
         # this should not timeout since function runs for 1 second
         self.assertFalse(timedout, "task timed out")
 
+    def test_scrub(self):
+        """TaskGraph: ensure scrub is not scrubbing base types."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+
+        target_path = os.path.join(self.workspace_dir, 'a.txt')
+        first_task = task_graph.add_task(
+            func=_append_val,
+            args=(target_path, 1, [1], {'x': 1}),
+            task_name='first append')
+
+        second_task = task_graph.add_task(
+            func=_append_val,
+            args=(target_path, 1, [1], {'x': 2}),
+            dependent_task_list=[first_task],
+            task_name='second append')
+
+        _ = task_graph.add_task(
+            func=_append_val,
+            args=(target_path, 1, [2], {'x': 1}),
+            dependent_task_list=[second_task],
+            task_name='third append')
+
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            file_value = target_file.read()
+        self.assertEqual("1[1]{'x': 1}1[1]{'x': 2}1[2]{'x': 1}", file_value)
+
     def test_target_path_order(self):
         """TaskGraph: ensure target path order doesn't matter."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
@@ -645,8 +686,8 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_merged_path],
             dependent_task_list=[create_files_task])
 
-        task_graph.join()
         task_graph.close()
+        task_graph.join()
 
         with open(target_merged_path, 'r') as target_file:
             target_string = target_file.read()
@@ -676,3 +717,43 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(log_message, handler.buffer[0].message)
         self.assertNotEqual(handler.buffer[0].processName,
                             multiprocessing.current_process())
+
+    def test_repeated_function(self):
+        """TaskGraph: ensure no reruns if argument is a function."""
+        global _append_val
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            ignore_path_list=[target_path],
+            task_name='first _call_it')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        # this causes the address to change
+        def _append_val(path, *val):
+            """Append a `val` to file at `path`."""
+            with open(path, 'a') as target_file:
+                for v in val:
+                    target_file.write(str(v))
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            ignore_path_list=[target_path],
+            task_name='second _call_it')
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            result = target_file.read()
+
+        # the second call shouldn't happen
+        self.assertEqual(result, '1')

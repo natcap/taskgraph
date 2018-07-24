@@ -646,8 +646,9 @@ class Task(object):
         args_clean = []
         for index, arg in enumerate(self.args):
             try:
-                _ = pickle.dumps(arg)
-                args_clean.append(arg)
+                scrubbed_value = _scrub_functions(arg)
+                _ = pickle.dumps(scrubbed_value)
+                args_clean.append(scrubbed_value)
             except TypeError:
                 LOGGER.warn(
                     "could not pickle argument at index %d (%s). "
@@ -660,8 +661,9 @@ class Task(object):
         # same set of kwargs irrespect of the item dict order.
         for key, value in sorted(self.kwargs.items()):
             try:
-                _ = pickle.dumps(value)
-                kwargs_clean[key] = value
+                scrubbed_value = _scrub_functions(arg)
+                _ = pickle.dumps(scrubbed_value)
+                kwargs_clean[key] = scrubbed_value
             except TypeError:
                 LOGGER.warn(
                     "could not pickle kw argument %s (%s). "
@@ -999,3 +1001,42 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             for stat in _get_file_stats(
                     value, ignore_list, ignore_directories):
                 yield stat
+
+
+def _scrub_functions(base_value):
+    """Replace functions with stable string representations.
+
+    Parameters:
+        base_value: any python value
+
+    Returns:
+        base_value with any functions replaced as strings.
+
+    """
+    if callable(base_value):
+        try:
+            if not hasattr(Task, 'func_source_map'):
+                Task.func_source_map = {}
+            # memoize func source code because it's likely we'll import
+            # the same func many times and reflection is slow
+            if base_value not in Task.func_source_map:
+                Task.func_source_map[base_value] = (
+                    inspect.getsource(base_value)).replace(
+                        ' ', '').replace('\t', '')
+            source_code = Task.func_source_map[base_value]
+        except (IOError, TypeError):
+            # many reasons for this, for example, frozen Python code won't
+            # have source code, so just leave blank
+            source_code = ''
+        return '%s:%s' % (base_value.__name__, source_code)
+    elif isinstance(base_value, dict):
+        result_dict = {}
+        for key in sorted(base_value.keys()):
+            result_dict[key] = _scrub_functions(base_value[key])
+        return result_dict
+    elif isinstance(base_value, (list, set, tuple)):
+        result_list = []
+        for value in base_value:
+            result_list.append(_scrub_functions(value))
+        return type(base_value)(result_list)
+    return base_value
