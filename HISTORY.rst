@@ -1,6 +1,10 @@
 .. :changelog:
 
-Unreleased Changes
+=========================
+TaskGraph Release History
+=========================
+
+0.6.0 (2018-07-24)
 ------------------
 * Added a ``delayed_start`` flag to TaskGraph to allow for delayed execution
   of taskgraph tasks. If enabled on threaded or multiprocess mode, calls to
@@ -161,7 +165,7 @@ Unreleased Changes
 
 0.1.1 (2017-07-31)
 ------------------
-* Fixing a TYPO on __version__ number scheme.
+* Fixing a TYPO on ``__version__`` number scheme.
 * Importing ``psutil`` if it exists.
 
 0.1.0 (2017-07-29)
