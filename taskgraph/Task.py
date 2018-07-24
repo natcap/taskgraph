@@ -455,8 +455,8 @@ class TaskGraph(object):
 
             LOGGER.info(
                 "taskgraph execution status: tasks added: %d "
-                "tasks complete: %d (%.1f%%)"
-                "task graph %s ", total_tasks, completed_tasks,
+                "tasks complete: %d (%.1f%%) "
+                "task graph %s", total_tasks, completed_tasks,
                 percent_complete, 'closed' if self.closed else 'open')
             time.sleep(
                 self.reporting_interval - (
