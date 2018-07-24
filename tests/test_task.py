@@ -7,29 +7,56 @@ import time
 import unittest
 import pickle
 import logging
+import logging.handlers
+import multiprocessing
 
 import mock
 
 import taskgraph
-
-logging.basicConfig(level=logging.DEBUG)
-LOGGER = logging.getLogger(__file__)
-
 
 # Python 3 relocated the reload function to imp.
 if 'reload' not in __builtins__:
     from imp import reload
 
 
-def _long_running_function():
-    """Wait for 5 seconds."""
-    time.sleep(5)
+def _long_running_function(delay):
+    """Wait for `delay` seconds."""
+    time.sleep(delay)
 
 
-def _create_list_on_disk(value, length, target_path):
+def _create_two_files_on_disk(value, target_a_path, target_b_path):
+    """Create two files and write `value` and append if possible."""
+    with open(target_a_path, 'a') as a_file:
+        a_file.write(value)
+
+    with open(target_b_path, 'a') as b_file:
+        b_file.write(value)
+
+
+def _merge_and_append_files(base_a_path, base_b_path, target_path):
+    """Merge two files and append if possible to new file."""
+    with open(target_path, 'a') as target_file:
+        for base_path in [base_a_path, base_b_path]:
+            with open(base_path, 'r') as base_file:
+                target_file.write(base_file.read())
+
+
+def _create_list_on_disk(value, length, target_path=None):
     """Create a numpy array on disk filled with value of `size`."""
     target_list = [value] * length
     pickle.dump(target_list, open(target_path, 'wb'))
+
+
+def _call_it(target, *args):
+    """Invoke `target` with `args`."""
+    target(*args)
+
+
+def _append_val(path, *val):
+    """Append a `val` to file at `path`."""
+    with open(path, 'a') as target_file:
+        for v in val:
+            target_file.write(str(v))
 
 
 def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
@@ -47,17 +74,33 @@ def _div_by_zero():
     return 1/0
 
 
+def _log_from_another_process(logger_name, log_message):
+    """Write a log message to a given logger.
+
+    Parameters:
+        logger_name (string): The string logger name to which ``log_message``
+            will be logged.
+        log_message (string): The string log message to be logged (at INFO
+            level) to the logger at ``logger_name``.
+
+    Returns:
+        ``None``
+    """
+    logger = logging.getLogger(logger_name)
+    logger.info(log_message)
+
+
 class TaskGraphTests(unittest.TestCase):
     """Tests for the taskgraph."""
 
     def setUp(self):
-        """Overriding setUp function to create temp workspace directory."""
+        """Create temp workspace directory."""
         # this lets us delete the workspace after its done no matter the
         # the rest result
         self.workspace_dir = tempfile.mkdtemp()
 
     def tearDown(self):
-        """Overriding tearDown function to remove temporary directory."""
+        """Remove temporary directory."""
         shutil.rmtree(self.workspace_dir)
 
     def test_version_loaded(self):
@@ -66,7 +109,7 @@ class TaskGraphTests(unittest.TestCase):
             import taskgraph
             # Verifies that there's a version attribute and it has a value.
             self.assertTrue(len(taskgraph.__version__) > 0)
-        except Exception as error:
+        except Exception:
             self.fail('Could not load the taskgraph version as expected.')
 
     def test_version_not_loaded(self):
@@ -83,13 +126,16 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0.1)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -97,11 +143,11 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [value]*list_len)
 
     def test_timeout_task(self):
-        """TaskGraph: Test timeout funcitonality"""
+        """TaskGraph: Test timeout functionality."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        target_path = os.path.join(self.workspace_dir, '1000.dat')
         _ = task_graph.add_task(
-            func=_long_running_function,)
+            func=_long_running_function,
+            args=(5,))
         task_graph.close()
         timedout = not task_graph.join(0.5)
         # this should timeout since function runs for 5 seconds
@@ -115,22 +161,29 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
         result_m_time = os.path.getmtime(target_path)
-
         del task_graph
+
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
+        del task_graph
 
         # taskgraph shouldn't have recomputed the result
         second_result_m_time = os.path.getmtime(target_path)
@@ -148,15 +201,24 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 10
         task_a = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_a, list_len, target_a_path),
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_b, list_len, target_b_path),
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
-            args=(target_a_path, target_b_path, result_path),
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
         sum_task.join()
@@ -186,7 +248,6 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
         task_graph.join()
 
-
     def test_task_chain_single_thread(self):
         """TaskGraph: Test a single threaded task chain."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -199,15 +260,24 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 10
         task_a = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_a, list_len, target_a_path),
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value_b, list_len, target_b_path),
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
-            args=(target_a_path, target_b_path, result_path),
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
         sum_task.join()
@@ -258,9 +328,10 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
-        dependent_task = task_graph.add_task(
+        _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
             target_path_list=[target_path],
             dependent_task_list=[base_task])
         task_graph.close()
@@ -290,7 +361,8 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _ = task_graph.add_task(
                 func=_create_list_on_disk,
-                args=(value, list_len, target_path),
+                args=(value, list_len),
+                kwargs={'target_path': target_path},
                 target_path_list=[target_path])
         task_graph.join()
 
@@ -300,9 +372,12 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
-        t = task_graph.add_task(
+        _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -342,7 +417,7 @@ class TaskGraphTests(unittest.TestCase):
 
         # __call__ is abstract so TypeError since it's not implemented
         with self.assertRaises(TypeError):
-            x = TestAbstract()
+            _ = TestAbstract()
 
         class TestA(EncapsulatedTaskOp):
             def __call__(self, x):
@@ -390,7 +465,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path))
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            })
         task_graph.close()
         task_graph.join()
         task_graph = None
@@ -400,14 +478,17 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         _ = task_graph2.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path))
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            })
+
         task_graph2.close()
         task_graph2.join()
 
         self.assertTrue(
             os.path.exists(target_path),
             "Expected file to exist because taskgraph should have re-run.")
-
 
     def test_repeat_targeted_runs(self):
         """TaskGraph: ensure that repeated runs with targets can join."""
@@ -417,7 +498,10 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         _ = task_graph.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         task_graph.close()
         task_graph.join()
@@ -426,8 +510,250 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         task = task_graph2.add_task(
             func=_create_list_on_disk,
-            args=(value, list_len, target_path),
+            args=(value, list_len),
+            kwargs={
+                'target_path': target_path,
+            },
             target_path_list=[target_path])
         self.assertTrue(task.join(1.0), "join failed after 1 second")
         task_graph2.close()
         task_graph2.join()
+
+    def test_delayed_execution(self):
+        """TaskGraph: test delayed execution."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, delayed_start=True)
+
+        result_list = []
+
+        def append_val(val):
+            result_list.append(val)
+
+        # by setting a higher priority of one task than another, we can
+        # guarantee the order in which the elements are inserted
+        for value in range(10):
+            task_graph.add_task(
+                func=append_val, args=(value,), priority=value)
+        task_graph.close()
+        task_graph.join()
+        self.assertEqual(result_list, list(reversed(range(10))))
+
+    def test_join_delayed_execution_error(self):
+        """TaskGraph: test a join on a task on delayed execution fails."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, delayed_start=True)
+
+        result_list = []
+
+        def append_val(val):
+            result_list.append(val)
+
+        task = task_graph.add_task(func=append_val, args=(1,))
+        with self.assertRaises(RuntimeError) as cm:
+            # can't join a task when taskgraph has delayed start and hasn't
+            # joined yet
+            task.join()
+        message = str(cm.exception)
+        self.assertTrue(
+            'Task joined even though taskgraph has delayed' in message,
+            message)
+
+        task_graph.close()
+        task_graph.join()
+        self.assertEqual(result_list, [1])
+
+    def test_task_equality(self):
+        """TaskGraph: test correctness of == and != for Tasks."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        value = 5
+        list_len = 1000
+        task_a = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+        task_a_same = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+        task_b = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value+1, list_len),
+            kwargs={'target_path': target_path},
+            target_path_list=[target_path])
+
+        self.assertTrue(task_a == task_a)
+        self.assertTrue(task_a == task_a_same)
+        self.assertTrue(task_a != task_b)
+
+    def test_async_logging(self):
+        """TaskGraph: ensure async logging can execute."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, reporting_interval=0.1)
+        _ = task_graph.add_task(
+            func=_long_running_function,
+            args=(1.0,))
+        task_graph.close()
+        task_graph.join()
+        timedout = not task_graph.join(5)
+        # this should not timeout since function runs for 1 second
+        self.assertFalse(timedout, "task timed out")
+
+    def test_scrub(self):
+        """TaskGraph: ensure scrub is not scrubbing base types."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+
+        target_path = os.path.join(self.workspace_dir, 'a.txt')
+        first_task = task_graph.add_task(
+            func=_append_val,
+            args=(target_path, 1, [1], {'x': 1}),
+            task_name='first append')
+
+        second_task = task_graph.add_task(
+            func=_append_val,
+            args=(target_path, 1, [1], {'x': 2}),
+            dependent_task_list=[first_task],
+            task_name='second append')
+
+        _ = task_graph.add_task(
+            func=_append_val,
+            args=(target_path, 1, [2], {'x': 1}),
+            dependent_task_list=[second_task],
+            task_name='third append')
+
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            file_value = target_file.read()
+        self.assertEqual("1[1]{'x': 1}1[1]{'x': 2}1[2]{'x': 1}", file_value)
+
+    def test_target_path_order(self):
+        """TaskGraph: ensure target path order doesn't matter."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_a_path = os.path.join(self.workspace_dir, 'a.txt')
+        target_b_path = os.path.join(self.workspace_dir, 'b.txt')
+
+        task_graph.add_task(
+            func=_create_two_files_on_disk,
+            args=("word", target_a_path, target_b_path),
+            target_path_list=[target_a_path, target_b_path])
+
+        task_graph.add_task(
+            func=_create_two_files_on_disk,
+            args=("word", target_a_path, target_b_path),
+            target_path_list=[target_b_path, target_a_path])
+
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_a_path, 'r') as a_file:
+            a_value = a_file.read()
+
+        with open(target_b_path, 'r') as b_file:
+            b_value = b_file.read()
+
+        self.assertEqual(a_value, "word")
+        self.assertEqual(b_value, "word")
+
+    def test_task_hash_when_ready(self):
+        """TaskGraph: ensure tasks don't record execution info until ready."""
+        task_graph = taskgraph.TaskGraph(
+            self.workspace_dir, 0, delayed_start=True)
+        target_a_path = os.path.join(self.workspace_dir, 'a.txt')
+        target_b_path = os.path.join(self.workspace_dir, 'b.txt')
+
+        create_files_task = task_graph.add_task(
+            func=_create_two_files_on_disk,
+            args=("word", target_a_path, target_b_path),
+            target_path_list=[target_a_path, target_b_path])
+
+        target_merged_path = os.path.join(self.workspace_dir, 'merged.txt')
+        task_graph.add_task(
+            func=_merge_and_append_files,
+            args=(target_a_path, target_b_path, target_merged_path),
+            target_path_list=[target_merged_path],
+            dependent_task_list=[create_files_task])
+
+        task_graph.join()
+
+        # this second task shouldn't execute because it's a copy of the first
+        task_graph.add_task(
+            func=_merge_and_append_files,
+            args=(target_a_path, target_b_path, target_merged_path),
+            target_path_list=[target_merged_path],
+            dependent_task_list=[create_files_task])
+
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_merged_path, 'r') as target_file:
+            target_string = target_file.read()
+
+        self.assertEqual(target_string, "wordword")
+
+    def test_multiprocessed_logging(self):
+        """TaskGraph: ensure tasks can log from multiple processes."""
+        logger_name = 'foo.hello.world'
+        log_message = 'This is coming from another process'
+        logger = logging.getLogger(logger_name)
+        handler = logging.handlers.MemoryHandler(capacity=100)
+        logger.addHandler(handler)
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        task_graph.add_task(_log_from_another_process,
+                            args=(logger_name,
+                                  log_message))
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        # There should be exactly one record in the queue, and it should be
+        # from a different process, but have the message we defined above.
+        self.assertEqual(len(handler.buffer), 1)
+        self.assertTrue(isinstance(handler.buffer[0], logging.LogRecord))
+        self.assertEqual(log_message, handler.buffer[0].message)
+        self.assertNotEqual(handler.buffer[0].processName,
+                            multiprocessing.current_process())
+
+    def test_repeated_function(self):
+        """TaskGraph: ensure no reruns if argument is a function."""
+        global _append_val
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            ignore_path_list=[target_path],
+            task_name='first _call_it')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        # this causes the address to change
+        def _append_val(path, *val):
+            """Append a `val` to file at `path`."""
+            with open(path, 'a') as target_file:
+                for v in val:
+                    target_file.write(str(v))
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            ignore_path_list=[target_path],
+            task_name='second _call_it')
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            result = target_file.read()
+
+        # the second call shouldn't happen
+        self.assertEqual(result, '1')
