@@ -518,6 +518,7 @@ class TaskGraph(object):
                             "TaskGraph closed, joining the worker_pool")
                         self.worker_pool.close()
                         self.worker_pool.join()
+                        self.worker_pool.terminate()
             return not timedout
         except Exception:
             # If there's an exception on a join it means that a task failed
