@@ -4,6 +4,12 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Resolving an issue with duplicate logging being printed to stdout when
+  ``n_workers > 0``.  Logging is now only handled in the process that contains
+  the TaskGraph instance.
+
 0.6.0 (2018-07-24)
 ------------------
 * Added a ``delayed_start`` flag to TaskGraph to allow for delayed execution
