@@ -455,7 +455,7 @@ class TaskGraph(object):
                 break
             with self.taskgraph_lock:
                 active_task_message = '\n'.join(
-                    ['\t%s: executing for %2.f' % (
+                    ['\t%s: executing for %.2fs' % (
                         task_name, time.time() - task_time)
                      for task_name, task_time in self.active_task_list])
 
