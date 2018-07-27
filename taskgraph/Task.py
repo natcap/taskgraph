@@ -212,7 +212,8 @@ class TaskGraph(object):
             self.logging_queue = multiprocessing.Queue()
             self.worker_pool = NonDaemonicPool(
                 n_workers, initializer=_initialize_logging_to_queue,
-                initargs=(self.logging_queue,))
+                initargs=(self.logging_queue,),
+                maxtasksperchild=1)
             self.logging_monitor_thread = threading.Thread(
                 target=self._handle_logs_from_processes,
                 args=(self.logging_queue,))
