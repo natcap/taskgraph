@@ -160,6 +160,9 @@ class TaskGraph(object):
         # log records from the process pool to the parent process.
         self.logging_queue = None
 
+        # keeps track of the tasks currently being processed for logging.
+        self.active_task_list = []
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
@@ -207,7 +210,7 @@ class TaskGraph(object):
             task_executor_thread.start()
             self.task_executor_thread_list.append(task_executor_thread)
 
-        # set up multrpocessing if n_workers > 0
+        # set up multiprocessing if n_workers > 0
         if n_workers > 0:
             self.logging_queue = multiprocessing.Queue()
             self.worker_pool = NonDaemonicPool(
@@ -253,6 +256,8 @@ class TaskGraph(object):
             self.taskgraph_lock.acquire()
             try:
                 task = self.task_ready_priority_queue.get(False)
+                task_name_time_tuple = (task.task_name, time.time())
+                self.active_task_list.append(task_name_time_tuple)
                 # we can release the lock because we got a Task that we can
                 # process
                 self.taskgraph_lock.release()
@@ -267,6 +272,7 @@ class TaskGraph(object):
                     "tasks can be executed now", task)
                 with self.taskgraph_lock:
                     self.completed_tasks.add(task)
+                    self.active_task_list.remove(task_name_time_tuple)
                     for waiting_task in self.task_dependent_map[task]:
                         # remove `task` from the set of tasks that
                         # `waiting_task` was waiting on.
@@ -447,6 +453,12 @@ class TaskGraph(object):
         while True:
             if self.terminated:
                 break
+            with self.taskgraph_lock:
+                active_task_message = '\n'.join(
+                    ['\t%s: executing for %2.f' % (
+                        task_name, time.time() - task_time)
+                     for task_name, task_time in self.active_task_list])
+
             total_tasks = len(self.task_map)
             completed_tasks = len(self.completed_tasks)
             percent_complete = 0.0
@@ -457,8 +469,9 @@ class TaskGraph(object):
             LOGGER.info(
                 "taskgraph execution status: tasks added: %d "
                 "tasks complete: %d (%.1f%%) "
-                "task graph %s", total_tasks, completed_tasks,
-                percent_complete, 'closed' if self.closed else 'open')
+                "task graph %s\n%s", total_tasks, completed_tasks,
+                percent_complete, 'closed' if self.closed else 'open',
+                active_task_message)
             time.sleep(
                 self.reporting_interval - (
                     (time.time() - start_time)) % self.reporting_interval)
