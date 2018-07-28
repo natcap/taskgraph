@@ -9,6 +9,10 @@ Unreleased Changes
 * Resolving an issue with duplicate logging being printed to stdout when
   ``n_workers > 0``.  Logging is now only handled in the process that contains
   the TaskGraph instance.
+* Updated main logging message to indicate which tasks, by task name, are
+  currently active.
+* Attempted to fix an issue where processes in the process pool were not
+  terminating on a Linux system.
 
 0.6.0 (2018-07-24)
 ------------------
