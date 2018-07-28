@@ -172,6 +172,10 @@ class TaskGraph(object):
         # keeps track of the tasks currently being processed for logging.
         self.active_task_list = []
 
+        # keeps track of how many tasks have all their dependencies satisfied
+        # and are waiting for a worker
+        self.task_waiting_count = 0
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
@@ -224,8 +228,7 @@ class TaskGraph(object):
             self.logging_queue = multiprocessing.Queue()
             self.worker_pool = NonDaemonicPool(
                 n_workers, initializer=_initialize_logging_to_queue,
-                initargs=(self.logging_queue,),
-                maxtasksperchild=1)
+                initargs=(self.logging_queue,))
             self.logging_monitor_thread = threading.Thread(
                 target=self._handle_logs_from_processes,
                 args=(self.logging_queue,))
@@ -265,6 +268,7 @@ class TaskGraph(object):
             self.taskgraph_lock.acquire()
             try:
                 task = self.task_ready_priority_queue.get(False)
+                self.task_waiting_count -= 1
                 task_name_time_tuple = (task.task_name, time.time())
                 self.active_task_list.append(task_name_time_tuple)
                 # we can release the lock because we got a Task that we can
@@ -295,6 +299,7 @@ class TaskGraph(object):
                                 "a new task is ready for processing: %s",
                                 waiting_task)
                             self.task_ready_priority_queue.put(waiting_task)
+                            self.task_waiting_count += 1
                             if not self.executor_ready_event.is_set():
                                 # indicate to executors there is work to do
                                 self.executor_ready_event.set()
@@ -425,6 +430,7 @@ class TaskGraph(object):
                         dep_task for dep_task in new_task.dependent_task_list
                         if dep_task not in self.completed_tasks]
                     if not outstanding_dependent_task_list:
+                        self.task_waiting_count += 1
                         self.task_ready_priority_queue.put(new_task)
                         if not self.executor_ready_event.is_set():
                             # indicate to executors there is work to do
@@ -478,9 +484,10 @@ class TaskGraph(object):
             LOGGER.info(
                 "taskgraph execution status: tasks added: %d "
                 "tasks complete: %d (%.1f%%) "
+                "tasks waiting for a free worker: %d"
                 "task graph %s\n%s", total_tasks, completed_tasks,
-                percent_complete, 'closed' if self.closed else 'open',
-                active_task_message)
+                self.task_waiting_count, percent_complete,
+                'closed' if self.closed else 'open', active_task_message)
             time.sleep(
                 self.reporting_interval - (
                     (time.time() - start_time)) % self.reporting_interval)

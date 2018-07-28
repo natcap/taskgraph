@@ -10,7 +10,8 @@ Unreleased Changes
   ``n_workers > 0``.  Logging is now only handled in the process that contains
   the TaskGraph instance.
 * Updated main logging message to indicate which tasks, by task name, are
-  currently active.
+  currently active and how many tasks are ready to execute but can't because
+  there is not an open worker.
 * Attempted to fix an issue where processes in the process pool were not
   terminating on a Linux system.
 
