@@ -426,24 +426,33 @@ class TaskGraph(object):
                 LOGGER.debug(
                     "multithreaded: %s sending to new task queue.", task_name)
                 with self.taskgraph_lock:
-                    outstanding_dependent_task_list = [
-                        dep_task for dep_task in new_task.dependent_task_list
-                        if dep_task not in self.completed_tasks]
-                    if not outstanding_dependent_task_list:
-                        self.task_waiting_count += 1
-                        self.task_ready_priority_queue.put(new_task)
-                        if not self.executor_ready_event.is_set():
-                            # indicate to executors there is work to do
-                            self.executor_ready_event.set()
+                    if new_task.is_precalculated():
+                        LOGGER.debug(
+                            "multiprocess: %s is precalculated, "
+                            "skipping call", task_name)
+                        self.completed_tasks.add(new_task)
                     else:
-                        # there are unresolved tasks that the waiting process
-                        # scheduler has not been notified of. Record
-                        # dependencies.
-                        for dep_task in outstanding_dependent_task_list:
-                            # record tasks that are dependent on dep_task
-                            self.task_dependent_map[dep_task].add(new_task)
-                            # record tasks that new_task depends on
-                            self.dependent_task_map[new_task].add(dep_task)
+                        outstanding_dependent_task_list = [
+                            dep_task for dep_task in
+                            new_task.dependent_task_list
+                            if dep_task not in self.completed_tasks]
+                        if not outstanding_dependent_task_list:
+                            self.task_waiting_count += 1
+                            self.task_ready_priority_queue.put(new_task)
+                            if not self.executor_ready_event.is_set():
+                                # indicate to executors there is work to do
+                                self.executor_ready_event.set()
+                        else:
+                            # there are unresolved tasks that the waiting
+                            # process scheduler has not been notified of.
+                            # Record dependencies.
+                            for dep_task in outstanding_dependent_task_list:
+                                # record tasks that are dependent on dep_task
+                                self.task_dependent_map[dep_task].add(
+                                    new_task)
+                                # record tasks that new_task depends on
+                                self.dependent_task_map[new_task].add(
+                                    dep_task)
 
             return new_task
 
@@ -482,11 +491,11 @@ class TaskGraph(object):
                     float(completed_tasks) / total_tasks)
 
             LOGGER.info(
-                "taskgraph execution status: tasks added: %d "
-                "tasks complete: %d (%.1f%%) "
-                "tasks waiting for a free worker: %d"
-                "task graph %s\n%s", total_tasks, completed_tasks,
-                self.task_waiting_count, percent_complete,
+                "\n\ttaskgraph execution status: tasks added: %d \n"
+                "\ttasks complete: %d (%.1f%%) \n"
+                "\ttasks waiting for a free worker: %d\n"
+                "\ttask graph %s\n%s", total_tasks, completed_tasks,
+                percent_complete, self.task_waiting_count,
                 'closed' if self.closed else 'open', active_task_message)
             time.sleep(
                 self.reporting_interval - (
