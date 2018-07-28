@@ -266,8 +266,8 @@ class TaskGraph(object):
             # this lock synchronizes changes between the queue and
             # executor_ready_event
             self.taskgraph_lock.acquire()
-            try:
-                task = self.task_ready_priority_queue.get(False)
+            if self.task_waiting_count > 0:
+                task = self.task_ready_priority_queue.get()
                 self.task_waiting_count -= 1
                 task_name_time_tuple = (task.task_name, time.time())
                 self.active_task_list.append(task_name_time_tuple)
@@ -275,7 +275,15 @@ class TaskGraph(object):
                 # process
                 self.taskgraph_lock.release()
                 if not task.is_precalculated():
-                    task._call()
+                    try:
+                        task._call()
+                    except Exception:
+                        # An error occurred on a call, terminate the taskgraph
+                        LOGGER.exception(
+                            'A taskgraph _task_executor failed on Task '
+                            '%s. Terminating taskgraph.', task)
+                        self._terminate()
+                        raise
                 else:
                     LOGGER.debug(
                         "executing task: %s is precalculated", task)
@@ -305,8 +313,8 @@ class TaskGraph(object):
                                 self.executor_ready_event.set()
                     del self.task_dependent_map[task]
                 LOGGER.debug("tasks %s done processing", task)
-            except queue.Empty:
-                # the get failed, this could be because the taskgraph is
+            else:
+                # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
                 if self.closed:
                     self.taskgraph_lock.release()
@@ -320,13 +328,6 @@ class TaskGraph(object):
                     # could have been added while the lock was acquired
                     self.executor_ready_event.clear()
                     self.taskgraph_lock.release()
-            except Exception:
-                # An error occurred on a call, terminate the taskgraph
-                LOGGER.exception(
-                    'A taskgraph _task_executor failed on Task '
-                    '%s. Terminating taskgraph.', task)
-                self._terminate()
-                raise
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
