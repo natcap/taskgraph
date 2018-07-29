@@ -308,9 +308,8 @@ class TaskGraph(object):
                                 waiting_task)
                             self.task_ready_priority_queue.put(waiting_task)
                             self.task_waiting_count += 1
-                            if not self.executor_ready_event.is_set():
-                                # indicate to executors there is work to do
-                                self.executor_ready_event.set()
+                            # indicate to executors there is work to do
+                            self.executor_ready_event.set()
                     del self.task_dependent_map[task]
                 LOGGER.debug("tasks %s done processing", task)
             else:
@@ -438,11 +437,9 @@ class TaskGraph(object):
                             new_task.dependent_task_list
                             if dep_task not in self.completed_tasks]
                         if not outstanding_dependent_task_list:
-                            self.task_waiting_count += 1
                             self.task_ready_priority_queue.put(new_task)
-                            if not self.executor_ready_event.is_set():
-                                # indicate to executors there is work to do
-                                self.executor_ready_event.set()
+                            self.task_waiting_count += 1
+                            self.executor_ready_event.set()
                         else:
                             # there are unresolved tasks that the waiting
                             # process scheduler has not been notified of.
@@ -479,6 +476,8 @@ class TaskGraph(object):
             if self.terminated:
                 break
             with self.taskgraph_lock:
+                active_task_count = len(self.active_task_list)
+                queue_length = self.task_ready_priority_queue.qsize()
                 active_task_message = '\n'.join(
                     ['\t%s: executing for %.2fs' % (
                         task_name, time.time() - task_time)
@@ -494,10 +493,13 @@ class TaskGraph(object):
             LOGGER.info(
                 "\n\ttaskgraph execution status: tasks added: %d \n"
                 "\ttasks complete: %d (%.1f%%) \n"
-                "\ttasks waiting for a free worker: %d\n"
-                "\ttask graph %s\n%s", total_tasks, completed_tasks,
-                percent_complete, self.task_waiting_count,
-                'closed' if self.closed else 'open', active_task_message)
+                "\ttasks waiting for a free worker: %d (qsize: %d)\n"
+                "\ttasks executing (%d): graph is %s\n%s", total_tasks,
+                completed_tasks, percent_complete, self.task_waiting_count,
+                queue_length, active_task_count,
+                'closed' if self.closed else 'open',
+                active_task_message)
+
             time.sleep(
                 self.reporting_interval - (
                     (time.time() - start_time)) % self.reporting_interval)
