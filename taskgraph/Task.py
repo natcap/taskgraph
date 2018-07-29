@@ -315,11 +315,11 @@ class TaskGraph(object):
             else:
                 # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
-                if self.closed:
+                if self.closed and not self.task_dependent_map:
                     self.taskgraph_lock.release()
                     # the task graph is signaling executors to stop,
-                    # since the executor encountered an empty queue and the
-                    # ready to stop flag is set, the executor can terminate.
+                    # since the self.task_dependent_map is empty the executor
+                    # can terminate.
                     break
                 else:
                     # task graph is still locked, so it's safe to clear
