@@ -290,7 +290,7 @@ class TaskGraph(object):
 
                 LOGGER.debug(
                     "task %s is complete, checking to see if any dependent "
-                    "tasks can be executed now", task)
+                    "tasks can be executed now", task.task_name)
                 with self.taskgraph_lock:
                     self.completed_tasks.add(task)
                     self.active_task_list.remove(task_name_time_tuple)
