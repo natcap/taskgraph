@@ -45,7 +45,7 @@ except ImportError:
     HAS_PSUTIL = False
 
 LOGGER = logging.getLogger(__name__)
-
+_MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
 
 # We want our processing pool to be nondeamonic so that workers could use
 # multiprocessing if desired (deamonic processes cannot start new processes)
@@ -254,6 +254,7 @@ class TaskGraph(object):
         if self.logging_queue:
             # Close down the logging monitor thread.
             self.logging_queue.put(None)
+            self.logging_monitor_thread.join(_MAX_TIMEOUT)
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -305,7 +306,7 @@ class TaskGraph(object):
                             # work queue
                             LOGGER.debug(
                                 "a new task is ready for processing: %s",
-                                waiting_task)
+                                waiting_task.task_name)
                             self.task_ready_priority_queue.put(waiting_task)
                             self.task_waiting_count += 1
                             # indicate to executors there is work to do
@@ -437,6 +438,9 @@ class TaskGraph(object):
                             new_task.dependent_task_list
                             if dep_task not in self.completed_tasks]
                         if not outstanding_dependent_task_list:
+                            LOGGER.debug(
+                                "task %s has all dependent tasks pre-"
+                                "satisfied, sending to ready queue.")
                             self.task_ready_priority_queue.put(new_task)
                             self.task_waiting_count += 1
                             self.executor_ready_event.set()
@@ -594,6 +598,7 @@ class TaskGraph(object):
         if self.n_workers > 0:
             self.worker_pool.terminate()
             self.logging_queue.put(None)  # close down the log monitor thread
+            self.logging_monitor_thread.join(_MAX_TIMEOUT)
         for task in self.task_map.values():
             task._terminate()
         self.terminated = True
