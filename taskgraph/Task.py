@@ -305,7 +305,8 @@ class TaskGraph(object):
                             # if we removed the last task we can put it to the
                             # work queue
                             LOGGER.debug(
-                                "a new task is ready for processing: %s",
+                                "Task %s is ready for processing, sending to "
+                                "task_ready_priority_queue",
                                 waiting_task.task_name)
                             self.task_ready_priority_queue.put(waiting_task)
                             self.task_waiting_count += 1
@@ -440,7 +441,9 @@ class TaskGraph(object):
                         if not outstanding_dependent_task_list:
                             LOGGER.debug(
                                 "task %s has all dependent tasks pre-"
-                                "satisfied, sending to ready queue.")
+                                "satisfied, sending to "
+                                "task_ready_priority_queue.",
+                                new_task.task_name)
                             self.task_ready_priority_queue.put(new_task)
                             self.task_waiting_count += 1
                             self.executor_ready_event.set()
