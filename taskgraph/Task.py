@@ -440,14 +440,21 @@ class TaskGraph(object):
                             new_task.dependent_task_list
                             if dep_task not in self.completed_tasks]
                         if not outstanding_dependent_task_list:
-                            LOGGER.debug(
-                                "task %s has all dependent tasks pre-"
-                                "satisfied, sending to "
-                                "task_ready_priority_queue.",
-                                new_task.task_name)
-                            self.task_ready_priority_queue.put(new_task)
-                            self.task_waiting_count += 1
-                            self.executor_ready_event.set()
+                            if new_task.is_precalculated():
+                                LOGGER.debug(
+                                    "multiprocess: %s is precalculated, "
+                                    "and dependent tasks are satisified, "
+                                    "skipping call", task_name)
+                                self.completed_tasks.add(new_task)
+                            else:
+                                LOGGER.debug(
+                                    "task %s has all dependent tasks pre-"
+                                    "satisfied, sending to "
+                                    "task_ready_priority_queue.",
+                                    new_task.task_name)
+                                self.task_ready_priority_queue.put(new_task)
+                                self.task_waiting_count += 1
+                                self.executor_ready_event.set()
                         else:
                             # there are unresolved tasks that the waiting
                             # process scheduler has not been notified of.
