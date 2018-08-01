@@ -429,43 +429,37 @@ class TaskGraph(object):
                 LOGGER.debug(
                     "multithreaded: %s sending to new task queue.", task_name)
                 with self.taskgraph_lock:
-                    if new_task.is_precalculated():
-                        LOGGER.debug(
-                            "multiprocess: %s is precalculated, "
-                            "skipping call", task_name)
-                        self.completed_tasks.add(new_task)
-                    else:
-                        outstanding_dependent_task_list = [
-                            dep_task for dep_task in
-                            new_task.dependent_task_list
-                            if dep_task not in self.completed_tasks]
-                        if not outstanding_dependent_task_list:
-                            if new_task.is_precalculated():
-                                LOGGER.debug(
-                                    "multiprocess: %s is precalculated, "
-                                    "and dependent tasks are satisified, "
-                                    "skipping call", task_name)
-                                self.completed_tasks.add(new_task)
-                            else:
-                                LOGGER.debug(
-                                    "task %s has all dependent tasks pre-"
-                                    "satisfied, sending to "
-                                    "task_ready_priority_queue.",
-                                    new_task.task_name)
-                                self.task_ready_priority_queue.put(new_task)
-                                self.task_waiting_count += 1
-                                self.executor_ready_event.set()
+                    outstanding_dependent_task_list = [
+                        dep_task for dep_task in
+                        new_task.dependent_task_list
+                        if dep_task not in self.completed_tasks]
+                    if not outstanding_dependent_task_list:
+                        if new_task.is_precalculated():
+                            LOGGER.debug(
+                                "multiprocess: %s is precalculated, "
+                                "and dependent tasks are satisified, "
+                                "skipping call", task_name)
+                            self.completed_tasks.add(new_task)
                         else:
-                            # there are unresolved tasks that the waiting
-                            # process scheduler has not been notified of.
-                            # Record dependencies.
-                            for dep_task in outstanding_dependent_task_list:
-                                # record tasks that are dependent on dep_task
-                                self.task_dependent_map[dep_task].add(
-                                    new_task)
-                                # record tasks that new_task depends on
-                                self.dependent_task_map[new_task].add(
-                                    dep_task)
+                            LOGGER.debug(
+                                "task %s has all dependent tasks pre-"
+                                "satisfied, sending to "
+                                "task_ready_priority_queue.",
+                                new_task.task_name)
+                            self.task_ready_priority_queue.put(new_task)
+                            self.task_waiting_count += 1
+                            self.executor_ready_event.set()
+                    else:
+                        # there are unresolved tasks that the waiting
+                        # process scheduler has not been notified of.
+                        # Record dependencies.
+                        for dep_task in outstanding_dependent_task_list:
+                            # record tasks that are dependent on dep_task
+                            self.task_dependent_map[dep_task].add(
+                                new_task)
+                            # record tasks that new_task depends on
+                            self.dependent_task_map[new_task].add(
+                                dep_task)
 
             return new_task
 
