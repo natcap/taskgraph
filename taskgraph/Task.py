@@ -422,7 +422,7 @@ class TaskGraph(object):
                 else:
                     LOGGER.debug(
                         "single thread: %s is precalculated, "
-                        "skipping call\n(detailed info):", task_name,
+                        "skipping call\n(detailed info): %s", task_name,
                         new_task)
             else:
                 # determine if task is ready or is dependent on other tasks
