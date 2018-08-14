@@ -4,6 +4,21 @@
 TaskGraph Release History
 =========================
 
+0.6.1 (2018-08-14)
+------------------
+* Resolving an issue with duplicate logging being printed to stdout when
+  ``n_workers > 0``.  Logging is now only handled in the process that contains
+  the TaskGraph instance.
+* Updated main logging message to indicate which tasks, by task name, are
+  currently active and how many tasks are ready to execute but can't because
+  there is not an open worker.
+* Attempted to fix an issue where processes in the process pool were not
+  terminating on a Linux system by aggressively joining all threads and
+  processes when possible.
+* Fixed an issue that would cause tasks that had been previously calculated to
+  prematurely trigger children tasks even if the parent tasks of the current
+  task needed to be reexecuted.
+
 0.6.0 (2018-07-24)
 ------------------
 * Added a ``delayed_start`` flag to TaskGraph to allow for delayed execution
@@ -33,7 +48,7 @@ TaskGraph Release History
   argument and ``add_task`` crashed on infinite recursion. Type checking of
   arguments has been simplified and now iteration only occurs on the Python
   ``set``, ``dict``, ``list``, and ``tuple`` types.
-* Fixed an issue where the ``TaskGraph`` was not ``join``ing the worker
+* Fixed an issue where the ``TaskGraph`` was not ``join``\ing the worker
   process pool on a closed/join TaskGraph, or when the ``TaskGraph`` object
   was being deconstructed. This would occasionally cause a race condition
   where the TaskGraph may still have a cache ``.json`` file open. Discovered

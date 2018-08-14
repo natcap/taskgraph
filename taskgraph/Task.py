@@ -45,7 +45,7 @@ except ImportError:
     HAS_PSUTIL = False
 
 LOGGER = logging.getLogger(__name__)
-
+_MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
 
 # We want our processing pool to be nondeamonic so that workers could use
 # multiprocessing if desired (deamonic processes cannot start new processes)
@@ -84,6 +84,15 @@ def _initialize_logging_to_queue(logging_queue):
 
     """
     root_logger = logging.getLogger()
+
+    # By the time this function is called, ``root_logger`` has a copy of all of
+    # the logging handlers registered to it within the parent process, which
+    # leads to duplicate logging in some cases.  By removing all of the
+    # handlers here, we ensure that log messages can only be passed back to the
+    # parent process by the ``logging_queue``, where they will be handled.
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
     root_logger.setLevel(logging.NOTSET)
     handler = queuehandler.QueueHandler(logging_queue)
     root_logger.addHandler(handler)
@@ -160,6 +169,13 @@ class TaskGraph(object):
         # log records from the process pool to the parent process.
         self.logging_queue = None
 
+        # keeps track of the tasks currently being processed for logging.
+        self.active_task_list = []
+
+        # keeps track of how many tasks have all their dependencies satisfied
+        # and are waiting for a worker
+        self.task_waiting_count = 0
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
@@ -207,7 +223,7 @@ class TaskGraph(object):
             task_executor_thread.start()
             self.task_executor_thread_list.append(task_executor_thread)
 
-        # set up multrpocessing if n_workers > 0
+        # set up multiprocessing if n_workers > 0
         if n_workers > 0:
             self.logging_queue = multiprocessing.Queue()
             self.worker_pool = NonDaemonicPool(
@@ -238,6 +254,7 @@ class TaskGraph(object):
         if self.logging_queue:
             # Close down the logging monitor thread.
             self.logging_queue.put(None)
+            self.logging_monitor_thread.join(_MAX_TIMEOUT)
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -250,22 +267,34 @@ class TaskGraph(object):
             # this lock synchronizes changes between the queue and
             # executor_ready_event
             self.taskgraph_lock.acquire()
-            try:
-                task = self.task_ready_priority_queue.get(False)
+            if self.task_waiting_count > 0:
+                task = self.task_ready_priority_queue.get()
+                self.task_waiting_count -= 1
+                task_name_time_tuple = (task.task_name, time.time())
+                self.active_task_list.append(task_name_time_tuple)
                 # we can release the lock because we got a Task that we can
                 # process
                 self.taskgraph_lock.release()
                 if not task.is_precalculated():
-                    task._call()
+                    try:
+                        task._call()
+                    except Exception:
+                        # An error occurred on a call, terminate the taskgraph
+                        LOGGER.exception(
+                            'A taskgraph _task_executor failed on Task '
+                            '%s. Terminating taskgraph.', task)
+                        self._terminate()
+                        raise
                 else:
                     LOGGER.debug(
                         "executing task: %s is precalculated", task)
 
                 LOGGER.debug(
                     "task %s is complete, checking to see if any dependent "
-                    "tasks can be executed now", task)
+                    "tasks can be executed now", task.task_name)
                 with self.taskgraph_lock:
                     self.completed_tasks.add(task)
+                    self.active_task_list.remove(task_name_time_tuple)
                     for waiting_task in self.task_dependent_map[task]:
                         # remove `task` from the set of tasks that
                         # `waiting_task` was waiting on.
@@ -276,22 +305,23 @@ class TaskGraph(object):
                             # if we removed the last task we can put it to the
                             # work queue
                             LOGGER.debug(
-                                "a new task is ready for processing: %s",
-                                waiting_task)
+                                "Task %s is ready for processing, sending to "
+                                "task_ready_priority_queue",
+                                waiting_task.task_name)
                             self.task_ready_priority_queue.put(waiting_task)
-                            if not self.executor_ready_event.is_set():
-                                # indicate to executors there is work to do
-                                self.executor_ready_event.set()
+                            self.task_waiting_count += 1
+                            # indicate to executors there is work to do
+                            self.executor_ready_event.set()
                     del self.task_dependent_map[task]
                 LOGGER.debug("tasks %s done processing", task)
-            except queue.Empty:
-                # the get failed, this could be because the taskgraph is
+            else:
+                # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
-                if self.closed:
+                if self.closed and not self.task_dependent_map:
                     self.taskgraph_lock.release()
                     # the task graph is signaling executors to stop,
-                    # since the executor encountered an empty queue and the
-                    # ready to stop flag is set, the executor can terminate.
+                    # since the self.task_dependent_map is empty the executor
+                    # can terminate.
                     break
                 else:
                     # task graph is still locked, so it's safe to clear
@@ -299,13 +329,6 @@ class TaskGraph(object):
                     # could have been added while the lock was acquired
                     self.executor_ready_event.clear()
                     self.taskgraph_lock.release()
-            except Exception:
-                # An error occurred on a call, terminate the taskgraph
-                LOGGER.exception(
-                    'A taskgraph _task_executor failed on Task '
-                    '%s. Terminating taskgraph.', task)
-                self._terminate()
-                raise
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -399,29 +422,44 @@ class TaskGraph(object):
                 else:
                     LOGGER.debug(
                         "single thread: %s is precalculated, "
-                        "skipping call", task_name)
+                        "skipping call\n(detailed info): %s", task_name,
+                        new_task)
             else:
                 # determine if task is ready or is dependent on other tasks
                 LOGGER.debug(
                     "multithreaded: %s sending to new task queue.", task_name)
                 with self.taskgraph_lock:
                     outstanding_dependent_task_list = [
-                        dep_task for dep_task in new_task.dependent_task_list
+                        dep_task for dep_task in
+                        new_task.dependent_task_list
                         if dep_task not in self.completed_tasks]
                     if not outstanding_dependent_task_list:
-                        self.task_ready_priority_queue.put(new_task)
-                        if not self.executor_ready_event.is_set():
-                            # indicate to executors there is work to do
+                        if new_task.is_precalculated():
+                            LOGGER.debug(
+                                "multiprocess: %s is precalculated, "
+                                "and dependent tasks are satisified, "
+                                "skipping call", task_name)
+                            self.completed_tasks.add(new_task)
+                        else:
+                            LOGGER.debug(
+                                "task %s has all dependent tasks pre-"
+                                "satisfied, sending to "
+                                "task_ready_priority_queue.",
+                                new_task.task_name)
+                            self.task_ready_priority_queue.put(new_task)
+                            self.task_waiting_count += 1
                             self.executor_ready_event.set()
                     else:
-                        # there are unresolved tasks that the waiting process
-                        # scheduler has not been notified of. Record
-                        # dependencies.
+                        # there are unresolved tasks that the waiting
+                        # process scheduler has not been notified of.
+                        # Record dependencies.
                         for dep_task in outstanding_dependent_task_list:
                             # record tasks that are dependent on dep_task
-                            self.task_dependent_map[dep_task].add(new_task)
+                            self.task_dependent_map[dep_task].add(
+                                new_task)
                             # record tasks that new_task depends on
-                            self.dependent_task_map[new_task].add(dep_task)
+                            self.dependent_task_map[new_task].add(
+                                dep_task)
 
             return new_task
 
@@ -446,6 +484,14 @@ class TaskGraph(object):
         while True:
             if self.terminated:
                 break
+            with self.taskgraph_lock:
+                active_task_count = len(self.active_task_list)
+                queue_length = self.task_ready_priority_queue.qsize()
+                active_task_message = '\n'.join(
+                    ['\t%s: executing for %.2fs' % (
+                        task_name, time.time() - task_time)
+                     for task_name, task_time in self.active_task_list])
+
             total_tasks = len(self.task_map)
             completed_tasks = len(self.completed_tasks)
             percent_complete = 0.0
@@ -454,10 +500,15 @@ class TaskGraph(object):
                     float(completed_tasks) / total_tasks)
 
             LOGGER.info(
-                "taskgraph execution status: tasks added: %d "
-                "tasks complete: %d (%.1f%%) "
-                "task graph %s", total_tasks, completed_tasks,
-                percent_complete, 'closed' if self.closed else 'open')
+                "\n\ttaskgraph execution status: tasks added: %d \n"
+                "\ttasks complete: %d (%.1f%%) \n"
+                "\ttasks waiting for a free worker: %d (qsize: %d)\n"
+                "\ttasks executing (%d): graph is %s\n%s", total_tasks,
+                completed_tasks, percent_complete, self.task_waiting_count,
+                queue_length, active_task_count,
+                'closed' if self.closed else 'open',
+                active_task_message)
+
             time.sleep(
                 self.reporting_interval - (
                     (time.time() - start_time)) % self.reporting_interval)
@@ -518,6 +569,7 @@ class TaskGraph(object):
                             "TaskGraph closed, joining the worker_pool")
                         self.worker_pool.close()
                         self.worker_pool.join()
+                        self.worker_pool.terminate()
             return not timedout
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -551,6 +603,7 @@ class TaskGraph(object):
         if self.n_workers > 0:
             self.worker_pool.terminate()
             self.logging_queue.put(None)  # close down the log monitor thread
+            self.logging_monitor_thread.join(_MAX_TIMEOUT)
         for task in self.task_map.values():
             task._terminate()
         self.terminated = True
