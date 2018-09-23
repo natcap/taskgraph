@@ -241,7 +241,7 @@ class TaskGraph(object):
                     try:
                         child.nice(PROCESS_LOW_PRIORITY)
                     except psutil.NoSuchProcess:
-                        LOGGER.warn(
+                        LOGGER.warning(
                             "NoSuchProcess exception encountered when trying "
                             "to nice %s. This might be a bug in `psutil` so "
                             "it should be okay to ignore.")
@@ -405,7 +405,7 @@ class TaskGraph(object):
             # it may be this task was already created in an earlier call,
             # use that object in its place
             if new_task in self.task_map:
-                LOGGER.warn(
+                LOGGER.warning(
                     "A duplicate task was submitted: %s original: %s",
                     new_task, self.task_map[new_task])
                 return self.task_map[new_task]
@@ -555,7 +555,7 @@ class TaskGraph(object):
                                 "task_executor_thread joined (%s)",
                                 task_executor_thread)
                         except RuntimeError:
-                            LOGGER.warn(
+                            LOGGER.warning(
                                 "task_executor_thread already complete (%s)",
                                 task_executor_thread)
                     # run through any leftover tasks that are still running
@@ -702,7 +702,7 @@ class Task(object):
             source_code = ''
 
         if not hasattr(self.func, '__name__'):
-            LOGGER.warn(
+            LOGGER.warning(
                 "function does not have a __name__ which means it will not "
                 "be considered when calculating a successive input has "
                 "been changed with another function without __name__.")
@@ -715,7 +715,7 @@ class Task(object):
                 _ = pickle.dumps(scrubbed_value)
                 args_clean.append(scrubbed_value)
             except TypeError:
-                LOGGER.warn(
+                LOGGER.warning(
                     "could not pickle argument at index %d (%s). "
                     "Skipping argument which means it will not be considered "
                     "when calculating whether inputs have been changed "
@@ -730,7 +730,7 @@ class Task(object):
                 _ = pickle.dumps(scrubbed_value)
                 kwargs_clean[key] = scrubbed_value
             except TypeError:
-                LOGGER.warn(
+                LOGGER.warning(
                     "could not pickle kw argument %s (%s). "
                     "Skipping argument which means it will not be considered "
                     "when calculating whether inputs have been changed "
@@ -962,7 +962,7 @@ class Task(object):
                         "desired: (%s) target: (%s)" % (
                             size, target_size))
             if mismatched_target_file_list:
-                LOGGER.warn(
+                LOGGER.warning(
                     "not precalculated (%s), Task Cache file exists, "
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
