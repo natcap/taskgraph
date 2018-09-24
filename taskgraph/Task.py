@@ -1037,30 +1037,31 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             ignored by the input parameters.
 
     """
-    try:
-        if isinstance(base_value, basestring):
-            try:
-                if base_value not in ignore_list and (
-                        not os.path.isdir(base_value) or
-                        not ignore_directories):
-                    yield (base_value, os.path.getmtime(base_value),
-                           os.path.getsize(base_value))
-            except OSError:
-                pass
-        elif isinstance(base_value, dict):
-            for key in sorted(base_value.keys()):
-                value = base_value[key]
-                for stat in _get_file_stats(
-                        value, ignore_list, ignore_directories):
-                    yield stat
-        elif isinstance(base_value, (list, set, tuple)):
-            for value in base_value:
-                for stat in _get_file_stats(
-                        value, ignore_list, ignore_directories):
-                    yield stat
-    except ValueError:
-        LOGGER.warning(
-            'Ignoring ValueError caused by base_value: %s' % base_value)
+    if isinstance(base_value, basestring):
+        try:
+            if base_value not in ignore_list and (
+                    not os.path.isdir(base_value) or
+                    not ignore_directories):
+                yield (base_value, os.path.getmtime(base_value),
+                       os.path.getsize(base_value))
+        except (OSError, ValueError):
+            # I ran across a ValueError when one of the os.path functions
+            # interpeted the value as a path that was too long.
+            # OSErrors could happen if there's coincidentally a directory we
+            # can't read or it's not a file or something else out of our
+            # control
+            LOGGER.exception('base value: %s', base_value)
+    elif isinstance(base_value, dict):
+        for key in sorted(base_value.keys()):
+            value = base_value[key]
+            for stat in _get_file_stats(
+                    value, ignore_list, ignore_directories):
+                yield stat
+    elif isinstance(base_value, (list, set, tuple)):
+        for value in base_value:
+            for stat in _get_file_stats(
+                    value, ignore_list, ignore_directories):
+                yield stat
 
 
 def _scrub_functions(base_value):

@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Fixed an issue where very long strings might be interpreted as paths and
+  Windows crashes because the path is too long.
+
 0.6.1 (2018-08-14)
 ------------------
 * Resolving an issue with duplicate logging being printed to stdout when

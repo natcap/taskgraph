@@ -757,3 +757,14 @@ class TaskGraphTests(unittest.TestCase):
 
         # the second call shouldn't happen
         self.assertEqual(result, '1')
+
+    def test_very_long_string(self):
+        """TaskGraph: ensure that long strings don't case an OSError."""
+        from taskgraph.Task import _get_file_stats
+        # this is a list with two super long strings to try to trick some
+        # os function into thinking it's a path.
+        base_value = [
+            'c:' + r'\\\\\\\\x\\\\\\\\'*2**10 + 'foo',
+            'wfeji3223j8923j9' * 2**10]
+        self.assertEqual(
+            list(_get_file_stats(base_value, [], True)), [])
