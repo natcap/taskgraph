@@ -1050,7 +1050,8 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             # OSErrors could happen if there's coincidentally a directory we
             # can't read or it's not a file or something else out of our
             # control
-            pass
+            LOGGER.exception(
+                "base_value couldn't be analyzed somehow '%s'", base_value)
     elif isinstance(base_value, dict):
         for key in sorted(base_value.keys()):
             value = base_value[key]
