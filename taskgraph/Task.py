@@ -1041,16 +1041,16 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         try:
             if base_value not in ignore_list and (
                     not os.path.isdir(base_value) or
-                    not ignore_directories):
+                    not ignore_directories) and os.path.exists(base_value):
                 yield (base_value, os.path.getmtime(base_value),
                        os.path.getsize(base_value))
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
-            # interpeted the value as a path that was too long.
+            # interpreted the value as a path that was too long.
             # OSErrors could happen if there's coincidentally a directory we
             # can't read or it's not a file or something else out of our
             # control
-            LOGGER.exception('base value: %s', base_value)
+            pass
     elif isinstance(base_value, dict):
         for key in sorted(base_value.keys()):
             value = base_value[key]
