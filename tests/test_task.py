@@ -319,6 +319,18 @@ class TaskGraphTests(unittest.TestCase):
         # we shouldn't have a file in there that's the token
         self.assertEqual(len(file_results), 0)
 
+    def test_n_retries(self):
+        """TaskGraph: Test a task will attempt to retry after exception."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        result_file_path = os.path.join(self.workspace_dir, 'result.txt')
+
+        fail_task = task_graph.add_task(
+            func=Fail(5, result_file_path),
+            task_name='fail 5 times', n_retries=5)
+        fail_task.join()
+        task_graph.close()
+        self.assertTrue(os.path.exists(result_file_path))
+
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
@@ -333,7 +345,8 @@ class TaskGraphTests(unittest.TestCase):
             args=(value, list_len),
             kwargs={'target_path': target_path},
             target_path_list=[target_path],
-            dependent_task_list=[base_task])
+            dependent_task_list=[base_task],
+            task_name='create list on disk')
         task_graph.close()
         with self.assertRaises(RuntimeError):
             task_graph.join()
@@ -768,3 +781,17 @@ class TaskGraphTests(unittest.TestCase):
             'wfeji3223j8923j9' * 2**10]
         self.assertEqual(
             list(_get_file_stats(base_value, [], True)), [])
+
+
+class Fail(object):
+    def __init__(self, n_tries, result_path):
+        self.n_tries = n_tries
+        self.result_path = result_path
+
+    def __call__(self):
+        self.n_tries -= 1
+        if self.n_tries > 0:
+            raise ValueError("Fail %d more times", self.n_tries)
+        with open(self.result_path, 'w') as result_file:
+            result_file.write("finished!")
+
