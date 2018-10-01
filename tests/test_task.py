@@ -604,7 +604,7 @@ class TaskGraphTests(unittest.TestCase):
     def test_async_logging(self):
         """TaskGraph: ensure async logging can execute."""
         task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, reporting_interval=0.1)
+            self.workspace_dir, 0, reporting_interval=0.5)
         _ = task_graph.add_task(
             func=_long_running_function,
             args=(1.0,))

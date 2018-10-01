@@ -245,13 +245,19 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        self.close()
-        self.join()
+        if not self.closed:
+            self.close()
+            self.join(_MAX_TIMEOUT)
 
         if self.logging_queue:
             # Close down the logging monitor thread.
             self.logging_queue.put(None)
             self._logging_monitor_thread.join(_MAX_TIMEOUT)
+
+        for executor_thread in self._task_executor_thread_list:
+            executor_thread.join(_MAX_TIMEOUT)
+        if self.worker_pool:
+            self.worker_pool.join(_MAX_TIMEOUT)
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -265,7 +271,7 @@ class TaskGraph(object):
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
                     threading.currentThread())
-                return
+                break
             # this lock synchronizes changes between the queue and
             # executor_ready_event
             self.taskgraph_lock.acquire()
@@ -277,31 +283,27 @@ class TaskGraph(object):
                 # we can release the lock because we got a Task that we can
                 # process
                 self.taskgraph_lock.release()
-                if not task.is_precalculated():
-                    try:
-                        task._call()
-                    except Exception:
-                        # An error occurred on a call, terminate the taskgraph
-                        if task.n_retries == 0:
-                            LOGGER.exception(
-                                'A taskgraph _task_executor failed on Task '
-                                '%s. Terminating taskgraph.', task.task_name)
-                            self._terminate()
-                            raise
-                        else:
-                            LOGGER.warn(
-                                'A taskgraph _task_executor failed on Task '
-                                '%s attempting no more than %d retries.',
-                                task, task.n_retries)
-                            task.n_retries -= 1
-                            task.self.task_done_exececuting_event.set()
-                            self.active_task_list.remove(task_name_time_tuple)
-                            self.task_ready_priority_queue.put(task)
-                            self.executor_ready_event.set()
-                            continue
-                else:
-                    LOGGER.debug(
-                        "executing task: %s is precalculated", task)
+                try:
+                    task._call()
+                    task.task_done_exececuting_event.set()
+                except Exception:
+                    # An error occurred on a call, terminate the taskgraph
+                    if task.n_retries == 0:
+                        LOGGER.exception(
+                            'A taskgraph _task_executor failed on Task '
+                            '%s. Terminating taskgraph.', task.task_name)
+                        self._terminate()
+                        raise
+                    else:
+                        LOGGER.warn(
+                            'A taskgraph _task_executor failed on Task '
+                            '%s attempting no more than %d retries.',
+                            task, task.n_retries)
+                        task.n_retries -= 1
+                        self.active_task_list.remove(task_name_time_tuple)
+                        self.task_ready_priority_queue.put(task)
+                        self.executor_ready_event.set()
+                        continue
 
                 LOGGER.debug(
                     "task %s is complete, checking to see if any dependent "
@@ -327,7 +329,7 @@ class TaskGraph(object):
                             # indicate to executors there is work to do
                             self.executor_ready_event.set()
                     del self.task_dependent_map[task]
-                LOGGER.debug("tasks %s done processing", task)
+                LOGGER.debug("task %s done processing", task.task_name)
             else:
                 # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
@@ -445,16 +447,7 @@ class TaskGraph(object):
                 self.task_map[new_task] = new_task
                 if self.n_workers < 0:
                     # call directly if single threaded
-                    if not new_task.is_precalculated():
-                        LOGGER.debug(
-                            "single thread: %s is not precalculated, "
-                            "invoking call", task_name)
-                        new_task._call()
-                    else:
-                        LOGGER.debug(
-                            "single thread: %s is precalculated, "
-                            "skipping call\n(detailed info): %s", task_name,
-                            new_task)
+                    new_task._call()
                 else:
                     # determine if task is ready or is dependent on other
                     # tasks
@@ -564,7 +557,7 @@ class TaskGraph(object):
         # start delayed execution if necessary:
         self.taskgraph_started_event.set()
         # if single threaded, nothing to join.
-        if self.n_workers < 0:
+        if self.n_workers < 0 or self.terminated:
             return True
         try:
             LOGGER.debug("attempting to join threads")
@@ -576,38 +569,27 @@ class TaskGraph(object):
                 # if the last task timed out then we want to timeout for all
                 # of the task graph
                 if timedout:
-                    break
-            if not timedout and self.closed:
-                # join all the workers and the worker pool
-                if self.n_workers >= 0:
-                    # there's only something to clean up if there's a worker
                     LOGGER.info(
-                        "TaskGraph closed, joining all the task executor "
-                        "threads.")
-                    for task_executor_thread in (
-                            self._task_executor_thread_list):
-                        try:
-                            task_executor_thread.join(timeout)
-                            LOGGER.debug(
-                                "task_executor_thread joined (%s)",
-                                task_executor_thread)
-                        except RuntimeError:
-                            LOGGER.warning(
-                                "task_executor_thread already complete (%s)",
-                                task_executor_thread)
-                    # run through any leftover tasks that are still running
-                    # after executor is dead
-                    for task in self.task_map.values():
-                        timedout = not task.join(timeout)
-                        if timedout:
-                            break
-                    if self.worker_pool and not timedout:
-                        LOGGER.info(
-                            "TaskGraph closed, joining the worker_pool")
-                        self.worker_pool.close()
-                        self.worker_pool.join()
-                        self.worker_pool.terminate()
-            return not timedout
+                        "task %s timed out in graph join", task.task_name)
+                    return False
+            if self.closed and self.n_workers >= 0:
+                with self.taskgraph_lock:
+                    # we only have a task_manager if running in threaded mode
+                    # wake executors so they can process that the taskgraph is
+                    # closed and can shut down if there is no pending work
+                    self.executor_ready_event.set()
+                    self.terminated = True
+                if self.logging_queue:
+                    self.logging_queue.put(None)
+                    self._logging_monitor_thread.join(timeout)
+                if self._reporting_interval is not None:
+                    LOGGER.debug("joining _monitor_thread.")
+                    self._monitor_thread.join(timeout)
+                for executor_task in self._task_executor_thread_list:
+                    executor_task.join(timeout)
+            LOGGER.debug('taskgraph terminated')
+
+            return True
         except Exception:
             # If there's an exception on a join it means that a task failed
             # to execute correctly. Print a helpful message then terminate the
@@ -625,30 +607,24 @@ class TaskGraph(object):
         LOGGER.debug("Closing taskgraph.")
         if self.closed:
             return
-        LOGGER.debug("acquiring taskgraph lock")
         with self.taskgraph_lock:
             self.closed = True
-            if self.n_workers >= 0:
-                # we only have a task_manager if running in threaded mode
-                # wake executors so they can process that the taskgraph is
-                # closed and can shut down if there is no pending work
-                self.executor_ready_event.set()
         LOGGER.debug("taskgraph closed")
 
     def _terminate(self):
         """Immediately terminate remaining task graph computation."""
-        LOGGER.debug("acquiring the taskgraph_lock")
+        LOGGER.debug(
+            "Invoking terminate. already terminated? %s", self.terminated)
+        if self.terminated:
+            return
         with self.taskgraph_lock:
-            LOGGER.debug(
-                "invoking terminate already terminated %s", self.terminated)
-            if self.terminated:
-                return
             self.terminated = True
             self.close()
             if self.n_workers > 0:
                 LOGGER.debug("shutting down workers")
                 self.worker_pool.terminate()
-                self.logging_queue.put(None)  # close down the log monitor thread
+                # close down the log monitor thread
+                self.logging_queue.put(None)
                 self._logging_monitor_thread.join(_MAX_TIMEOUT)
             if self._reporting_interval is not None:
                 LOGGER.debug("joining _monitor_thread.")
@@ -731,6 +707,9 @@ class Task(object):
         self.n_retries = n_retries
         self.exception_object = None
 
+        # This flag is used to avoid repeated calls to "is_precalculated"
+        self._precalculated = False
+
         # invert the priority since sorting goes smallest to largest and we
         # want more positive priority values to be executed first.
         self.priority = -priority
@@ -744,7 +723,7 @@ class Task(object):
         # task has been completed. the reexecution hash may change depending
         # on whether input parameter files have changed. This lock ensures
         # there's not a race condition when calculating the reexecution hash
-        self._deep_hash_lock = threading.Lock()
+        self._deep_hash_lock = threading.RLock()
 
         # Calculate a hash based only on argument inputs.
         try:
@@ -897,59 +876,52 @@ class Task(object):
                 function call is complete.
 
         """
-        if self._worker_pool is not None:
-            result = self._worker_pool.apply_async(
-                func=self._func, args=self._args, kwds=self._kwargs)
-            # the following blocks and raises an exception if result raised
-            # an exception
-            result.get()
-        else:
-            self._func(*self._args, **self._kwargs)
+        LOGGER.debug("_call for task %s", self.task_name)
+        with self._deep_hash_lock:
+            LOGGER.debug("_call check if precalculated %s", self.task_name)
+            if self.is_precalculated():
+                return
+            LOGGER.debug("not precalculated %s", self.task_name)
+            if self._worker_pool is not None:
+                result = self._worker_pool.apply_async(
+                    func=self._func, args=self._args, kwds=self._kwargs)
+                # the following blocks and raises an exception if result raised
+                # an exception
+                LOGGER.debug("apply_async for task %s", self.task_name)
+                result.get()
+            else:
+                LOGGER.debug("direct _func for task %s", self.task_name)
+                self._func(*self._args, **self._kwargs)
 
-        # check that the target paths exist and record stats for later
-        result_target_path_stats = list(
-            _get_file_stats(self._target_path_list, [], False))
-        result_target_path_set = set(
-            [x[0] for x in result_target_path_stats])
-        target_path_set = set(self._target_path_list)
-        if target_path_set != result_target_path_set:
-            raise RuntimeError(
-                "In Task: %s\nMissing expected target path results.\n"
-                "Expected: %s\nObserved: %s\n" % (
-                    self.task_name, self._target_path_list,
-                    result_target_path_set))
+            # check that the target paths exist and record stats for later
+            result_target_path_stats = list(
+                _get_file_stats(self._target_path_list, [], False))
+            result_target_path_set = set(
+                [x[0] for x in result_target_path_stats])
+            target_path_set = set(self._target_path_list)
+            if target_path_set != result_target_path_set:
+                raise RuntimeError(
+                    "In Task: %s\nMissing expected target path results.\n"
+                    "Expected: %s\nObserved: %s\n" % (
+                        self.task_name, self._target_path_list,
+                        result_target_path_set))
 
-        # otherwise record target path stats in a file located at
-        # self._task_cache_path
-        try:
-            os.makedirs(os.path.dirname(self._task_cache_path))
-        except OSError as exception:
-            if exception.errno != errno.EEXIST:
-                raise
-        # this step will only record the run if there is an expected target
-        # file. Otherwise we infer the result of this call is transient
-        # between taskgraph executions and we should expect to run it again.
-        if self._target_path_list:
-            with open(self._task_cache_path, 'wb') as task_cache_file:
-                pickle.dump(result_target_path_stats, task_cache_file)
-        LOGGER.debug("successful run on task %s", self.task_name)
-
-    def is_complete(self):
-        """Test to determine if Task is complete.
-
-        Returns:
-            False if task thread is still running.
-            True if task thread is stopped and the completion token was
-                created correctly.
-
-        Raises:
-            RuntimeError if the task thread is stopped but no completion
-            token
-
-        """
-        return (
-            self.task_done_exececuting_event.isSet() or
-            self.is_precalculated())
+            # otherwise record target path stats in a file located at
+            # self._task_cache_path
+            try:
+                os.makedirs(os.path.dirname(self._task_cache_path))
+            except OSError as exception:
+                if exception.errno != errno.EEXIST:
+                    raise
+            # this step will only record the run if there is an expected target
+            # file. Otherwise we infer the result of this call is transient
+            # between taskgraph executions and we should expect to run it again.
+            if self._target_path_list:
+                with open(self._task_cache_path, 'wb') as task_cache_file:
+                    pickle.dump(result_target_path_stats, task_cache_file)
+            self._precalculated = True
+            self.task_done_exececuting_event.set()
+            LOGGER.debug("successful run on task %s", self.task_name)
 
     def is_precalculated(self):
         """Return true if _call need not be invoked.
@@ -962,6 +934,8 @@ class Task(object):
 
         """
         with self._deep_hash_lock:
+            if self._precalculated:
+                return True
             self._calculate_deep_hash()
         try:
             if not os.path.exists(self._task_cache_path):
@@ -998,6 +972,8 @@ class Task(object):
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
             LOGGER.info("precalculated (%s)" % self.task_name)
+            with self._deep_hash_lock:
+                self._precalculated = True
             return True
         except EOFError:
             return False
@@ -1007,7 +983,7 @@ class Task(object):
         self._taskgraph_started_event.set()
         if self.is_precalculated():
             return True
-        self.task_done_exececuting_event.wait(timeout)
+        return self.task_done_exececuting_event.wait(timeout)
 
 
 class EncapsulatedTaskOp(ABC):
