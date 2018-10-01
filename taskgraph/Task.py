@@ -164,6 +164,9 @@ class TaskGraph(object):
         # this lock is used to synchronize the following objects
         self.taskgraph_lock = threading.RLock()
 
+        # this might hold the threads to execute tasks if n_workers >= 0
+        self._task_executor_thread_list = []
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
@@ -197,7 +200,6 @@ class TaskGraph(object):
             self._monitor_thread.start()
 
         # launch executor threads
-        self._task_executor_thread_list = []
         for thread_id in range(max(1, n_workers)):
             task_executor_thread = threading.Thread(
                 target=self._task_executor,
@@ -292,8 +294,9 @@ class TaskGraph(object):
                     else:
                         LOGGER.warning(
                             'A taskgraph _task_executor failed on Task '
-                            '%s attempting no more than %d retries.',
-                            task, task.n_retries)
+                            '%s attempting no more than %d retries. original '
+                            'exception %s',
+                            task.task_name, task.n_retries, str(e))
                         task.n_retries -= 1
                         self.taskgraph_lock.acquire()
                         self.active_task_list.remove(task_name_time_tuple)
