@@ -160,13 +160,14 @@ class TaskGraph(object):
         # used to record a failing exception for when `join` is called
         self._exception = None
 
+        # Synchronization objects:
+        # this lock is used to synchronize the following objects
+        self.taskgraph_lock = threading.RLock()
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
 
-        # Synchronization objects:
-        # this lock is used to synchronize the following objects
-        self.taskgraph_lock = threading.RLock()
         # tasks that have all their dependencies satisfied go in this queue
         # and can be executed immediately
         self.task_ready_priority_queue = queue.PriorityQueue()
