@@ -241,8 +241,13 @@ class TaskGraph(object):
             self.logging_queue.put(None)
             self._logging_monitor_thread.join(_MAX_TIMEOUT)
 
+        LOGGER.debug(
+            "exector thread list in __del__ %s",
+            self._task_executor_thread_list)
         for executor_thread in self._task_executor_thread_list:
-            executor_thread.join(_MAX_TIMEOUT)
+            LOGGER.debug("joining thread %s", executor_thread)
+            if threading.currentThread() != executor_thread:
+                executor_thread.join(_MAX_TIMEOUT)
         if self.worker_pool:
             self.worker_pool.terminate()
 
@@ -254,6 +259,7 @@ class TaskGraph(object):
             # this event blocks until the task graph has signaled it wants
             # the executors to read the state of the queue or a stop event
             self.executor_ready_event.wait()
+            LOGGER.debug("checking for new tasks to execute")
             if self.terminated:
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
@@ -283,14 +289,17 @@ class TaskGraph(object):
                             '%s. Terminating taskgraph.', task.task_name)
                         self._terminate()
                     else:
-                        LOGGER.warn(
+                        LOGGER.warning(
                             'A taskgraph _task_executor failed on Task '
                             '%s attempting no more than %d retries.',
                             task, task.n_retries)
                         task.n_retries -= 1
+                        self.taskgraph_lock.acquire()
                         self.active_task_list.remove(task_name_time_tuple)
                         self.task_ready_priority_queue.put(task)
+                        self.task_waiting_count += 1
                         self.executor_ready_event.set()
+                        self.taskgraph_lock.release()
                         continue
 
                 LOGGER.debug(
@@ -319,6 +328,7 @@ class TaskGraph(object):
                     del self.task_dependent_map[task]
                 LOGGER.debug("task %s done processing", task.task_name)
             else:
+                LOGGER.debug("no tasks are waiting")
                 # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
                 if self.closed and not self.task_dependent_map:

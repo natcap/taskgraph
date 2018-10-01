@@ -321,7 +321,7 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_n_retries(self):
         """TaskGraph: Test a task will attempt to retry after exception."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         result_file_path = os.path.join(self.workspace_dir, 'result.txt')
 
         fail_task = task_graph.add_task(
@@ -739,15 +739,13 @@ class TaskGraphTests(unittest.TestCase):
             list(_get_file_stats(base_value, [], True)), [])
 
 
-class Fail(object):
-    def __init__(self, n_tries, result_path):
-        self.n_tries = n_tries
-        self.result_path = result_path
-
-    def __call__(self):
-        self.n_tries -= 1
-        if self.n_tries > 0:
-            raise ValueError("Fail %d more times", self.n_tries)
-        with open(self.result_path, 'w') as result_file:
+def Fail(n_tries, result_path):
+    def fail_func():
+        fail_func._n_tries -= 1
+        if fail_func._n_tries > 0:
+            raise ValueError("Fail %d more times", fail_func._n_tries)
+        with open(result_path, 'w') as result_file:
             result_file.write("finished!")
+    fail_func._n_tries = n_tries
 
+    return fail_func
