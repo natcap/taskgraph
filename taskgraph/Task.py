@@ -252,24 +252,27 @@ class TaskGraph(object):
             self._logging_monitor_thread.join(_MAX_TIMEOUT)
 
         self.taskgraph_started_event.set()
-        self.executor_ready_event.set()
-        for executor_thread in self._task_executor_thread_list:
-            try:
-                timedout = not executor_thread.join(_MAX_TIMEOUT)
+        if self.n_workers >= 0:
+            self.executor_ready_event.set()
+            for executor_thread in self._task_executor_thread_list:
+                try:
+                    timedout = not executor_thread.join(_MAX_TIMEOUT)
+                    if timedout:
+                        LOGGER.warning(
+                            'task executor thread timed out %s',
+                            executor_thread)
+                except Exception:
+                    LOGGER.exception(
+                        "Exception when joining %s", executor_thread)
+            if self._reporting_interval is not None:
+                LOGGER.debug("joining _monitor_thread.")
+                timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
                 if timedout:
                     LOGGER.warning(
-                        'task executor thread timed out %s', executor_thread)
-            except Exception:
-                LOGGER.exception("Exception when joining %s", executor_thread)
-        if self._reporting_interval is not None:
-            LOGGER.debug("joining _monitor_thread.")
-            timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
-            if timedout:
-                LOGGER.warning(
-                    '_monitor_thread %s timed out', self._monitor_thread)
-            for task in self.task_map.values():
-                # this is a shortcut to get the tasks to mark as joined
-                task.task_done_executing_event.set()
+                        '_monitor_thread %s timed out', self._monitor_thread)
+                for task in self.task_map.values():
+                    # this is a shortcut to get the tasks to mark as joined
+                    task.task_done_executing_event.set()
         LOGGER.debug('taskgraph terminated')
 
 
