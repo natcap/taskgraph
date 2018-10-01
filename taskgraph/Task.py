@@ -235,24 +235,43 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        if not self.closed:
-            self.close()
-            self.join(_MAX_TIMEOUT)
+        if self.n_workers > 0:
+            LOGGER.debug("shutting down workers")
+            self.worker_pool.terminate()
+            # close down the log monitor thread
+            self.logging_queue.put(None)
+            timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
+            if timedout:
+                LOGGER.warning(
+                    '_logging_monitor_thread %s timed out',
+                    self._logging_monitor_thread)
 
         if self.logging_queue:
             # Close down the logging monitor thread.
             self.logging_queue.put(None)
             self._logging_monitor_thread.join(_MAX_TIMEOUT)
 
-        LOGGER.debug(
-            "exector thread list in __del__ %s",
-            self._task_executor_thread_list)
+        self.taskgraph_started_event.set()
+        self.executor_ready_event.set()
         for executor_thread in self._task_executor_thread_list:
-            LOGGER.debug("joining thread %s", executor_thread)
-            if threading.currentThread() != executor_thread:
-                executor_thread.join(_MAX_TIMEOUT)
-        if self.worker_pool:
-            self.worker_pool.terminate()
+            try:
+                timedout = not executor_thread.join(_MAX_TIMEOUT)
+                if timedout:
+                    LOGGER.warning(
+                        'task executor thread timed out %s', executor_thread)
+            except Exception:
+                LOGGER.exception("Exception when joining %s", executor_thread)
+        if self._reporting_interval is not None:
+            LOGGER.debug("joining _monitor_thread.")
+            timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+            if timedout:
+                LOGGER.warning(
+                    '_monitor_thread %s timed out', self._monitor_thread)
+            for task in self.task_map.values():
+                # this is a shortcut to get the tasks to mark as joined
+                task.task_done_executing_event.set()
+        LOGGER.debug('taskgraph terminated')
+
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -281,7 +300,7 @@ class TaskGraph(object):
                 self.taskgraph_lock.release()
                 try:
                     task._call()
-                    task.task_done_exececuting_event.set()
+                    task.task_done_executing_event.set()
                 except Exception as e:
                     # An error occurred on a call, terminate the taskgraph
                     if task.n_retries == 0:
@@ -404,6 +423,9 @@ class TaskGraph(object):
         """
         with self.taskgraph_lock:
             try:
+                if self.terminated:
+                    raise RuntimeError(
+                        "add_task when Taskgraph is terminated.")
                 if self.closed:
                     raise ValueError(
                         "The task graph is closed and cannot accept more "
@@ -624,20 +646,13 @@ class TaskGraph(object):
             return
         with self.taskgraph_lock:
             self.terminated = True
-            self.close()
-            if self.n_workers > 0:
-                LOGGER.debug("shutting down workers")
-                self.worker_pool.terminate()
-                # close down the log monitor thread
-                self.logging_queue.put(None)
-                self._logging_monitor_thread.join(_MAX_TIMEOUT)
-            if self._reporting_interval is not None:
-                LOGGER.debug("joining _monitor_thread.")
-                self._monitor_thread.join(_MAX_TIMEOUT)
-            for task in self.task_map.values():
-                # this is a shortcut to get the tasks to mark as joined
-                task.task_done_exececuting_event.set()
-            LOGGER.debug('taskgraph terminated')
+
+        if self.worker_pool:
+            self.worker_pool.terminate()
+        for task in self.task_map.values():
+            task.task_done_executing_event.set()
+        self.taskgraph_started_event.set()
+        self.executor_ready_event.set()
 
 
 class Task(object):
@@ -722,7 +737,7 @@ class Task(object):
         # Used to ensure only one attempt at executing and also a mechanism
         # to see when Task is complete. This can be set if a Task finishes
         # a _call and there are no more attempts at reexecution.
-        self.task_done_exececuting_event = threading.Event()
+        self.task_done_executing_event = threading.Event()
 
         # it's possible for multiple threads to attempt to determine if a
         # task has been completed. the reexecution hash may change depending
@@ -925,7 +940,7 @@ class Task(object):
                 with open(self._task_cache_path, 'wb') as task_cache_file:
                     pickle.dump(result_target_path_stats, task_cache_file)
             self._precalculated = True
-            self.task_done_exececuting_event.set()
+            self.task_done_executing_event.set()
             LOGGER.debug("successful run on task %s", self.task_name)
 
     def is_precalculated(self):
@@ -988,7 +1003,7 @@ class Task(object):
         self._taskgraph_started_event.set()
         if self.is_precalculated():
             return True
-        return self.task_done_exececuting_event.wait(timeout)
+        return self.task_done_executing_event.wait(timeout)
 
 
 class EncapsulatedTaskOp(ABC):
