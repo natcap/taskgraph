@@ -532,25 +532,6 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2.close()
         task_graph2.join()
 
-    def test_delayed_execution(self):
-        """TaskGraph: test delayed execution."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
-
-        result_list = []
-
-        def append_val(val):
-            result_list.append(val)
-
-        # by setting a higher priority of one task than another, we can
-        # guarantee the order in which the elements are inserted
-        for value in range(10):
-            task_graph.add_task(
-                func=append_val, args=(value,), priority=value)
-        task_graph.close()
-        task_graph.join()
-        self.assertEqual(result_list, list(reversed(range(10))))
-
     def test_task_equality(self):
         """TaskGraph: test correctness of == and != for Tasks."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -649,8 +630,7 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_task_hash_when_ready(self):
         """TaskGraph: ensure tasks don't record execution info until ready."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_a_path = os.path.join(self.workspace_dir, 'a.txt')
         target_b_path = os.path.join(self.workspace_dir, 'b.txt')
 

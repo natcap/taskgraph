@@ -103,7 +103,7 @@ class TaskGraph(object):
 
     def __init__(
             self, taskgraph_cache_dir_path, n_workers,
-            reporting_interval=None, delayed_start=False):
+            reporting_interval=None):
         """Create a task graph.
 
         Creates an object for building task graphs, executing them,
@@ -118,27 +118,11 @@ class TaskGraph(object):
                 subprocesses.  If set to <0, use only the main thread for any
                 execution and scheduling. In the case of the latter,
                 `add_task` will be a blocking call.
-            delayed_start (bool): if true, taskgraph does not start executing
-                tasks as `add_task` is called. Instead no execution occurs
-                until `join` is invoked. A value of `True` is incompatible
-                with `n_workers` < 0 and will raise a ValueError on
-                construction.
             reporting_interval (scalar): if not None, report status of task
                 graph every `reporting_interval` seconds.
 
-        Raises:
-            ValueError: `delayed_start` is set to `True` but `n_workers` is
-                set < 0 indicating single process/thread mode. `ValueError`
-                makes sense that `TaskGraph` can't delay the start if only
-                the main thread is executing.
-
         """
         self.n_workers = n_workers
-
-        if delayed_start and n_workers < 0:
-            raise ValueError(
-                "`n_workers` cannot be set single process mode while "
-                "`delayed_start` is enabled.")
 
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
         self.taskgraph_started_event = threading.Event()
