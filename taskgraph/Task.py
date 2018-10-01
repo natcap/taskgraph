@@ -173,6 +173,9 @@ class TaskGraph(object):
         # and are waiting for a worker
         self.task_waiting_count = 0
 
+        # used to record a failing exception for when `join` is called
+        self._exception = None
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
@@ -257,7 +260,7 @@ class TaskGraph(object):
         for executor_thread in self._task_executor_thread_list:
             executor_thread.join(_MAX_TIMEOUT)
         if self.worker_pool:
-            self.worker_pool.join(_MAX_TIMEOUT)
+            self.worker_pool.terminate()
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -286,14 +289,15 @@ class TaskGraph(object):
                 try:
                     task._call()
                     task.task_done_exececuting_event.set()
-                except Exception:
+                except Exception as e:
                     # An error occurred on a call, terminate the taskgraph
                     if task.n_retries == 0:
+                        with self.taskgraph_lock:
+                            self._exception = e
                         LOGGER.exception(
                             'A taskgraph _task_executor failed on Task '
                             '%s. Terminating taskgraph.', task.task_name)
                         self._terminate()
-                        raise
                     else:
                         LOGGER.warn(
                             'A taskgraph _task_executor failed on Task '
@@ -588,6 +592,9 @@ class TaskGraph(object):
                 for executor_task in self._task_executor_thread_list:
                     executor_task.join(timeout)
             LOGGER.debug('taskgraph terminated')
+
+            if self._exception:
+                raise self._exception
 
             return True
         except Exception:

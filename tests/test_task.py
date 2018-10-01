@@ -313,7 +313,7 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_div_by_zero, task_name='test_broken_task')
         task_graph.close()
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ZeroDivisionError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
         # we shouldn't have a file in there that's the token
@@ -348,7 +348,7 @@ class TaskGraphTests(unittest.TestCase):
             dependent_task_list=[base_task],
             task_name='create list on disk')
         task_graph.close()
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ZeroDivisionError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
         # we shouldn't have any files in there
@@ -550,30 +550,6 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.close()
         task_graph.join()
         self.assertEqual(result_list, list(reversed(range(10))))
-
-    def test_join_delayed_execution_error(self):
-        """TaskGraph: test a join on a task on delayed execution fails."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
-
-        result_list = []
-
-        def append_val(val):
-            result_list.append(val)
-
-        task = task_graph.add_task(func=append_val, args=(1,))
-        with self.assertRaises(RuntimeError) as cm:
-            # can't join a task when taskgraph has delayed start and hasn't
-            # joined yet
-            task.join()
-        message = str(cm.exception)
-        self.assertTrue(
-            'Task joined even though taskgraph has delayed' in message,
-            message)
-
-        task_graph.close()
-        task_graph.join()
-        self.assertEqual(result_list, [1])
 
     def test_task_equality(self):
         """TaskGraph: test correctness of == and != for Tasks."""
