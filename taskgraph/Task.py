@@ -276,7 +276,6 @@ class TaskGraph(object):
                     task.task_done_executing_event.set()
         LOGGER.debug('taskgraph terminated')
 
-
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
         # this event blocks until the TaskGraph has signaled ready to execute
@@ -285,15 +284,16 @@ class TaskGraph(object):
             # this event blocks until the task graph has signaled it wants
             # the executors to read the state of the queue or a stop event
             self.executor_ready_event.wait()
+            # this lock synchronizes changes between the queue and
+            # executor_ready_event
+            self.taskgraph_lock.acquire()
             LOGGER.debug("checking for new tasks to execute")
             if self.terminated:
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
                     threading.currentThread())
+                self.taskgraph_lock.release()
                 break
-            # this lock synchronizes changes between the queue and
-            # executor_ready_event
-            self.taskgraph_lock.acquire()
             if self.task_waiting_count > 0:
                 task = self.task_ready_priority_queue.get()
                 self.task_waiting_count -= 1
@@ -482,37 +482,36 @@ class TaskGraph(object):
                     LOGGER.debug(
                         "multithreaded: %s sending to new task queue.",
                         task_name)
-                    with self.taskgraph_lock:
-                        outstanding_dependent_task_list = [
-                            dep_task for dep_task in dependent_task_list
-                            if dep_task not in self.completed_tasks]
-                        if not outstanding_dependent_task_list:
-                            if new_task.is_precalculated():
-                                LOGGER.debug(
-                                    "multiprocess: %s is precalculated, "
-                                    "and dependent tasks are satisified, "
-                                    "skipping call", task_name)
-                                self.completed_tasks.add(new_task)
-                            else:
-                                LOGGER.debug(
-                                    "task %s has all dependent tasks pre-"
-                                    "satisfied, sending to "
-                                    "task_ready_priority_queue.",
-                                    new_task.task_name)
-                                self.task_ready_priority_queue.put(new_task)
-                                self.task_waiting_count += 1
-                                self.executor_ready_event.set()
+                    outstanding_dependent_task_list = [
+                        dep_task for dep_task in dependent_task_list
+                        if dep_task not in self.completed_tasks]
+                    if not outstanding_dependent_task_list:
+                        if new_task.is_precalculated():
+                            LOGGER.debug(
+                                "multiprocess: %s is precalculated, "
+                                "and dependent tasks are satisified, "
+                                "skipping call", task_name)
+                            self.completed_tasks.add(new_task)
                         else:
-                            # there are unresolved tasks that the waiting
-                            # process scheduler has not been notified of.
-                            # Record dependencies.
-                            for dep_task in outstanding_dependent_task_list:
-                                # record tasks that are dependent on dep_task
-                                self.task_dependent_map[dep_task].add(
-                                    new_task)
-                                # record tasks that new_task depends on
-                                self.dependent_task_map[new_task].add(
-                                    dep_task)
+                            LOGGER.debug(
+                                "task %s has all dependent tasks pre-"
+                                "satisfied, sending to "
+                                "task_ready_priority_queue.",
+                                new_task.task_name)
+                            self.task_ready_priority_queue.put(new_task)
+                            self.task_waiting_count += 1
+                            self.executor_ready_event.set()
+                    else:
+                        # there are unresolved tasks that the waiting
+                        # process scheduler has not been notified of.
+                        # Record dependencies.
+                        for dep_task in outstanding_dependent_task_list:
+                            # record tasks that are dependent on dep_task
+                            self.task_dependent_map[dep_task].add(
+                                new_task)
+                            # record tasks that new_task depends on
+                            self.dependent_task_map[new_task].add(
+                                dep_task)
                 return new_task
 
             except Exception:
@@ -650,11 +649,12 @@ class TaskGraph(object):
             return
         with self.taskgraph_lock:
             self.terminated = True
+            if self.worker_pool:
+                self.worker_pool.terminate()
 
-        if self.worker_pool:
-            self.worker_pool.terminate()
         for task in self.task_map.values():
             task.task_done_executing_event.set()
+
         self.taskgraph_started_event.set()
         self.executor_ready_event.set()
 
