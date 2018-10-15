@@ -167,6 +167,11 @@ class TaskGraph(object):
         # this might hold the threads to execute tasks if n_workers >= 0
         self._task_executor_thread_list = []
 
+        # executor threads wait on this event that gets set when new tasks are
+        # added to the queue. If the queue is empty an executor will clear
+        # the event to halt other executors
+        self.executor_ready_event = threading.Event()
+
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
             return
@@ -183,10 +188,6 @@ class TaskGraph(object):
         # if this is set to true, executors will terminate when the
         # task_ready_priority_queue is empty
         self.ready_to_stop = False
-        # executor threads wait on this event that gets set when new tasks are
-        # added to the queue. If the queue is empty an executor will clear
-        # the event to halt other executors
-        self.executor_ready_event = threading.Event()
 
         # start concurrent reporting of taskgraph if reporting interval is set
         self._reporting_interval = reporting_interval
