@@ -251,6 +251,13 @@ class TaskGraph(object):
             # Close down the logging monitor thread.
             self.logging_queue.put(None)
             self._logging_monitor_thread.join(_MAX_TIMEOUT)
+            # drain the queue if anything is left
+            while True:
+                try:
+                    x = self.logging_queue.get_nowait()
+                    LOGGER.error("the logging queue had this in it: %s", x)
+                except queue.Empty:
+                    break
 
         self.taskgraph_started_event.set()
         if self.n_workers >= 0:
@@ -274,6 +281,16 @@ class TaskGraph(object):
                 for task in self.task_map.values():
                     # this is a shortcut to get the tasks to mark as joined
                     task.task_done_executing_event.set()
+
+        # drain the task ready queue if there's anything left
+        while True:
+            try:
+                x = self.task_ready_priority_queue.get_nowait()
+                LOGGER.error(
+                    "task_ready_priority_queue not empty contains: %s", x)
+            except queue.Empty:
+                break
+
         LOGGER.debug('taskgraph terminated')
 
     def _task_executor(self):
