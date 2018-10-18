@@ -721,7 +721,8 @@ class Task(object):
         """
         # it is a common error to accidentally pass a non string as to the
         # target path list, this terminates early if so
-        if any([not isinstance(path, str) for path in target_path_list]):
+        if any([not isinstance(path, basestring)
+                for path in target_path_list]):
             raise ValueError(
                 "Values pass to target_path_list are not strings: %s",
                 target_path_list)
