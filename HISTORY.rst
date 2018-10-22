@@ -8,6 +8,10 @@ Unreleased Changes
 ------------------
 * Fixed an issue where very long strings might be interpreted as paths and
   Windows crashes because the path is too long.
+* Fixed a deadlock issue where a Task might raise an unhandled exception as a
+  new task was added to the TaskGraph.
+* Fixed the occasional ``BrokenPipeError`` that could occur when a Task
+  encountered an unhandled exception.
 
 0.6.1 (2018-08-14)
 ------------------

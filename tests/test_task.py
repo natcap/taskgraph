@@ -127,7 +127,9 @@ class TaskGraphTests(unittest.TestCase):
     def test_single_task(self):
         """TaskGraph: Test a single task."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0.1)
-        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        # forcing this one to be unicode since there shouldn't be a problem
+        # with that at all...
+        target_path = u'%s' % os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
@@ -313,33 +315,57 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_div_by_zero, task_name='test_broken_task')
         task_graph.close()
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ZeroDivisionError):
             task_graph.join()
         file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
         # we shouldn't have a file in there that's the token
         self.assertEqual(len(file_results), 0)
 
+    def test_n_retries(self):
+        """TaskGraph: Test a task will attempt to retry after exception."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        result_file_path = os.path.join(self.workspace_dir, 'result.txt')
+
+        fail_task = task_graph.add_task(
+            func=Fail(5, result_file_path),
+            task_name='fail 5 times', n_retries=5)
+        fail_task.join()
+        task_graph.close()
+        self.assertTrue(os.path.exists(result_file_path))
+
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        base_task = task_graph.add_task(
-            func=_div_by_zero, task_name='test_broken_task_chain')
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
 
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
-        _ = task_graph.add_task(
-            func=_create_list_on_disk,
-            args=(value, list_len),
-            kwargs={'target_path': target_path},
-            target_path_list=[target_path],
-            dependent_task_list=[base_task])
+        for task_id in range(1):
+            target_path = os.path.join(
+                self.workspace_dir, '1000_%d.dat' % task_id)
+            normal_task = task_graph.add_task(
+                func=_create_list_on_disk,
+                args=(value, list_len),
+                kwargs={'target_path': target_path},
+                target_path_list=[target_path],
+                task_name='create list on disk %d' % task_id)
+            zero_div_task = task_graph.add_task(
+                func=_div_by_zero,
+                dependent_task_list=[normal_task],
+                task_name='test_broken_task_chain_%d' % task_id)
+            target_path = os.path.join(
+                self.workspace_dir, 'after_zerodiv_1000_%d.dat' % task_id)
+            _ = task_graph.add_task(
+                func=_create_list_on_disk,
+                args=(value, list_len),
+                kwargs={'target_path': target_path},
+                dependent_task_list=[zero_div_task],
+                target_path_list=[target_path],
+                task_name='create list on disk after zero div%d' % task_id)
+
         task_graph.close()
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(ZeroDivisionError):
             task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
-        # we shouldn't have any files in there
-        self.assertEqual(len(file_results), 0)
 
     def test_empty_task(self):
         """TaskGraph: Test an empty task."""
@@ -519,49 +545,6 @@ class TaskGraphTests(unittest.TestCase):
         task_graph2.close()
         task_graph2.join()
 
-    def test_delayed_execution(self):
-        """TaskGraph: test delayed execution."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
-
-        result_list = []
-
-        def append_val(val):
-            result_list.append(val)
-
-        # by setting a higher priority of one task than another, we can
-        # guarantee the order in which the elements are inserted
-        for value in range(10):
-            task_graph.add_task(
-                func=append_val, args=(value,), priority=value)
-        task_graph.close()
-        task_graph.join()
-        self.assertEqual(result_list, list(reversed(range(10))))
-
-    def test_join_delayed_execution_error(self):
-        """TaskGraph: test a join on a task on delayed execution fails."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
-
-        result_list = []
-
-        def append_val(val):
-            result_list.append(val)
-
-        task = task_graph.add_task(func=append_val, args=(1,))
-        with self.assertRaises(RuntimeError) as cm:
-            # can't join a task when taskgraph has delayed start and hasn't
-            # joined yet
-            task.join()
-        message = str(cm.exception)
-        self.assertTrue(
-            'Task joined even though taskgraph has delayed' in message,
-            message)
-
-        task_graph.close()
-        task_graph.join()
-        self.assertEqual(result_list, [1])
-
     def test_task_equality(self):
         """TaskGraph: test correctness of == and != for Tasks."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -591,7 +574,7 @@ class TaskGraphTests(unittest.TestCase):
     def test_async_logging(self):
         """TaskGraph: ensure async logging can execute."""
         task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, reporting_interval=0.1)
+            self.workspace_dir, 0, reporting_interval=0.5)
         _ = task_graph.add_task(
             func=_long_running_function,
             args=(1.0,))
@@ -660,8 +643,7 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_task_hash_when_ready(self):
         """TaskGraph: ensure tasks don't record execution info until ready."""
-        task_graph = taskgraph.TaskGraph(
-            self.workspace_dir, 0, delayed_start=True)
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_a_path = os.path.join(self.workspace_dir, 'a.txt')
         target_b_path = os.path.join(self.workspace_dir, 'b.txt')
 
@@ -768,3 +750,15 @@ class TaskGraphTests(unittest.TestCase):
             'wfeji3223j8923j9' * 2**10]
         self.assertEqual(
             list(_get_file_stats(base_value, [], True)), [])
+
+
+def Fail(n_tries, result_path):
+    def fail_func():
+        fail_func._n_tries -= 1
+        if fail_func._n_tries > 0:
+            raise ValueError("Fail %d more times", fail_func._n_tries)
+        with open(result_path, 'w') as result_file:
+            result_file.write("finished!")
+    fail_func._n_tries = n_tries
+
+    return fail_func
