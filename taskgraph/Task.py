@@ -19,6 +19,11 @@ except ImportError:
     import queue
     # Python 3, in python 2 basestring is superclass of str and unicode.
     basestring = str
+try:
+    from pathlib import Path
+except ImportError:
+    # pathlib only exists in Python3
+    Path = object
 import inspect
 import abc
 
@@ -719,7 +724,7 @@ class Task(object):
                 the task. The process to attempt reexecution involves
                 re-inserting the task on the "work ready" queue which will be
                 processed by the taskgraph scheduler. This means the task may
-                attempt to reexecute immediately, or after some other tasks
+                attempt to reexecute immediately, or after some othre tasks
                 are cleared. If <= 0, the task will fail on the first
                 unhandled exception the Task encounters.
             taskgraph_started_event (Event): can be used to start the main
@@ -728,7 +733,8 @@ class Task(object):
         """
         # it is a common error to accidentally pass a non string as to the
         # target path list, this terminates early if so
-        if any([not isinstance(path, basestring)
+        if any([not (isinstance(path, basestring) or
+                     isinstance(path, Path))
                 for path in target_path_list]):
             raise ValueError(
                 "Values pass to target_path_list are not strings: %s",
