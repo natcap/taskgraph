@@ -436,6 +436,14 @@ class TaskGraph(object):
             has the same signature and has already been added to the
             TaskGraph.
 
+        Raises:
+            ValueError if objects are passed to the dependent task list that
+                are not Tasks.
+            ValueError if `add_task` is invoked after the `TaskGraph` is
+                closed.
+            RuntimeError if `add_task` is invoked after `TaskGraph` has
+                reached a terminate state.
+
         """
         with self.taskgraph_lock:
             try:
