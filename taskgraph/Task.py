@@ -172,22 +172,20 @@ class TaskGraph(object):
         # the event to halt other executors
         self.executor_ready_event = threading.Event()
 
-        # no need to set up schedulers if n_workers is single threaded
-        if n_workers < 0:
-            return
-
         # tasks that have all their dependencies satisfied go in this queue
         # and can be executed immediately
         self.task_ready_priority_queue = queue.PriorityQueue()
+
         # maps a list of tasks that need to be executed to a task
         self.task_dependent_map = collections.defaultdict(set)
         # maps a list of tasks that are dependent to a task
         self.dependent_task_map = collections.defaultdict(set)
         # tasks that complete are added to this set
         self.completed_tasks = set()
-        # if this is set to true, executors will terminate when the
-        # task_ready_priority_queue is empty
-        self.ready_to_stop = False
+
+        # no need to set up schedulers if n_workers is single threaded
+        if n_workers < 0:
+            return
 
         # start concurrent reporting of taskgraph if reporting interval is set
         self._reporting_interval = reporting_interval
