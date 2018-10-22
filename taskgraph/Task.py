@@ -348,7 +348,7 @@ class TaskGraph(object):
                             'A taskgraph _task_executor failed on Task '
                             '%s attempting no more than %d retries. original '
                             'exception %s',
-                            task.task_name, task.n_retries, str(e))
+                            task.task_name, task.n_retries, repr(e))
                         task.n_retries -= 1
                         with self.taskgraph_lock:
                             self.active_task_list.remove(task_name_time_tuple)
