@@ -14,16 +14,14 @@ import threading
 import errno
 try:
     import Queue as queue
+    #In python 2 basestring is superclass of str and unicode.
+    VALID_PATH_TYPES = (basestring,)
 except ImportError:
     # Python3 renamed queue as queue
     import queue
-    # Python 3, in python 2 basestring is superclass of str and unicode.
-    basestring = str
-try:
-    from pathlib import Path
-except ImportError:
+    import pathlib
     # pathlib only exists in Python3
-    Path = object
+    VALID_PATH_TYPES = (str, pathlib.Path)
 import inspect
 import abc
 
@@ -733,8 +731,7 @@ class Task(object):
         """
         # it is a common error to accidentally pass a non string as to the
         # target path list, this terminates early if so
-        if any([not (isinstance(path, basestring) or
-                     isinstance(path, Path))
+        if any([not (isinstance(path, VALID_PATH_TYPES))
                 for path in target_path_list]):
             raise ValueError(
                 "Values pass to target_path_list are not strings: %s",
@@ -1083,7 +1080,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             ignored by the input parameters.
 
     """
-    if isinstance(base_value, basestring):
+    if isinstance(base_value, VALID_PATH_TYPES):
         try:
             if base_value not in ignore_list and (
                     not os.path.isdir(base_value) or
