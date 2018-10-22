@@ -720,7 +720,8 @@ class Task(object):
                 re-inserting the task on the "work ready" queue which will be
                 processed by the taskgraph scheduler. This means the task may
                 attempt to reexecute immediately, or after some other tasks
-                are cleared.
+                are cleared. If <= 0, the task will fail on the first
+                unhandled exception the Task encounters.
             taskgraph_started_event (Event): can be used to start the main
                 TaskGraph if it has not yet started in case a Task is joined.
 
