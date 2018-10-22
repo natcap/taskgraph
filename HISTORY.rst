@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
+0.7.0 (2018-10-22)
 ------------------
 * Fixed an issue where very long strings might be interpreted as paths and
   Windows crashes because the path is too long.
@@ -12,6 +12,10 @@ Unreleased Changes
   new task was added to the TaskGraph.
 * Fixed the occasional ``BrokenPipeError`` that could occur when a Task
   encountered an unhandled exception.
+* Added an ``n_retries`` parameter to ``add_task`` that lets TaskGraph attempt
+  to reexecute a failing Task up to ``n_retries`` times before terminating
+  the TaskGraph.
+* Removed the ``delayed_start`` option.
 
 0.6.1 (2018-08-14)
 ------------------
