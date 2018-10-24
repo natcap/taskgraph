@@ -34,7 +34,7 @@ from . import queuehandler
 # Taken from https://stackoverflow.com/a/38668373/299084
 ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
 
-TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
+_TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
 
 try:
     import psutil
@@ -191,7 +191,7 @@ class TaskGraph(object):
 
         self.task_database_lock = multiprocessing.Lock()
         self.task_database_path = os.path.join(
-            self.taskgraph_cache_dir_path, TASKGRAPH_DATABASE_FILENAME)
+            self.taskgraph_cache_dir_path, _TASKGRAPH_DATABASE_FILENAME)
         sql_create_projects_table = (
             """
             CREATE TABLE IF NOT EXISTS taskgraph_data (
@@ -994,6 +994,7 @@ class Task(object):
                                (?, ?)""", (
                                 self.task_reexecution_hash, pickle.dumps(
                                     result_target_path_stats)))
+                        conn.commit()
             self._precalculated = True
             self.task_done_executing_event.set()
             LOGGER.debug("successful run on task %s", self.task_name)

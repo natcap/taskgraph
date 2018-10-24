@@ -9,7 +9,6 @@ import pickle
 import logging
 import logging.handlers
 import multiprocessing
-
 import mock
 
 import taskgraph
@@ -309,6 +308,15 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
         task_graph.join()
 
+        # we should have N completed values in the database
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 5)
+
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
@@ -370,14 +378,14 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task()
         task_graph.close()
         task_graph.join()
-        # we should have a file in there that's the token
+        # we shouldn't have anything in the database
         database_path = os.path.join(
             self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
         with sqlite3.connect(database_path) as conn:
             cursor = conn.cursor()
             cursor.executescript("SELECT * FROM taskgraph_data")
             result = cursor.fetchall()
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result), 0)
 
     def test_closed_graph(self):
         """TaskGraph: Test adding to an closed task graph fails."""
