@@ -187,7 +187,8 @@ class TaskGraph(object):
         # tasks that complete are added to this set
         self.completed_tasks = set()
 
-        self.database_path = os.path.join(
+        self.task_database_lock = multiprocessing.Lock()
+        self.task_database_path = os.path.join(
             self.taskgraph_cache_dir_path, 'taskgraph_data.db')
         sql_create_projects_table = (
             """
@@ -200,7 +201,7 @@ class TaskGraph(object):
             ON taskgraph_data (task_hash);
             """)
 
-        with sqlite3.connect(self.database_path) as conn:
+        with sqlite3.connect(self.task_database_path) as conn:
             cursor = conn.cursor()
             cursor.executescript(sql_create_projects_table)
 
@@ -503,7 +504,8 @@ class TaskGraph(object):
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
                     self.worker_pool, self.taskgraph_cache_dir_path, priority,
-                    n_retries, self.taskgraph_started_event)
+                    n_retries, self.taskgraph_started_event,
+                    self.task_database_path, self.task_database_lock)
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
@@ -707,7 +709,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
             worker_pool, cache_dir, priority, n_retries,
-            taskgraph_started_event):
+            taskgraph_started_event, task_database_path, task_database_lock):
         """Make a Task.
 
         Parameters:
@@ -745,6 +747,10 @@ class Task(object):
                 unhandled exception the Task encounters.
             taskgraph_started_event (Event): can be used to start the main
                 TaskGraph if it has not yet started in case a Task is joined.
+            task_database_path (str): path to an SQLITE database of the form
+                ...
+            task_database_lock (multiprocessing.Lock): used to avoid parallel
+                writes to the database.
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -772,6 +778,8 @@ class Task(object):
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
         self.n_retries = n_retries
+        self.task_database_path = task_database_path
+        self.task_database_lock = task_database_lock
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
@@ -986,6 +994,23 @@ class Task(object):
             if self._target_path_list:
                 with open(self._task_cache_path, 'wb') as task_cache_file:
                     pickle.dump(result_target_path_stats, task_cache_file)
+
+                """
+                CREATE TABLE IF NOT EXISTS taskgraph_data (
+                    task_hash TEXT NOT NULL,
+                    data_blob BLOB NOT NULL,
+                    PRIMARY KEY (task_hash)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
+                ON taskgraph_data (task_hash);
+                """
+                with sqlite3.connect(self.task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """INSERT OR REPLACE INTO taskgraph_data VALUES
+                           (?, ?)""", (
+                            self.task_reexecution_hash, pickle.dumps(
+                                result_target_path_stats)))
             self._precalculated = True
             self.task_done_executing_event.set()
             LOGGER.debug("successful run on task %s", self.task_name)
