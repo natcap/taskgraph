@@ -1033,6 +1033,32 @@ class Task(object):
                 return True
             self._calculate_deep_hash()
         try:
+            """
+                CREATE TABLE IF NOT EXISTS taskgraph_data (
+                    task_hash TEXT NOT NULL,
+                    data_blob BLOB NOT NULL,
+                    PRIMARY KEY (task_hash)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
+                ON taskgraph_data (task_hash);
+                """
+            with sqlite3.connect(self.task_database_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT data_blob from taskgraph_data
+                    WHERE (task_hash == ?)
+                    """, (self.task_reexecution_hash,))
+                database_result = cursor.fetchone()
+            if database_result is None:
+                LOGGER.info(
+                    "not precalculated, Task Cache file does not "
+                    "exist (%s)", self.task_name)
+                LOGGER.debug("is_precalculated full task info: %s", self)
+                return False
+            if database_result:
+                result_target_path_stats = pickle.loads(database_result[0])
+            """
             if not os.path.exists(self._task_cache_path):
                 LOGGER.info(
                     "not precalculated, Task Cache file does not "
@@ -1041,6 +1067,7 @@ class Task(object):
                 return False
             with open(self._task_cache_path, 'rb') as task_cache_file:
                 result_target_path_stats = pickle.load(task_cache_file)
+            """
             mismatched_target_file_list = []
             for path, modified_time, size in result_target_path_stats:
                 if not os.path.exists(path):
