@@ -34,6 +34,8 @@ from . import queuehandler
 # Taken from https://stackoverflow.com/a/38668373/299084
 ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
 
+_TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
+
 try:
     import psutil
     HAS_PSUTIL = True
@@ -1004,13 +1006,14 @@ class Task(object):
                 CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
                 ON taskgraph_data (task_hash);
                 """
-                with sqlite3.connect(self.task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO taskgraph_data VALUES
-                           (?, ?)""", (
-                            self.task_reexecution_hash, pickle.dumps(
-                                result_target_path_stats)))
+                with self.task_database_lock:
+                    with sqlite3.connect(self.task_database_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """INSERT OR REPLACE INTO taskgraph_data VALUES
+                               (?, ?)""", (
+                                self.task_reexecution_hash, pickle.dumps(
+                                    result_target_path_stats)))
             self._precalculated = True
             self.task_done_executing_event.set()
             LOGGER.debug("successful run on task %s", self.task_name)
