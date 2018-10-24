@@ -1,5 +1,5 @@
 """Tests for taskgraph."""
-import glob
+import sqlite3
 import os
 import tempfile
 import shutil
@@ -364,16 +364,20 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
 
-    @unittest.skip('file count')
     def test_empty_task(self):
         """TaskGraph: Test an empty task."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task()
         task_graph.close()
         task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
         # we should have a file in there that's the token
-        self.assertEqual(len(file_results), 1)
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 1)
 
     def test_closed_graph(self):
         """TaskGraph: Test adding to an closed task graph fails."""

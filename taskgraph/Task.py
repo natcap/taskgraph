@@ -34,7 +34,7 @@ from . import queuehandler
 # Taken from https://stackoverflow.com/a/38668373/299084
 ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
 
-_TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
+TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
 
 try:
     import psutil
@@ -191,7 +191,7 @@ class TaskGraph(object):
 
         self.task_database_lock = multiprocessing.Lock()
         self.task_database_path = os.path.join(
-            self.taskgraph_cache_dir_path, 'taskgraph_data.db')
+            self.taskgraph_cache_dir_path, TASKGRAPH_DATABASE_FILENAME)
         sql_create_projects_table = (
             """
             CREATE TABLE IF NOT EXISTS taskgraph_data (
@@ -774,7 +774,6 @@ class Task(object):
         self._args = args
         self._kwargs = kwargs
         self._cache_dir = cache_dir
-        self._task_cache_path = None
         self._ignore_path_list = ignore_path_list
         self._ignore_directories = ignore_directories
         self._worker_pool = worker_pool
@@ -876,8 +875,8 @@ class Task(object):
         """Calculate a hash that accounts for file size objects at runtime.
 
         It only makes sense to call this function if all dependent tasks have
-        executed. After this call, self._task_cache_path has a valid path
-        defined and self.reexecution_info['file_stat_list'] is defined.
+        executed. After this call, self.task_id_hash is valid
+        and self.reexecution_info['file_stat_list'] is defined.
 
         Returns:
             None
@@ -901,15 +900,6 @@ class Task(object):
             self.task_id_hash, self.reexecution_info['file_stat_list'])
         self.task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
-
-        # make a directory and target based on hashname
-        # take the first 3 characters of the hash and make a subdirectory
-        # for each so we don't blowup the filesystem with a bunch of files in
-        # one directory
-        self._task_cache_path = os.path.join(
-            self._cache_dir, *(
-                [x for x in self.task_reexecution_hash[0:3]] +
-                [self.task_reexecution_hash + '.json']))
 
     def __eq__(self, other):
         """Two tasks are equal if their hashes are equal."""
@@ -983,20 +973,10 @@ class Task(object):
                         self.task_name, self._target_path_list,
                         result_target_path_set))
 
-            # otherwise record target path stats in a file located at
-            # self._task_cache_path
-            try:
-                os.makedirs(os.path.dirname(self._task_cache_path))
-            except OSError as exception:
-                if exception.errno != errno.EEXIST:
-                    raise
             # this step will only record the run if there is an expected target
             # file. Otherwise we infer the result of this call is transient
             # between taskgraph executions and we should expect to run it again.
             if self._target_path_list:
-                with open(self._task_cache_path, 'wb') as task_cache_file:
-                    pickle.dump(result_target_path_stats, task_cache_file)
-
                 """
                 CREATE TABLE IF NOT EXISTS taskgraph_data (
                     task_hash TEXT NOT NULL,
@@ -1058,16 +1038,6 @@ class Task(object):
                 return False
             if database_result:
                 result_target_path_stats = pickle.loads(database_result[0])
-            """
-            if not os.path.exists(self._task_cache_path):
-                LOGGER.info(
-                    "not precalculated, Task Cache file does not "
-                    "exist (%s)", self.task_name)
-                LOGGER.debug("is_precalculated full task info: %s", self)
-                return False
-            with open(self._task_cache_path, 'rb') as task_cache_file:
-                result_target_path_stats = pickle.load(task_cache_file)
-            """
             mismatched_target_file_list = []
             for path, modified_time, size in result_target_path_stats:
                 if not os.path.exists(path):
