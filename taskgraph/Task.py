@@ -12,6 +12,7 @@ import multiprocessing
 import multiprocessing.pool
 import threading
 import errno
+import sqlite3
 try:
     import Queue as queue
     #In python 2 basestring is superclass of str and unicode.
@@ -185,6 +186,23 @@ class TaskGraph(object):
         self.dependent_task_map = collections.defaultdict(set)
         # tasks that complete are added to this set
         self.completed_tasks = set()
+
+        self.database_path = os.path.join(
+            self.taskgraph_cache_dir_path, 'taskgraph_data.db')
+        sql_create_projects_table = (
+            """
+            CREATE TABLE IF NOT EXISTS taskgraph_data (
+                task_hash TEXT NOT NULL,
+                data_blob BLOB NOT NULL,
+                PRIMARY KEY (task_hash)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
+            ON taskgraph_data (task_hash);
+            """)
+
+        with sqlite3.connect(self.database_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript(sql_create_projects_table)
 
         # no need to set up schedulers if n_workers is single threaded
         if n_workers < 0:
