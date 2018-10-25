@@ -330,38 +330,36 @@ class TaskGraph(object):
             self.executor_ready_event.wait()
             # this lock synchronizes changes between the queue and
             # executor_ready_event
-            with self.taskgraph_lock:
-                LOGGER.debug("checking for new tasks to execute")
-                if self.terminated:
-                    LOGGER.debug(
-                        "taskgraph is terminated, ending %s",
-                        threading.currentThread())
-                    break
-                task = None
-                if self.task_waiting_count > 0:
-                    task = self.task_ready_priority_queue.get()
+            LOGGER.debug("checking for new tasks to execute")
+            if self.terminated:
+                LOGGER.debug(
+                    "taskgraph is terminated, ending %s",
+                    threading.currentThread())
+                break
+            task = None
+            try:
+                task = self.task_ready_priority_queue.get_nowait()
+                with self.taskgraph_lock:
                     self.task_waiting_count -= 1
                     task_name_time_tuple = (task.task_name, time.time())
                     self.active_task_list.append(task_name_time_tuple)
-                    # we can release the lock because we got a Task that we can
-                    # process
+            except queue.Empty:
+                # no tasks are waiting could be because the taskgraph is
+                # closed or because the queue is just empty.
+                if self.closed and not self.task_dependent_map:
+                    # the task graph is signaling executors to stop,
+                    # since the self.task_dependent_map is empty the
+                    # executor can terminate.
+                    LOGGER.debug(
+                        "no tasks are and taskgraph closed, normally "
+                        "terminating executor %s." %
+                        threading.currentThread())
+                    break
                 else:
-                    # no tasks are waiting could be because the taskgraph is
-                    # closed or because the queue is just empty.
-                    if self.closed and not self.task_dependent_map:
-                        # the task graph is signaling executors to stop,
-                        # since the self.task_dependent_map is empty the
-                        # executor can terminate.
-                        LOGGER.debug(
-                            "no tasks are and taskgraph closed, normally "
-                            "terminating executor %s." %
-                            threading.currentThread())
-                        break
-                    else:
-                        # task graph is still locked, so it's safe to clear
-                        # the executor event since there is no chance a Task
-                        # could have been added while the lock was acquired
-                        self.executor_ready_event.clear()
+                    # task graph is still locked, so it's safe to clear
+                    # the executor event since there is no chance a Task
+                    # could have been added while the lock was acquired
+                    self.executor_ready_event.clear()
             if task:
                 try:
                     task._call()
