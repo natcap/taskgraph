@@ -346,13 +346,16 @@ class TaskGraph(object):
                     # we can release the lock because we got a Task that we can
                     # process
                 else:
-                    LOGGER.debug("no tasks are waiting")
                     # no tasks are waiting could be because the taskgraph is
                     # closed or because the queue is just empty.
                     if self.closed and not self.task_dependent_map:
                         # the task graph is signaling executors to stop,
                         # since the self.task_dependent_map is empty the
                         # executor can terminate.
+                        LOGGER.debug(
+                            "no tasks are and taskgraph closed, normally "
+                            "terminating executor %s." %
+                            threading.currentThread())
                         break
                     else:
                         # task graph is still locked, so it's safe to clear
