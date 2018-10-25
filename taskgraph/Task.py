@@ -973,19 +973,11 @@ class Task(object):
                         self.task_name, self._target_path_list,
                         result_target_path_set))
 
-            # this step will only record the run if there is an expected target
-            # file. Otherwise we infer the result of this call is transient
-            # between taskgraph executions and we should expect to run it again.
+            # this step will only record the run if there is an expected
+            # target file. Otherwise we infer the result of this call is
+            # transient between taskgraph executions and we should expect to
+            # run it again.
             if self._target_path_list:
-                """
-                CREATE TABLE IF NOT EXISTS taskgraph_data (
-                    task_hash TEXT NOT NULL,
-                    data_blob BLOB NOT NULL,
-                    PRIMARY KEY (task_hash)
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
-                ON taskgraph_data (task_hash);
-                """
                 with self.task_database_lock:
                     with sqlite3.connect(self.task_database_path) as conn:
                         cursor = conn.cursor()
@@ -1014,26 +1006,17 @@ class Task(object):
                 return True
             self._calculate_deep_hash()
         try:
-            """
-                CREATE TABLE IF NOT EXISTS taskgraph_data (
-                    task_hash TEXT NOT NULL,
-                    data_blob BLOB NOT NULL,
-                    PRIMARY KEY (task_hash)
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
-                ON taskgraph_data (task_hash);
-                """
             with sqlite3.connect(self.task_database_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT data_blob from taskgraph_data
-                    WHERE (task_hash == ?)
+                        SELECT data_blob from taskgraph_data
+                        WHERE (task_hash == ?)
                     """, (self.task_reexecution_hash,))
                 database_result = cursor.fetchone()
             if database_result is None:
                 LOGGER.info(
-                    "not precalculated, Task Cache file does not "
+                    "not precalculated, Task hash does not "
                     "exist (%s)", self.task_name)
                 LOGGER.debug("is_precalculated full task info: %s", self)
                 return False
@@ -1060,7 +1043,7 @@ class Task(object):
                             size, target_size))
             if mismatched_target_file_list:
                 LOGGER.warning(
-                    "not precalculated (%s), Task Cache file exists, "
+                    "not precalculated (%s), Task hash exists, "
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
