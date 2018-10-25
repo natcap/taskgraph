@@ -128,9 +128,13 @@ class TaskGraph(object):
                 graph every `reporting_interval` seconds.
 
         """
-        self.n_workers = n_workers
+        try:
+            os.makedirs(taskgraph_cache_dir_path)
+        except OSError:
+            LOGGER.debug("%s already exists, no need to make it")
 
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
+
         self.taskgraph_started_event = threading.Event()
 
         # use this to keep track of all the tasks added to the graph by their
@@ -208,6 +212,7 @@ class TaskGraph(object):
             cursor.executescript(sql_create_projects_table)
 
         # no need to set up schedulers if n_workers is single threaded
+        self.n_workers = n_workers
         if n_workers < 0:
             return
 
