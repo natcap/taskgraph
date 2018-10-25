@@ -308,14 +308,15 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
         task_graph.join()
 
-        # we should have N completed values in the database
+        # we should have 4 completed values in the database, 5 total but one
+        # was a duplicate
         database_path = os.path.join(
             self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
         with sqlite3.connect(database_path) as conn:
             cursor = conn.cursor()
-            cursor.executescript("SELECT * FROM taskgraph_data")
+            cursor.execute("SELECT * FROM taskgraph_data")
             result = cursor.fetchall()
-        self.assertEqual(len(result), 5)
+        self.assertEqual(len(result), 4)
 
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
