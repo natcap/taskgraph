@@ -1,5 +1,5 @@
 """Tests for taskgraph."""
-import glob
+import sqlite3
 import os
 import tempfile
 import shutil
@@ -9,7 +9,6 @@ import pickle
 import logging
 import logging.handlers
 import multiprocessing
-
 import mock
 
 import taskgraph
@@ -309,6 +308,16 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
         task_graph.join()
 
+        # we should have 4 completed values in the database, 5 total but one
+        # was a duplicate
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 4)
+
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
@@ -317,9 +326,6 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.close()
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
-        # we shouldn't have a file in there that's the token
-        self.assertEqual(len(file_results), 0)
 
     def test_n_retries(self):
         """TaskGraph: Test a task will attempt to retry after exception."""
@@ -373,9 +379,14 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task()
         task_graph.close()
         task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
-        # we should have a file in there that's the token
-        self.assertEqual(len(file_results), 1)
+        # we shouldn't have anything in the database
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 0)
 
     def test_closed_graph(self):
         """TaskGraph: Test adding to an closed task graph fails."""

@@ -4,6 +4,14 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+-----------------
+* TaskGraph now stores all task completion information in a single SQLite
+  database stored in its cache directory. In previous versions
+  TaskGraph would write a small text file for each task in a highly branching
+  directory tree. This structure made removal of those directory trees
+  computationally difficult.
+
 0.7.0 (2018-10-22)
 ------------------
 * Fixed an issue where very long strings might be interpreted as paths and

@@ -2,10 +2,10 @@
 from __future__ import unicode_literals
 from __future__ import absolute_import
 import pkg_resources
-from .Task import TaskGraph, Task, EncapsulatedTaskOp
+from .Task import TaskGraph, Task, EncapsulatedTaskOp, _TASKGRAPH_DATABASE_FILENAME
 
-
-__all__ = ['TaskGraph', 'Task', 'EncapsulatedTaskOp']
+__all__ = [
+    'TaskGraph', 'Task', 'EncapsulatedTaskOp', '_TASKGRAPH_DATABASE_FILENAME']
 
 
 try:

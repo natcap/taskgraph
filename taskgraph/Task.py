@@ -12,6 +12,7 @@ import multiprocessing
 import multiprocessing.pool
 import threading
 import errno
+import sqlite3
 try:
     import Queue as queue
     #In python 2 basestring is superclass of str and unicode.
@@ -32,6 +33,8 @@ from . import queuehandler
 # at all ... __metaclass__ has been removed from the python data model docs)
 # Taken from https://stackoverflow.com/a/38668373/299084
 ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
+
+_TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
 
 try:
     import psutil
@@ -125,9 +128,13 @@ class TaskGraph(object):
                 graph every `reporting_interval` seconds.
 
         """
-        self.n_workers = n_workers
+        try:
+            os.makedirs(taskgraph_cache_dir_path)
+        except OSError:
+            LOGGER.debug("%s already exists, no need to make it")
 
         self.taskgraph_cache_dir_path = taskgraph_cache_dir_path
+
         self.taskgraph_started_event = threading.Event()
 
         # use this to keep track of all the tasks added to the graph by their
@@ -186,7 +193,25 @@ class TaskGraph(object):
         # tasks that complete are added to this set
         self.completed_tasks = set()
 
+        self.task_database_path = os.path.join(
+            self.taskgraph_cache_dir_path, _TASKGRAPH_DATABASE_FILENAME)
+        sql_create_projects_table = (
+            """
+            CREATE TABLE IF NOT EXISTS taskgraph_data (
+                task_hash TEXT NOT NULL,
+                data_blob BLOB NOT NULL,
+                PRIMARY KEY (task_hash)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
+            ON taskgraph_data (task_hash);
+            """)
+
+        with sqlite3.connect(self.task_database_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript(sql_create_projects_table)
+
         # no need to set up schedulers if n_workers is single threaded
+        self.n_workers = n_workers
         if n_workers < 0:
             return
 
@@ -304,35 +329,36 @@ class TaskGraph(object):
             self.executor_ready_event.wait()
             # this lock synchronizes changes between the queue and
             # executor_ready_event
-            with self.taskgraph_lock:
-                LOGGER.debug("checking for new tasks to execute")
-                if self.terminated:
-                    LOGGER.debug(
-                        "taskgraph is terminated, ending %s",
-                        threading.currentThread())
-                    break
-                task = None
-                if self.task_waiting_count > 0:
-                    task = self.task_ready_priority_queue.get()
+            LOGGER.debug("checking for new tasks to execute")
+            if self.terminated:
+                LOGGER.debug(
+                    "taskgraph is terminated, ending %s",
+                    threading.currentThread())
+                break
+            task = None
+            try:
+                task = self.task_ready_priority_queue.get_nowait()
+                with self.taskgraph_lock:
                     self.task_waiting_count -= 1
                     task_name_time_tuple = (task.task_name, time.time())
                     self.active_task_list.append(task_name_time_tuple)
-                    # we can release the lock because we got a Task that we can
-                    # process
+            except queue.Empty:
+                # no tasks are waiting could be because the taskgraph is
+                # closed or because the queue is just empty.
+                if self.closed and not self.task_dependent_map:
+                    # the task graph is signaling executors to stop,
+                    # since the self.task_dependent_map is empty the
+                    # executor can terminate.
+                    LOGGER.debug(
+                        "no tasks are and taskgraph closed, normally "
+                        "terminating executor %s." %
+                        threading.currentThread())
+                    break
                 else:
-                    LOGGER.debug("no tasks are waiting")
-                    # no tasks are waiting could be because the taskgraph is
-                    # closed or because the queue is just empty.
-                    if self.closed and not self.task_dependent_map:
-                        # the task graph is signaling executors to stop,
-                        # since the self.task_dependent_map is empty the
-                        # executor can terminate.
-                        break
-                    else:
-                        # task graph is still locked, so it's safe to clear
-                        # the executor event since there is no chance a Task
-                        # could have been added while the lock was acquired
-                        self.executor_ready_event.clear()
+                    # task graph is still locked, so it's safe to clear
+                    # the executor event since there is no chance a Task
+                    # could have been added while the lock was acquired
+                    self.executor_ready_event.clear()
             if task:
                 try:
                     task._call()
@@ -485,7 +511,8 @@ class TaskGraph(object):
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
                     self.worker_pool, self.taskgraph_cache_dir_path, priority,
-                    n_retries, self.taskgraph_started_event)
+                    n_retries, self.taskgraph_started_event,
+                    self.task_database_path)
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
@@ -689,7 +716,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
             worker_pool, cache_dir, priority, n_retries,
-            taskgraph_started_event):
+            taskgraph_started_event, task_database_path):
         """Make a Task.
 
         Parameters:
@@ -727,6 +754,12 @@ class Task(object):
                 unhandled exception the Task encounters.
             taskgraph_started_event (Event): can be used to start the main
                 TaskGraph if it has not yet started in case a Task is joined.
+            task_database_path (str): path to an SQLITE database that has
+                table named "taskgraph_data" with the two fields:
+                    task_hash TEXT NOT NULL,
+                    data_blob BLOB NOT NULL
+                If a call is successful its hash is inserted/updated in the
+                table and the data_blob stores the base/target stats.
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -748,12 +781,12 @@ class Task(object):
         self._args = args
         self._kwargs = kwargs
         self._cache_dir = cache_dir
-        self._task_cache_path = None
         self._ignore_path_list = ignore_path_list
         self._ignore_directories = ignore_directories
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
         self.n_retries = n_retries
+        self.task_database_path = task_database_path
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
@@ -848,8 +881,8 @@ class Task(object):
         """Calculate a hash that accounts for file size objects at runtime.
 
         It only makes sense to call this function if all dependent tasks have
-        executed. After this call, self._task_cache_path has a valid path
-        defined and self.reexecution_info['file_stat_list'] is defined.
+        executed. After this call, self.task_id_hash is valid
+        and self.reexecution_info['file_stat_list'] is defined.
 
         Returns:
             None
@@ -873,15 +906,6 @@ class Task(object):
             self.task_id_hash, self.reexecution_info['file_stat_list'])
         self.task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
-
-        # make a directory and target based on hashname
-        # take the first 3 characters of the hash and make a subdirectory
-        # for each so we don't blowup the filesystem with a bunch of files in
-        # one directory
-        self._task_cache_path = os.path.join(
-            self._cache_dir, *(
-                [x for x in self.task_reexecution_hash[0:3]] +
-                [self.task_reexecution_hash + '.json']))
 
     def __eq__(self, other):
         """Two tasks are equal if their hashes are equal."""
@@ -955,19 +979,19 @@ class Task(object):
                         self.task_name, self._target_path_list,
                         result_target_path_set))
 
-            # otherwise record target path stats in a file located at
-            # self._task_cache_path
-            try:
-                os.makedirs(os.path.dirname(self._task_cache_path))
-            except OSError as exception:
-                if exception.errno != errno.EEXIST:
-                    raise
-            # this step will only record the run if there is an expected target
-            # file. Otherwise we infer the result of this call is transient
-            # between taskgraph executions and we should expect to run it again.
+            # this step will only record the run if there is an expected
+            # target file. Otherwise we infer the result of this call is
+            # transient between taskgraph executions and we should expect to
+            # run it again.
             if self._target_path_list:
-                with open(self._task_cache_path, 'wb') as task_cache_file:
-                    pickle.dump(result_target_path_stats, task_cache_file)
+                with sqlite3.connect(self.task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """INSERT OR REPLACE INTO taskgraph_data VALUES
+                           (?, ?)""", (
+                            self.task_reexecution_hash, pickle.dumps(
+                                result_target_path_stats)))
+                    conn.commit()
             self._precalculated = True
             self.task_done_executing_event.set()
             LOGGER.debug("successful run on task %s", self.task_name)
@@ -987,14 +1011,22 @@ class Task(object):
                 return True
             self._calculate_deep_hash()
         try:
-            if not os.path.exists(self._task_cache_path):
+            with sqlite3.connect(self.task_database_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                        SELECT data_blob from taskgraph_data
+                        WHERE (task_hash == ?)
+                    """, (self.task_reexecution_hash,))
+                database_result = cursor.fetchone()
+            if database_result is None:
                 LOGGER.info(
-                    "not precalculated, Task Cache file does not "
+                    "not precalculated, Task hash does not "
                     "exist (%s)", self.task_name)
                 LOGGER.debug("is_precalculated full task info: %s", self)
                 return False
-            with open(self._task_cache_path, 'rb') as task_cache_file:
-                result_target_path_stats = pickle.load(task_cache_file)
+            if database_result:
+                result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
             for path, modified_time, size in result_target_path_stats:
                 if not os.path.exists(path):
@@ -1016,7 +1048,7 @@ class Task(object):
                             size, target_size))
             if mismatched_target_file_list:
                 LOGGER.warning(
-                    "not precalculated (%s), Task Cache file exists, "
+                    "not precalculated (%s), Task hash exists, "
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
