@@ -365,8 +365,7 @@ class TaskGraph(object):
                 except Exception as e:
                     # An error occurred on a call, terminate the taskgraph
                     if task.n_retries == 0:
-                        with self.taskgraph_lock:
-                            self.exception_object = e
+                        task.exception_object = e
                         LOGGER.exception(
                             'A taskgraph _task_executor failed on Task '
                             '%s. Terminating taskgraph.', task.task_name)
