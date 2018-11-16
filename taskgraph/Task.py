@@ -934,7 +934,6 @@ class Task(object):
                 function call is complete.
 
         """
-        LOGGER.debug("_call for task %s", self.task_name)
         LOGGER.debug("_call check if precalculated %s", self.task_name)
         if self.is_precalculated():
             self.task_done_executing_event.set()
@@ -964,22 +963,22 @@ class Task(object):
                     self.task_name, self._target_path_list,
                     result_target_path_set))
 
-            # this step will only record the run if there is an expected
-            # target file. Otherwise we infer the result of this call is
-            # transient between taskgraph executions and we should expect to
-            # run it again.
-            if self._target_path_list:
-                with sqlite3.connect(self.task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO taskgraph_data VALUES
-                           (?, ?)""", (
-                            self.task_reexecution_hash, pickle.dumps(
-                                result_target_path_stats)))
-                    conn.commit()
-            self._precalculated = True
-            self.task_done_executing_event.set()
-            LOGGER.debug("successful run on task %s", self.task_name)
+        # this step will only record the run if there is an expected
+        # target file. Otherwise we infer the result of this call is
+        # transient between taskgraph executions and we should expect to
+        # run it again.
+        if self._target_path_list:
+            with sqlite3.connect(self.task_database_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """INSERT OR REPLACE INTO taskgraph_data VALUES
+                       (?, ?)""", (
+                        self.task_reexecution_hash, pickle.dumps(
+                            result_target_path_stats)))
+                conn.commit()
+        self._precalculated = True
+        self.task_done_executing_event.set()
+        LOGGER.debug("successful run on task %s", self.task_name)
 
     def is_precalculated(self):
         """Return true if _call need not be invoked.
@@ -1059,6 +1058,7 @@ class Task(object):
             self._precalculated = True
             return True
         except EOFError:
+            LOGGER.exception("not precalculated %s, EOFError", self.task_name)
             self._precalculated = False
             return False
 
