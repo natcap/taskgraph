@@ -131,7 +131,9 @@ class TaskGraph(object):
         try:
             os.makedirs(taskgraph_cache_dir_path)
         except OSError:
-            LOGGER.debug("%s already exists, no need to make it")
+            LOGGER.debug(
+                "%s already exists, no need to make it",
+                taskgraph_cache_dir_path)
 
         self._taskgraph_cache_dir_path = taskgraph_cache_dir_path
 
