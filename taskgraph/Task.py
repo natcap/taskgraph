@@ -1072,8 +1072,7 @@ class Task(object):
         timed_out = self.task_done_executing_event.wait(timeout)
         if self.exception_object:
             raise self.exception_object
-        raise timed_out
-        return self.task_done_executing_event.wait(timeout)
+        return timed_out
 
 
 class EncapsulatedTaskOp(ABC):
