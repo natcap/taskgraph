@@ -506,8 +506,8 @@ class TaskGraph(object):
                 new_task = Task(
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
-                    self._worker_pool, self._taskgraph_cache_dir_path, priority,
-                    n_retries, self._taskgraph_started_event,
+                    self._worker_pool, self._taskgraph_cache_dir_path,
+                    priority, n_retries, self._taskgraph_started_event,
                     self._task_database_path)
 
                 # it may be this task was already created in an earlier call,
