@@ -11,11 +11,10 @@ import logging
 import multiprocessing
 import multiprocessing.pool
 import threading
-import errno
 import sqlite3
 try:
     import Queue as queue
-    #In python 2 basestring is superclass of str and unicode.
+    # In python 2 basestring is superclass of str and unicode.
     VALID_PATH_TYPES = (basestring,)
 except ImportError:
     # Python3 renamed queue as queue
@@ -52,6 +51,7 @@ except ImportError:
 
 LOGGER = logging.getLogger(__name__)
 _MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
+
 
 # We want our processing pool to be nondeamonic so that workers could use
 # multiprocessing if desired (deamonic processes cannot start new processes)
@@ -779,7 +779,7 @@ class Task(object):
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
-        self._precalculated = False
+        self._precalculated = None
 
         # invert the priority since sorting goes smallest to largest and we
         # want more positive priority values to be executed first.
@@ -789,12 +789,6 @@ class Task(object):
         # to see when Task is complete. This can be set if a Task finishes
         # a _call and there are no more attempts at reexecution.
         self.task_done_executing_event = threading.Event()
-
-        # it's possible for multiple threads to attempt to determine if a
-        # task has been completed. the reexecution hash may change depending
-        # on whether input parameter files have changed. This lock ensures
-        # there's not a race condition when calculating the reexecution hash
-        self._deep_hash_lock = threading.RLock()
 
         # Calculate a hash based only on argument inputs.
         try:
@@ -833,7 +827,7 @@ class Task(object):
 
         kwargs_clean = {}
         # iterate through sorted order so we get the same hash result with the
-        # same set of kwargs irrespect of the item dict order.
+        # same set of kwargs irrespective of the item dict order.
         for key, value in sorted(self._kwargs.items()):
             try:
                 scrubbed_value = _scrub_functions(arg)
@@ -929,9 +923,12 @@ class Task(object):
             })
 
     def _call(self):
-        """TaskGraph should invoke this method when ready to execute task.
+        """Invoke this method to execute task.
 
         Precondition is that the Task dependencies are satisfied.
+
+        Sets the `self.task_done_executing_event` flag if execution is
+        successful.
 
         Raises:
             RuntimeError if any target paths are not generated after the
@@ -939,34 +936,34 @@ class Task(object):
 
         """
         LOGGER.debug("_call for task %s", self.task_name)
-        with self._deep_hash_lock:
-            LOGGER.debug("_call check if precalculated %s", self.task_name)
-            if self.is_precalculated():
-                return
-            LOGGER.debug("not precalculated %s", self.task_name)
-            if self._worker_pool is not None:
-                result = self._worker_pool.apply_async(
-                    func=self._func, args=self._args, kwds=self._kwargs)
-                # the following blocks and raises an exception if result raised
-                # an exception
-                LOGGER.debug("apply_async for task %s", self.task_name)
-                result.get()
-            else:
-                LOGGER.debug("direct _func for task %s", self.task_name)
-                self._func(*self._args, **self._kwargs)
+        LOGGER.debug("_call check if precalculated %s", self.task_name)
+        if self.is_precalculated():
+            self.task_done_executing_event.set()
+            return
+        LOGGER.debug("not precalculated %s", self.task_name)
+        if self._worker_pool is not None:
+            result = self._worker_pool.apply_async(
+                func=self._func, args=self._args, kwds=self._kwargs)
+            # the following blocks and raises an exception if result raised
+            # an exception
+            LOGGER.debug("apply_async for task %s", self.task_name)
+            result.get()
+        else:
+            LOGGER.debug("direct _func for task %s", self.task_name)
+            self._func(*self._args, **self._kwargs)
 
-            # check that the target paths exist and record stats for later
-            result_target_path_stats = list(
-                _get_file_stats(self._target_path_list, [], False))
-            result_target_path_set = set(
-                [x[0] for x in result_target_path_stats])
-            target_path_set = set(self._target_path_list)
-            if target_path_set != result_target_path_set:
-                raise RuntimeError(
-                    "In Task: %s\nMissing expected target path results.\n"
-                    "Expected: %s\nObserved: %s\n" % (
-                        self.task_name, self._target_path_list,
-                        result_target_path_set))
+        # check that the target paths exist and record stats for later
+        result_target_path_stats = list(
+            _get_file_stats(self._target_path_list, [], False))
+        result_target_path_set = set(
+            [x[0] for x in result_target_path_stats])
+        target_path_set = set(self._target_path_list)
+        if target_path_set != result_target_path_set:
+            raise RuntimeError(
+                "In Task: %s\nMissing expected target path results.\n"
+                "Expected: %s\nObserved: %s\n" % (
+                    self.task_name, self._target_path_list,
+                    result_target_path_set))
 
             # this step will only record the run if there is an expected
             # target file. Otherwise we infer the result of this call is
@@ -995,11 +992,26 @@ class Task(object):
             input parameter file stats change. False otherwise.
 
         """
-        LOGGER.debug("about to get deep hash lock for %s %s", self.task_name, self._deep_hash_lock)
-        with self._deep_hash_lock:
-            if self._precalculated:
-                return True
-            self._calculate_deep_hash()
+        # This gets a list of the files and their file stats that can be found
+        # in args and kwargs but ignores anything specifically targeted or
+        # an expected result. This will allow a task to change its hash in
+        # case a different version of a file was passed in.
+        if self._precalculated is not None:
+            return self._precalculated
+        file_stat_list = list(_get_file_stats(
+            [self._args, self._kwargs],
+            self._target_path_list+self._ignore_path_list,
+            self._ignore_directories))
+
+        # add the file stat list to the already existing reexecution info
+        # dictionary that contains stats that should not change whether
+        # files have been created/updated/or not.
+        self.reexecution_info['file_stat_list'] = pprint.pformat(
+            file_stat_list)
+        reexecution_string = '%s:%s' % (
+            self.task_id_hash, self.reexecution_info['file_stat_list'])
+        self.task_reexecution_hash = hashlib.sha1(
+            reexecution_string.encode('utf-8')).hexdigest()
         try:
             with sqlite3.connect(self.task_database_path) as conn:
                 cursor = conn.cursor()
@@ -1014,6 +1026,7 @@ class Task(object):
                     "not precalculated, Task hash does not "
                     "exist (%s)", self.task_name)
                 LOGGER.debug("is_precalculated full task info: %s", self)
+                self._precalculated = False
                 return False
             if database_result:
                 result_target_path_stats = pickle.loads(database_result[0])
@@ -1041,22 +1054,25 @@ class Task(object):
                     "not precalculated (%s), Task hash exists, "
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
+                self._precalculated = False
                 return False
             LOGGER.info("precalculated (%s)" % self.task_name)
-            with self._deep_hash_lock:
-                self._precalculated = True
+            self._precalculated = True
             return True
         except EOFError:
+            self._precalculated = False
             return False
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
         self._taskgraph_started_event.set()
+        LOGGER.debug(
+            "joining %s done executing: %s", self.task_name,
+            self.task_done_executing_event)
+        timed_out = self.task_done_executing_event.wait(timeout)
         if self.exception_object:
             raise self.exception_object
-        LOGGER.debug(
-            "about to return from join for %s %s", self.task_name,
-            self.task_done_executing_event)
+        raise timed_out
         return self.task_done_executing_event.wait(timeout)
 
 
