@@ -84,6 +84,7 @@ def _log_from_another_process(logger_name, log_message):
 
     Returns:
         ``None``
+
     """
     logger = logging.getLogger(logger_name)
     logger.info(log_message)
@@ -497,7 +498,10 @@ class TaskGraphTests(unittest.TestCase):
     def test_repeat_targetless_runs(self):
         """TaskGraph: ensure that repeated runs with no targets reexecute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
-        target_path = os.path.join(self.workspace_dir, '1000.dat')
+        #target_path = os.path.join(self.workspace_dir, '1000.dat')
+        long_target_dir = os.path.join(self.workspace_dir, 'foo', 'bar')
+        os.makedirs(long_target_dir)
+        target_path = self.workspace_dir + r'/foo/bar/1000.dat'
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
@@ -751,6 +755,38 @@ class TaskGraphTests(unittest.TestCase):
         # the second call shouldn't happen
         self.assertEqual(result, '1')
 
+    def test_unix_path_repeated_function(self):
+        """TaskGraph: ensure no reruns if path is unix style."""
+        global _append_val
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_dir = self.workspace_dir + '/foo/bar/rad/'
+        os.makedirs(target_dir)
+        target_path = target_dir + '/testfile.txt'
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            task_name='first _call_it')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            task_name='second _call_it')
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            result = target_file.read()
+
+        # the second call shouldn't happen
+        self.assertEqual(result, '1')
+
     def test_very_long_string(self):
         """TaskGraph: ensure that long strings don't case an OSError."""
         from taskgraph.Task import _get_file_stats
@@ -764,6 +800,7 @@ class TaskGraphTests(unittest.TestCase):
 
 
 def Fail(n_tries, result_path):
+    """Create a function that fails after `n_tries`."""
     def fail_func():
         fail_func._n_tries -= 1
         if fail_func._n_tries > 0:
