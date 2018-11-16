@@ -1,5 +1,5 @@
 """Tests for taskgraph."""
-import glob
+import sqlite3
 import os
 import tempfile
 import shutil
@@ -9,7 +9,6 @@ import pickle
 import logging
 import logging.handlers
 import multiprocessing
-
 import mock
 
 import taskgraph
@@ -85,6 +84,7 @@ def _log_from_another_process(logger_name, log_message):
 
     Returns:
         ``None``
+
     """
     logger = logging.getLogger(logger_name)
     logger.info(log_message)
@@ -309,6 +309,16 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
         task_graph.join()
 
+        # we should have 4 completed values in the database, 5 total but one
+        # was a duplicate
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 4)
+
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
@@ -317,9 +327,6 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.close()
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
-        # we shouldn't have a file in there that's the token
-        self.assertEqual(len(file_results), 0)
 
     def test_n_retries(self):
         """TaskGraph: Test a task will attempt to retry after exception."""
@@ -373,9 +380,14 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task()
         task_graph.close()
         task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
-        # we should have a file in there that's the token
-        self.assertEqual(len(file_results), 1)
+        # we shouldn't have anything in the database
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 0)
 
     def test_closed_graph(self):
         """TaskGraph: Test adding to an closed task graph fails."""
@@ -740,6 +752,38 @@ class TaskGraphTests(unittest.TestCase):
         # the second call shouldn't happen
         self.assertEqual(result, '1')
 
+    def test_unix_path_repeated_function(self):
+        """TaskGraph: ensure no reruns if path is unix style."""
+        global _append_val
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_dir = self.workspace_dir + '/foo/bar/rad/'
+        os.makedirs(target_dir)
+        target_path = target_dir + '/testfile.txt'
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            task_name='first _call_it')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            task_name='second _call_it')
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            result = target_file.read()
+
+        # the second call shouldn't happen
+        self.assertEqual(result, '1')
+
     def test_very_long_string(self):
         """TaskGraph: ensure that long strings don't case an OSError."""
         from taskgraph.Task import _get_file_stats
@@ -753,6 +797,7 @@ class TaskGraphTests(unittest.TestCase):
 
 
 def Fail(n_tries, result_path):
+    """Create a function that fails after `n_tries`."""
     def fail_func():
         fail_func._n_tries -= 1
         if fail_func._n_tries > 0:
