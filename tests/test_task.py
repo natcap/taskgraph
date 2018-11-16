@@ -356,7 +356,7 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(TypeError) as cm:
             task_graph.join()
 
-        expected_message = '_div_by_zero() takes no arguments'
+        expected_message = '_div_by_zero()'
         actual_message = str(cm.exception)
         self.assertTrue(expected_message in actual_message, actual_message)
 
