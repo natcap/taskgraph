@@ -781,7 +781,8 @@ class Task(object):
         self._args = args
         self._kwargs = kwargs
         self._cache_dir = cache_dir
-        self._ignore_path_list = ignore_path_list
+        self._ignore_path_list = [
+            os.path.normpath(path) for path in ignore_path_list]
         self._ignore_directories = ignore_directories
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
@@ -1100,9 +1101,12 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
     """Iterate over any values that are filepaths by getting filestats.
 
     Parameters:
-        base_value: any python value.
+        base_value: any python value. Any file paths in `base_value`
+            should be "os.path.norm"ed before this function is called.
+            contains filepaths in any nested structure.
         ignore_list (list): any paths found in this list are not included
-            as part of the file stats
+            as part of the file stats. All paths in this list should be
+            "os.path.norm"ed.
         ignore_directories (boolean): If True directories are not
             considered for filestats.
 
@@ -1114,11 +1118,12 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
     """
     if isinstance(base_value, VALID_PATH_TYPES):
         try:
-            if base_value not in ignore_list and (
-                    not os.path.isdir(base_value) or
-                    not ignore_directories) and os.path.exists(base_value):
-                yield (base_value, os.path.getmtime(base_value),
-                       os.path.getsize(base_value))
+            norm_path = os.path.normpath(base_value)
+            if norm_path not in ignore_list and (
+                    not os.path.isdir(norm_path) or
+                    not ignore_directories) and os.path.exists(norm_path):
+                yield (norm_path, os.path.getmtime(norm_path),
+                       os.path.getsize(norm_path))
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.

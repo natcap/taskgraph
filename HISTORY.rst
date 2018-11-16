@@ -11,6 +11,9 @@ Unreleased Changes
   TaskGraph would write a small text file for each task in a highly branching
   directory tree. This structure made removal of those directory trees
   computationally difficult.
+* Fixed an issue that would cause TaskGraph to reexecute if the target path
+  was included in the argument list and that path was not normalized to the
+  operating system's path style.
 
 0.7.0 (2018-10-22)
 ------------------
