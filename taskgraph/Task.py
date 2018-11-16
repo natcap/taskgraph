@@ -367,11 +367,12 @@ class TaskGraph(object):
                     # An error occurred on a call, terminate the taskgraph
                     if task.n_retries == 0:
                         with self.taskgraph_lock:
-                            self._exception = e
+                            self.exception_object = e
                         LOGGER.exception(
                             'A taskgraph _task_executor failed on Task '
                             '%s. Terminating taskgraph.', task.task_name)
                         self._terminate()
+                        raise
                     else:
                         LOGGER.warning(
                             'A taskgraph _task_executor failed on Task '
@@ -699,11 +700,13 @@ class TaskGraph(object):
             return
         with self.taskgraph_lock:
             self.terminated = True
+
+            for task in self.task_map.values():
+                LOGGER.debug("setting task done for %s", task.task_name)
+                task.task_done_executing_event.set()
+
             if self.worker_pool:
                 self.worker_pool.terminate()
-
-        for task in self.task_map.values():
-            task.task_done_executing_event.set()
 
         self.taskgraph_started_event.set()
         self.executor_ready_event.set()
@@ -1007,6 +1010,7 @@ class Task(object):
             input parameter file stats change. False otherwise.
 
         """
+        LOGGER.debug("about to get deep hash lock for %s %s", self.task_name, self._deep_hash_lock)
         with self._deep_hash_lock:
             if self._precalculated:
                 return True
@@ -1063,8 +1067,15 @@ class Task(object):
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
         self._taskgraph_started_event.set()
+        if self.exception_object:
+            raise self.exception_object
+        LOGGER.debug(
+            "about to check if is precalculated for %s", self.task_name)
         if self.is_precalculated():
             return True
+        LOGGER.debug(
+            "about to return from join for %s %s", self.task_name,
+            self.task_done_executing_event)
         return self.task_done_executing_event.wait(timeout)
 
 
