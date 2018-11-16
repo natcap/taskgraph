@@ -167,9 +167,6 @@ class TaskGraph(object):
         # and are waiting for a worker
         self.task_waiting_count = 0
 
-        # used to record a failing exception for when `join` is called
-        self.exception = None
-
         # Synchronization objects:
         # this lock is used to synchronize the following objects
         self.taskgraph_lock = threading.RLock()
@@ -650,10 +647,6 @@ class TaskGraph(object):
                 for executor_task in self._task_executor_thread_list:
                     executor_task.join(timeout)
             LOGGER.debug('taskgraph terminated')
-
-            if self.exception:
-                raise self.exception
-
             return True
         except Exception:
             # If there's an exception on a join it means that a task failed
