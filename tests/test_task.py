@@ -498,10 +498,7 @@ class TaskGraphTests(unittest.TestCase):
     def test_repeat_targetless_runs(self):
         """TaskGraph: ensure that repeated runs with no targets reexecute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
-        #target_path = os.path.join(self.workspace_dir, '1000.dat')
-        long_target_dir = os.path.join(self.workspace_dir, 'foo', 'bar')
-        os.makedirs(long_target_dir)
-        target_path = self.workspace_dir + r'/foo/bar/1000.dat'
+        target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
