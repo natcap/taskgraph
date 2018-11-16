@@ -168,7 +168,7 @@ class TaskGraph(object):
         self.task_waiting_count = 0
 
         # used to record a failing exception for when `join` is called
-        self._exception = None
+        self.exception = None
 
         # Synchronization objects:
         # this lock is used to synchronize the following objects
@@ -336,29 +336,28 @@ class TaskGraph(object):
                     threading.currentThread())
                 break
             task = None
+            self.taskgraph_lock.acquire()
             try:
                 task = self.task_ready_priority_queue.get_nowait()
-                with self.taskgraph_lock:
-                    self.task_waiting_count -= 1
-                    task_name_time_tuple = (task.task_name, time.time())
-                    self.active_task_list.append(task_name_time_tuple)
+                self.task_waiting_count -= 1
+                task_name_time_tuple = (task.task_name, time.time())
+                self.active_task_list.append(task_name_time_tuple)
             except queue.Empty:
                 # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
                 if self.closed and not self.task_dependent_map:
+                    self.taskgraph_lock.release()
                     # the task graph is signaling executors to stop,
                     # since the self.task_dependent_map is empty the
                     # executor can terminate.
                     LOGGER.debug(
-                        "no tasks are and taskgraph closed, normally "
+                        "no tasks are pending and taskgraph closed, normally "
                         "terminating executor %s." %
                         threading.currentThread())
                     break
                 else:
-                    # task graph is still locked, so it's safe to clear
-                    # the executor event since there is no chance a Task
-                    # could have been added while the lock was acquired
                     self.executor_ready_event.clear()
+            self.taskgraph_lock.release()
             if task:
                 try:
                     task._call()
@@ -372,7 +371,7 @@ class TaskGraph(object):
                             'A taskgraph _task_executor failed on Task '
                             '%s. Terminating taskgraph.', task.task_name)
                         self._terminate()
-                        raise
+                        break
                     else:
                         LOGGER.warning(
                             'A taskgraph _task_executor failed on Task '
@@ -537,32 +536,18 @@ class TaskGraph(object):
                         dep_task for dep_task in dependent_task_list
                         if dep_task not in self.completed_tasks]
                     if not outstanding_dependent_task_list:
-                        if new_task.is_precalculated():
-                            LOGGER.debug(
-                                "multiprocess: %s is precalculated, "
-                                "and dependent tasks are satisified, "
-                                "skipping call", task_name)
-                            self.completed_tasks.add(new_task)
-                        else:
-                            LOGGER.debug(
-                                "task %s has all dependent tasks pre-"
-                                "satisfied, sending to "
-                                "task_ready_priority_queue.",
-                                new_task.task_name)
-                            self.task_ready_priority_queue.put(new_task)
-                            self.task_waiting_count += 1
-                            self.executor_ready_event.set()
+                        self.task_ready_priority_queue.put(new_task)
+                        self.task_waiting_count += 1
+                        self.executor_ready_event.set()
                     else:
                         # there are unresolved tasks that the waiting
                         # process scheduler has not been notified of.
                         # Record dependencies.
                         for dep_task in outstanding_dependent_task_list:
                             # record tasks that are dependent on dep_task
-                            self.task_dependent_map[dep_task].add(
-                                new_task)
+                            self.task_dependent_map[dep_task].add(new_task)
                             # record tasks that new_task depends on
-                            self.dependent_task_map[new_task].add(
-                                dep_task)
+                            self.dependent_task_map[new_task].add(dep_task)
                 return new_task
 
             except Exception:
@@ -667,8 +652,8 @@ class TaskGraph(object):
                     executor_task.join(timeout)
             LOGGER.debug('taskgraph terminated')
 
-            if self._exception:
-                raise self._exception
+            if self.exception:
+                raise self.exception
 
             return True
         except Exception:
@@ -1069,10 +1054,6 @@ class Task(object):
         self._taskgraph_started_event.set()
         if self.exception_object:
             raise self.exception_object
-        LOGGER.debug(
-            "about to check if is precalculated for %s", self.task_name)
-        if self.is_precalculated():
-            return True
         LOGGER.debug(
             "about to return from join for %s %s", self.task_name,
             self.task_done_executing_event)
