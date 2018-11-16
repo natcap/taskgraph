@@ -320,12 +320,11 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(len(result), 4)
 
     def test_task_broken_chain(self):
-        """TaskGraph: Test a multiprocess chain with exception."""
+        """TaskGraph: Test a multiprocess chain with exception raised."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
         target_a_path = os.path.join(self.workspace_dir, 'a.dat')
         target_b_path = os.path.join(self.workspace_dir, 'b.dat')
         result_path = os.path.join(self.workspace_dir, 'result.dat')
-        result_2_path = os.path.join(self.workspace_dir, 'result2.dat')
         value_a = 5
         value_b = 10
         list_len = 10
@@ -344,7 +343,7 @@ class TaskGraphTests(unittest.TestCase):
             },
             dependent_task_list=[task_a],
             target_path_list=[target_b_path])
-        sum_task = task_graph.add_task(
+        _ = task_graph.add_task(
             func=_sum_lists_from_disk,
             args=(target_a_path, target_b_path),
             kwargs={
@@ -353,42 +352,13 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[result_path],
             dependent_task_list=[task_a, task_b])
         task_graph.close()
-        task_graph.join()
 
-        result = pickle.load(open(result_path, 'rb'))
-        self.assertEqual(result, [value_a+value_b]*list_len)
+        with self.assertRaises(TypeError) as cm:
+            task_graph.join()
 
-        sum_2_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
-            args=(target_a_path, result_path, result_2_path),
-            target_path_list=[result_2_path],
-            dependent_task_list=[task_a, sum_task])
-        sum_2_task.join()
-        result2 = pickle.load(open(result_2_path, 'rb'))
-        expected_result = [(value_a*2+value_b)]*list_len
-        self.assertEqual(result2, expected_result)
-
-        sum_3_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
-            args=(target_a_path, result_path, result_2_path),
-            target_path_list=[result_2_path],
-            dependent_task_list=[task_a, sum_task])
-        task_graph.close()
-        sum_3_task.join()
-        result3 = pickle.load(open(result_2_path, 'rb'))
-        expected_result = [(value_a*2+value_b)]*list_len
-        self.assertEqual(result3, expected_result)
-        task_graph.join()
-
-        # we should have 4 completed values in the database, 5 total but one
-        # was a duplicate
-        database_path = os.path.join(
-            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
-        with sqlite3.connect(database_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM taskgraph_data")
-            result = cursor.fetchall()
-        self.assertEqual(len(result), 4)
+        expected_message = '_div_by_zero() takes no arguments'
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
 
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
