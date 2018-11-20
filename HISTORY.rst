@@ -5,7 +5,7 @@ TaskGraph Release History
 =========================
 
 Unreleased Changes
------------------
+------------------
 * TaskGraph now stores all task completion information in a single SQLite
   database stored in its cache directory. In previous versions
   TaskGraph would write a small text file for each task in a highly branching
@@ -14,6 +14,8 @@ Unreleased Changes
 * Fixed an issue that would cause TaskGraph to reexecute if the target path
   was included in the argument list and that path was not normalized to the
   operating system's path style.
+* Fixed a deadlock in some cases where Tasks failed while other tasks checked
+  for pre-execution clauses.
 
 0.7.0 (2018-10-22)
 ------------------

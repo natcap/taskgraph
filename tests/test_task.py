@@ -319,6 +319,47 @@ class TaskGraphTests(unittest.TestCase):
             result = cursor.fetchall()
         self.assertEqual(len(result), 4)
 
+    def test_task_broken_chain(self):
+        """TaskGraph: Test a multiprocess chain with exception raised."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
+        target_a_path = os.path.join(self.workspace_dir, 'a.dat')
+        target_b_path = os.path.join(self.workspace_dir, 'b.dat')
+        result_path = os.path.join(self.workspace_dir, 'result.dat')
+        value_a = 5
+        value_b = 10
+        list_len = 10
+        task_a = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
+            target_path_list=[target_a_path])
+        task_b = task_graph.add_task(
+            func=_div_by_zero,
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
+            dependent_task_list=[task_a],
+            target_path_list=[target_b_path])
+        _ = task_graph.add_task(
+            func=_sum_lists_from_disk,
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
+            target_path_list=[result_path],
+            dependent_task_list=[task_a, task_b])
+        task_graph.close()
+
+        with self.assertRaises(TypeError) as cm:
+            task_graph.join()
+
+        expected_message = '_div_by_zero()'
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
