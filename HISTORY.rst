@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
+0.7.2 (2018-11-21)
 ------------------
 * TaskGraph now stores all task completion information in a single SQLite
   database stored in its cache directory. In previous versions
