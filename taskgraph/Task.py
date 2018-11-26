@@ -390,8 +390,8 @@ class TaskGraph(object):
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
-            dependent_task_list=None, ignore_directories=True, n_retries=0,
-            priority=0):
+            dependent_task_list=None, ignore_directories=True, priority=0,
+            n_retries=0, digest_algorithm=None):
         """Add a task to the task graph.
 
         Parameters:
@@ -433,6 +433,12 @@ class TaskGraph(object):
                 processed by the taskgraph scheduler. This means the task may
                 attempt to reexecute immediately, or after some other tasks
                 are cleared.
+            digest_algorithm (string): if not None, a hash function id that
+                exists in hashlib.algorithms_available. Any paths to actual
+                files in the arguments will be digested as their fingerprint,
+                if None, paths will be fingerprinted as a hash of their
+                os.normpath value combined with their filesize on disk and
+                last modified time.
 
         Returns:
             Task which was just added to the graph or an existing Task that
@@ -485,7 +491,7 @@ class TaskGraph(object):
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
                     self.worker_pool, self.taskgraph_cache_dir_path, priority,
-                    n_retries, self.taskgraph_started_event)
+                    n_retries, digest_algorithm, self.taskgraph_started_event)
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
@@ -688,7 +694,7 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
-            worker_pool, cache_dir, priority, n_retries,
+            worker_pool, cache_dir, priority, n_retries, digest_algorithm,
             taskgraph_started_event):
         """Make a Task.
 
@@ -725,6 +731,12 @@ class Task(object):
                 attempt to reexecute immediately, or after some othre tasks
                 are cleared. If <= 0, the task will fail on the first
                 unhandled exception the Task encounters.
+            digest_algorithm (string): if not None, a hash function id that
+                exists in hashlib.algorithms_available. Any paths to actual
+                files in the arguments will be digested as their fingerprint,
+                if None, paths will be fingerprinted as a hash of their
+                os.normpath value combined with their filesize on disk and
+                last modified time.
             taskgraph_started_event (Event): can be used to start the main
                 TaskGraph if it has not yet started in case a Task is joined.
 
@@ -811,7 +823,7 @@ class Task(object):
 
         kwargs_clean = {}
         # iterate through sorted order so we get the same hash result with the
-        # same set of kwargs irrespect of the item dict order.
+        # same set of kwargs irrespective of the item dict order.
         for key, value in sorted(self._kwargs.items()):
             try:
                 scrubbed_value = _scrub_functions(arg)
