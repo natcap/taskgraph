@@ -1145,3 +1145,28 @@ def _scrub_functions(base_value):
             result_list.append(_scrub_functions(value))
         return type(base_value)(result_list)
     return base_value
+
+
+def hash_file(file_path, hash_algorithm, buf_size=2**20):
+    """Return a hex digest of `file_path`.
+
+    Parameters:
+        file_path (string): path to file to hash.
+        hash_algorithm (string): a hash function id that exists in
+            hashlib.algorithms_available.
+        buf_size (int): number of bytes to read from `file_path` at a time
+            for digesting.
+
+    Returns:
+        a hash hex digest computed with hash algorithm `hash_algorithm`
+        of the binary contents of the file located at `file_path`.
+
+    """
+    hash_func = hashlib.new(hash_algorithm)
+    with open(file_path, 'rb') as f:
+        binary_data = f.read(buf_size)
+        while binary_data:
+            hash_func.update(binary_data)
+            crc32c.update(binary_data)
+            binary_data = f.read(buf_size)
+    return hash_func.hexdigest()
