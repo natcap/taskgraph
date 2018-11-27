@@ -495,11 +495,21 @@ class TaskGraph(object):
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
-                if new_task in self.task_map:
+                try:
+                    duplicate_task = self.task_map[new_task]
+                    if (new_task._target_path_list !=
+                            duplicate_task._target_path_list):
+                        raise RuntimeError(
+                            "A task was created that has the same arguments "
+                            "as another task, but different expected target "
+                            "paths: submitted task: %s, existing task: %s" % (
+                                new_task, duplicate_task))
                     LOGGER.warning(
                         "A duplicate task was submitted: %s original: %s",
                         new_task, self.task_map[new_task])
                     return self.task_map[new_task]
+                except KeyError:
+                    pass
 
                 self.task_map[new_task] = new_task
                 if self.n_workers < 0:
@@ -824,11 +834,11 @@ class Task(object):
         kwargs_clean = {}
         # iterate through sorted order so we get the same hash result with the
         # same set of kwargs irrespective of the item dict order.
-        for key, value in sorted(self._kwargs.items()):
+        for key, arg in sorted(self._kwargs.items()):
             try:
                 scrubbed_value = _scrub_functions(arg)
                 _ = pickle.dumps(scrubbed_value)
-                kwargs_clean[key] = scrubbed_value
+                kwargs_clean[arg] = scrubbed_value
             except TypeError:
                 LOGGER.warning(
                     "could not pickle kw argument %s (%s). "
@@ -842,7 +852,6 @@ class Task(object):
             'kwargs': pprint.pformat(kwargs_clean),
             'source_code_hash': hashlib.sha1(
                 source_code.encode('utf-8')).hexdigest(),
-            'target_path_list': pprint.pformat(self._target_path_list),
         }
 
         argument_hash_string = ':'.join([
@@ -921,10 +930,11 @@ class Task(object):
                 "priority": self.priority,
                 "ignore_path_list": self._ignore_path_list,
                 "ignore_directories": self._ignore_directories,
+                "target_path_list": self._target_path_list,
                 "task_id_hash": self.task_id_hash,
                 "task_reexecution_hash": self.task_reexecution_hash,
                 "exception_object": self.exception_object,
-                "self.reexecution_info": self.reexecution_info
+                "reexecution_info": self.reexecution_info,
             })
 
     def _call(self):

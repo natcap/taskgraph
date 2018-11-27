@@ -788,6 +788,27 @@ class TaskGraphTests(unittest.TestCase):
             alt_contents = alt_target_file.read()
         self.assertEqual(contents, alt_contents)
 
+    def test_duplicate_but_different_target_path_lists(self):
+        """TaskGraph: duplicate calls with different targets should fail."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_create_list_on_disk,
+            args=('test', 1, target_path),
+            target_path_list=[target_path],
+            task_name='first _create_list_on_disk')
+
+        with self.assertRaises(RuntimeError):
+            # make the same call but with different target path list
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[target_path, 'test.txt'],
+                task_name='first _create_list_on_disk')
+
+        task_graph.close()
+        task_graph.join()
+
 
 def Fail(n_tries, result_path):
     def fail_func():
