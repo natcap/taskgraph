@@ -1,6 +1,7 @@
 """Task graph framework."""
 from __future__ import absolute_import
 
+import shutil
 import time
 import pprint
 import collections
@@ -525,13 +526,15 @@ class TaskGraph(object):
                         dep_task for dep_task in dependent_task_list
                         if dep_task not in self.completed_tasks]
                     if not outstanding_dependent_task_list:
-                        if new_task.is_precalculated():
+                        is_precalculated_result = (
+                            new_task.is_precalculated())
+                        if is_precalculated_result is True:
                             LOGGER.debug(
                                 "multiprocess: %s is precalculated, "
                                 "and dependent tasks are satisified, "
                                 "skipping call", task_name)
                             self.completed_tasks.add(new_task)
-                        else:
+                        elif is_precalculated_result is False:
                             LOGGER.debug(
                                 "task %s has all dependent tasks pre-"
                                 "satisfied, sending to "
@@ -540,6 +543,10 @@ class TaskGraph(object):
                             self.task_ready_priority_queue.put(new_task)
                             self.task_waiting_count += 1
                             self.executor_ready_event.set()
+                        else:
+                            # this is a target copy path list:
+                            for src, target in is_precalculated_result:
+                                shutil.copyfile(src, target)
                     else:
                         # there are unresolved tasks that the waiting
                         # process scheduler has not been notified of.
@@ -821,7 +828,7 @@ class Task(object):
         args_clean = []
         for index, arg in enumerate(self._args):
             try:
-                scrubbed_value = _scrub_functions(arg)
+                scrubbed_value = _scrub_task_args(arg, target_path_list)
                 _ = pickle.dumps(scrubbed_value)
                 args_clean.append(scrubbed_value)
             except TypeError:
@@ -836,7 +843,7 @@ class Task(object):
         # same set of kwargs irrespective of the item dict order.
         for key, arg in sorted(self._kwargs.items()):
             try:
-                scrubbed_value = _scrub_functions(arg)
+                scrubbed_value = _scrub_task_args(arg, target_path_list)
                 _ = pickle.dumps(scrubbed_value)
                 kwargs_clean[arg] = scrubbed_value
             except TypeError:
@@ -1042,17 +1049,27 @@ class Task(object):
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
-            LOGGER.info("precalculated (%s)" % self.task_name)
+            potential_copy_path_list = []
+            for target_path, archived_target_tuple in zip(
+                    self._target_path_list, result_target_path_stats):
+                if target_path != archived_target_tuple[0]:
+                    potential_copy_path_list.append(
+                        (archived_target_tuple[0], target_path))
+                LOGGER.info("precalculated (%s)\n%s\n%s" % (
+                    self, self._target_path_list, result_target_path_stats))
             with self._deep_hash_lock:
                 self._precalculated = True
-            return True
+            if potential_copy_path_list:
+                return potential_copy_path_list
+            else:
+                return True
         except EOFError:
             return False
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
         self._taskgraph_started_event.set()
-        if self.is_precalculated():
+        if self.is_precalculated() is True:
             return True
         return self.task_done_executing_event.wait(timeout)
 
@@ -1130,8 +1147,11 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
                 yield stat
 
 
-def _scrub_functions(base_value):
-    """Replace functions with stable string representations.
+def _scrub_task_args(base_value, target_path_list):
+    """Scrub a `base_value` so that it's compatable with reexecution hashes.
+
+    Replace functions with stable string representations and remove any
+    references to normalized target paths.
 
     Parameters:
         base_value: any python value
@@ -1159,14 +1179,18 @@ def _scrub_functions(base_value):
     elif isinstance(base_value, dict):
         result_dict = {}
         for key in sorted(base_value.keys()):
-            result_dict[key] = _scrub_functions(base_value[key])
+            result_dict[key] = _scrub_task_args(
+                base_value[key], target_path_list)
         return result_dict
     elif isinstance(base_value, (list, set, tuple)):
         result_list = []
         for value in base_value:
-            result_list.append(_scrub_functions(value))
+            result_list.append(_scrub_task_args(value, target_path_list))
         return type(base_value)(result_list)
-    return base_value
+    elif base_value in target_path_list:
+        return 'target_path_list[%d]' % target_path_list.index(base_value)
+    else:
+        return base_value
 
 
 def hash_file(file_path, hash_algorithm, buf_size=2**20):

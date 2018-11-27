@@ -771,12 +771,18 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_path],
             task_name='first _create_file_once')
 
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         alt_target_path = os.path.join(self.workspace_dir, 'alt_testfile.txt')
         task_graph.add_task(
             func=_create_file_once,
             args=(alt_target_path, 'test'),
             target_path_list=[alt_target_path],
             task_name='second _create_file_once')
+
         task_graph.close()
         task_graph.join()
 
