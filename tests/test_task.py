@@ -74,6 +74,15 @@ def _div_by_zero():
     return 1/0
 
 
+def _create_file_once(target_path, content):
+    """Create a file on the first call, raise an exception on the second."""
+    if hasattr(_create_file_once, 'executed'):
+        raise RuntimeError("this function was called twice")
+    _create_file_once.executed = True
+    with open(target_path, 'w') as target_file:
+        target_file.write(content)
+
+
 def _log_from_another_process(logger_name, log_message):
     """Write a log message to a given logger.
 
@@ -85,6 +94,7 @@ def _log_from_another_process(logger_name, log_message):
 
     Returns:
         ``None``
+
     """
     logger = logging.getLogger(logger_name)
     logger.info(log_message)
@@ -750,6 +760,33 @@ class TaskGraphTests(unittest.TestCase):
             'wfeji3223j8923j9' * 2**10]
         self.assertEqual(
             list(_get_file_stats(base_value, [], True)), [])
+
+    def test_duplicate_call(self):
+        """TaskGraph: test that duplicate calls copy target path."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            task_name='first _create_file_once')
+
+        alt_target_path = os.path.join(self.workspace_dir, 'alt_testfile.txt')
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(alt_target_path, 'test'),
+            target_path_list=[alt_target_path],
+            task_name='second _create_file_once')
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            contents = target_file.read()
+        self.assertEqual(contents, 'test')
+
+        with open(alt_target_path, 'r') as alt_target_file:
+            alt_contents = alt_target_file.read()
+        self.assertEqual(contents, alt_contents)
 
 
 def Fail(n_tries, result_path):
