@@ -853,6 +853,7 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_file_once,
             args=(target_path, 'test'),
             target_path_list=[target_path],
+            copy_duplicate_artifact=True,
             task_name='first _create_file_once')
 
         task_graph.close()
@@ -865,6 +866,7 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_file_once,
             args=(alt_target_path, 'test'),
             target_path_list=[alt_target_path],
+            copy_duplicate_artifact=True,
             task_name='second _create_file_once')
 
         task_graph.close()

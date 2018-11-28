@@ -199,7 +199,7 @@ class TaskGraph(object):
             """
             CREATE TABLE IF NOT EXISTS taskgraph_data (
                 task_hash TEXT NOT NULL,
-                data_blob BLOB NOT NULL,
+                target_path_stats BLOB NOT NULL,
                 PRIMARY KEY (task_hash)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
@@ -795,9 +795,11 @@ class Task(object):
             task_database_path (str): path to an SQLITE database that has
                 table named "taskgraph_data" with the two fields:
                     task_hash TEXT NOT NULL,
-                    data_blob BLOB NOT NULL
+                    target_path_stats BLOB NOT NULL
                 If a call is successful its hash is inserted/updated in the
-                table and the data_blob stores the base/target stats.
+                table and the target_path_stats stores the base/target stats
+                for the target files created by the call and listed in
+                `target_path_list`.
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -826,6 +828,7 @@ class Task(object):
         self._taskgraph_started_event = taskgraph_started_event
         self.n_retries = n_retries
         self._task_database_path = task_database_path
+        self._copy_duplicate_artifact = copy_duplicate_artifact
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
@@ -959,16 +962,41 @@ class Task(object):
             self.task_done_executing_event.set()
             return
         LOGGER.debug("not precalculated %s", self.task_name)
-        if self._worker_pool is not None:
-            result = self._worker_pool.apply_async(
-                func=self._func, args=self._args, kwds=self._kwargs)
-            # the following blocks and raises an exception if result raised
-            # an exception
-            LOGGER.debug("apply_async for task %s", self.task_name)
-            result.get()
-        else:
-            LOGGER.debug("direct _func for task %s", self.task_name)
-            self._func(*self._args, **self._kwargs)
+        result_calculated = False
+        if self._copy_duplicate_artifact:
+            # try to see if we can copy old files
+            with sqlite3.connect(self._task_database_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT target_path_stats from taskgraph_data
+                    WHERE (task_hash == ?)
+                    """, (self._task_id_hash,))
+                database_result = cursor.fetchone()
+            if database_result:
+                result_target_path_stats = pickle.loads(database_result[0])
+                if (len(result_target_path_stats) ==
+                        len(self._target_path_list)):
+                    LOGGER.debug(
+                        "copying stored artifacts to target path list. \n"
+                        "\tstored artifacts: %s\n\ttarget_path_list: %s\n",
+                        [x[0] for x in result_target_path_stats],
+                        self._target_path_list)
+                    for artifact_target, new_target in zip(
+                            result_target_path_stats, self._target_path_list):
+                        shutil.copyfile(artifact_target[0], new_target)
+                    result_calculated = True
+        if not result_calculated:
+            if self._worker_pool is not None:
+                result = self._worker_pool.apply_async(
+                    func=self._func, args=self._args, kwds=self._kwargs)
+                # the following blocks and raises an exception if result raised
+                # an exception
+                LOGGER.debug("apply_async for task %s", self.task_name)
+                result.get()
+            else:
+                LOGGER.debug("direct _func for task %s", self.task_name)
+                self._func(*self._args, **self._kwargs)
 
         # check that the target paths exist and record stats for later
         result_target_path_stats = list(
@@ -993,7 +1021,7 @@ class Task(object):
                 cursor.execute(
                     """INSERT OR REPLACE INTO taskgraph_data VALUES
                        (?, ?)""", (
-                        self._task_reexecution_hash, pickle.dumps(
+                        self._task_id_hash, pickle.dumps(
                             result_target_path_stats)))
                 conn.commit()
         self._precalculated = True
@@ -1035,9 +1063,9 @@ class Task(object):
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                        SELECT data_blob from taskgraph_data
+                        SELECT target_path_stats from taskgraph_data
                         WHERE (task_hash == ?)
-                    """, (self._task_reexecution_hash,))
+                    """, (self._task_id_hash,))
                 database_result = cursor.fetchone()
             if database_result is None:
                 LOGGER.info(
@@ -1050,6 +1078,9 @@ class Task(object):
                 result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
             for path, modified_time, size in result_target_path_stats:
+                if path not in self._target_path_list:
+                    mismatched_target_file_list.append(
+                        'Recorded path not in target path list %s' % path)
                 if not os.path.exists(path):
                     mismatched_target_file_list.append(
                         'Path not found: %s' % path)
@@ -1074,7 +1105,7 @@ class Task(object):
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 self._precalculated = False
                 return False
-            LOGGER.info("precalculated (%s)" % self.task_name)
+            LOGGER.info("precalculated (%s)" % self)
             self._precalculated = True
             return True
         except EOFError:
