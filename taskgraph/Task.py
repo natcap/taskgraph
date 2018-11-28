@@ -16,13 +16,13 @@ import sqlite3
 try:
     import Queue as queue
     # In python 2 basestring is superclass of str and unicode.
-    VALID_PATH_TYPES = (basestring,)
+    _VALID_PATH_TYPES = (basestring,)
 except ImportError:
     # Python3 renamed queue as queue
     import queue
     import pathlib
     # pathlib only exists in Python3
-    VALID_PATH_TYPES = (str, pathlib.Path)
+    _VALID_PATH_TYPES = (str, pathlib.Path)
 import inspect
 import abc
 
@@ -463,8 +463,8 @@ class TaskGraph(object):
                 exists in hashlib.algorithms_available. Any paths to actual
                 files in the arguments will be digested as their fingerprint,
                 if None, paths will be fingerprinted as a hash of their
-                os.normpath value combined with their filesize on disk and
-                last modified time.
+                os.path.normpath(os.path.normcase) combined with their
+                filesize on disk and last modified time.
             copy_duplicate_artifact (bool): if true and the Tasks'
                 argument signature matches a previous Tasks without direct
                 comparison of the target path files in the arguments other
@@ -782,8 +782,8 @@ class Task(object):
                 exists in hashlib.algorithms_available. Any paths to actual
                 files in the arguments will be digested as their fingerprint,
                 if None, paths will be fingerprinted as a hash of their
-                os.normpath value combined with their filesize on disk and
-                last modified time.
+                os.path.normpath(os.path.normcase) combined with their
+                filesize on disk and last modified time.
             copy_duplicate_artifact (bool): if true and the Tasks'
                 argument signature matches a previous Tasks without direct
                 comparison of the target path files in the arguments other
@@ -804,7 +804,7 @@ class Task(object):
         """
         # it is a common error to accidentally pass a non string as to the
         # target path list, this terminates early if so
-        if any([not (isinstance(path, VALID_PATH_TYPES))
+        if any([not (isinstance(path, _VALID_PATH_TYPES))
                 for path in target_path_list]):
             raise ValueError(
                 "Values pass to target_path_list are not strings: %s",
@@ -814,15 +814,16 @@ class Task(object):
         # a result, but it would cause a task to be reexecuted if the only
         # difference was a different order.
         self._target_path_list = sorted(
-            [os.path.normpath(path) for path in target_path_list])
-
+            [os.path.normpath(os.path.normcase(path))
+             for path in target_path_list])
         self.task_name = task_name
         self._func = func
         self._args = args
         self._kwargs = kwargs
         self._cache_dir = cache_dir
         self._ignore_path_list = [
-            os.path.normpath(path) for path in ignore_path_list]
+            os.path.normpath(os.path.normcase(path))
+            for path in ignore_path_list]
         self._ignore_directories = ignore_directories
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
@@ -868,7 +869,7 @@ class Task(object):
         args_clean = []
         for index, arg in enumerate(self._args):
             try:
-                scrubbed_value = _scrub_task_args(arg, target_path_list)
+                scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
                 args_clean.append(scrubbed_value)
             except TypeError:
@@ -883,7 +884,7 @@ class Task(object):
         # same set of kwargs irrespective of the item dict order.
         for key, arg in sorted(self._kwargs.items()):
             try:
-                scrubbed_value = _scrub_task_args(arg, target_path_list)
+                scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
                 kwargs_clean[arg] = scrubbed_value
             except TypeError:
@@ -1173,9 +1174,9 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             ignored by the input parameters.
 
     """
-    if isinstance(base_value, VALID_PATH_TYPES):
+    if isinstance(base_value, _VALID_PATH_TYPES):
         try:
-            norm_path = os.path.normpath(base_value)
+            norm_path = os.path.normpath(os.path.normcase(base_value))
             if norm_path not in ignore_list and (
                     not os.path.isdir(norm_path) or
                     not ignore_directories) and os.path.exists(norm_path):
@@ -1244,8 +1245,11 @@ def _scrub_task_args(base_value, target_path_list):
         for value in base_value:
             result_list.append(_scrub_task_args(value, target_path_list))
         return type(base_value)(result_list)
-    elif base_value in target_path_list:
-        return 'target_path_list[%d]' % target_path_list.index(base_value)
+    elif isinstance(base_value, _VALID_PATH_TYPES):
+        normalized_path = os.path.normpath(os.path.normcase(base_value))
+        if normalized_path in target_path_list:
+            return 'target_path_list[%d]' % target_path_list.index(
+                normalized_path)
     else:
         return base_value
 
@@ -1270,6 +1274,5 @@ def hash_file(file_path, hash_algorithm, buf_size=2**20):
         binary_data = f.read(buf_size)
         while binary_data:
             hash_func.update(binary_data)
-            crc32c.update(binary_data)
             binary_data = f.read(buf_size)
     return hash_func.hexdigest()
