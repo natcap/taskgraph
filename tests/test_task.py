@@ -1,5 +1,5 @@
 """Tests for taskgraph."""
-import glob
+import sqlite3
 import os
 import tempfile
 import shutil
@@ -9,7 +9,6 @@ import pickle
 import logging
 import logging.handlers
 import multiprocessing
-
 import mock
 
 import taskgraph
@@ -319,6 +318,57 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result3, expected_result)
         task_graph.join()
 
+        # we should have 4 completed values in the database, 5 total but one
+        # was a duplicate
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 4)
+
+    def test_task_broken_chain(self):
+        """TaskGraph: Test a multiprocess chain with exception raised."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
+        target_a_path = os.path.join(self.workspace_dir, 'a.dat')
+        target_b_path = os.path.join(self.workspace_dir, 'b.dat')
+        result_path = os.path.join(self.workspace_dir, 'result.dat')
+        value_a = 5
+        value_b = 10
+        list_len = 10
+        task_a = task_graph.add_task(
+            func=_create_list_on_disk,
+            args=(value_a, list_len),
+            kwargs={
+                'target_path': target_a_path,
+            },
+            target_path_list=[target_a_path])
+        task_b = task_graph.add_task(
+            func=_div_by_zero,
+            args=(value_b, list_len),
+            kwargs={
+                'target_path': target_b_path,
+            },
+            dependent_task_list=[task_a],
+            target_path_list=[target_b_path])
+        _ = task_graph.add_task(
+            func=_sum_lists_from_disk,
+            args=(target_a_path, target_b_path),
+            kwargs={
+                'target_path': result_path,
+            },
+            target_path_list=[result_path],
+            dependent_task_list=[task_a, task_b])
+        task_graph.close()
+
+        with self.assertRaises(TypeError) as cm:
+            task_graph.join()
+
+        expected_message = '_div_by_zero()'
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
@@ -327,9 +377,6 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.close()
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
-        # we shouldn't have a file in there that's the token
-        self.assertEqual(len(file_results), 0)
 
     def test_n_retries(self):
         """TaskGraph: Test a task will attempt to retry after exception."""
@@ -383,9 +430,14 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task()
         task_graph.close()
         task_graph.join()
-        file_results = glob.glob(os.path.join(self.workspace_dir, '*'))
-        # we should have a file in there that's the token
-        self.assertEqual(len(file_results), 1)
+        # we shouldn't have anything in the database
+        database_path = os.path.join(
+            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        with sqlite3.connect(database_path) as conn:
+            cursor = conn.cursor()
+            cursor.executescript("SELECT * FROM taskgraph_data")
+            result = cursor.fetchall()
+        self.assertEqual(len(result), 0)
 
     def test_closed_graph(self):
         """TaskGraph: Test adding to an closed task graph fails."""
@@ -750,6 +802,38 @@ class TaskGraphTests(unittest.TestCase):
         # the second call shouldn't happen
         self.assertEqual(result, '1')
 
+    def test_unix_path_repeated_function(self):
+        """TaskGraph: ensure no reruns if path is unix style."""
+        global _append_val
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_dir = self.workspace_dir + '/foo/bar/rad/'
+        os.makedirs(target_dir)
+        target_path = target_dir + '/testfile.txt'
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            task_name='first _call_it')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        task_graph.add_task(
+            func=_call_it,
+            args=(_append_val, target_path, 1),
+            target_path_list=[target_path],
+            task_name='second _call_it')
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            result = target_file.read()
+
+        # the second call shouldn't happen
+        self.assertEqual(result, '1')
+
     def test_very_long_string(self):
         """TaskGraph: ensure that long strings don't case an OSError."""
         from taskgraph.Task import _get_file_stats
@@ -817,6 +901,7 @@ class TaskGraphTests(unittest.TestCase):
 
 
 def Fail(n_tries, result_path):
+    """Create a function that fails after `n_tries`."""
     def fail_func():
         fail_func._n_tries -= 1
         if fail_func._n_tries > 0:
