@@ -733,7 +733,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
             worker_pool, cache_dir, priority, n_retries, digest_algorithm,
-            taskgraph_started_event):
+            copy_duplicate_artifact, taskgraph_started_event):
         """Make a Task.
 
         Parameters:
@@ -775,6 +775,12 @@ class Task(object):
                 if None, paths will be fingerprinted as a hash of their
                 os.normpath value combined with their filesize on disk and
                 last modified time.
+            copy_duplicate_artifact (bool): if true and the Tasks'
+                argument signature matches a previous Tasks without direct
+                comparison of the target path files in the arguments other
+                than their positions in the target path list, the target
+                artifacts from a previously successful Task execution will
+                be copied to the new one.
             taskgraph_started_event (Event): can be used to start the main
                 TaskGraph if it has not yet started in case a Task is joined.
 
