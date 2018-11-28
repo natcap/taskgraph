@@ -392,7 +392,7 @@ class TaskGraph(object):
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
             dependent_task_list=None, ignore_directories=True, priority=0,
-            n_retries=0, digest_algorithm=None):
+            n_retries=0, digest_algorithm=None, allow_artifact_copy):
         """Add a task to the task graph.
 
         Parameters:
@@ -1148,13 +1148,15 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
 
 
 def _scrub_task_args(base_value, target_path_list):
-    """Scrub a `base_value` so that it's compatable with reexecution hashes.
+    """Scrub a `base_value` so that it's compatible with reexecution hashes.
 
     Replace functions with stable string representations and remove any
     references to normalized target paths.
 
     Parameters:
         base_value: any python value
+        target_path_list (list): a list of strings that if found in
+            `base_value` should be replaced with 'in_target_path' so
 
     Returns:
         base_value with any functions replaced as strings.
