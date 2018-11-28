@@ -392,7 +392,8 @@ class TaskGraph(object):
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
             dependent_task_list=None, ignore_directories=True, priority=0,
-            n_retries=0, digest_algorithm=None, allow_artifact_copy):
+            n_retries=0, digest_algorithm=None,
+            copy_duplicate_artifact=False):
         """Add a task to the task graph.
 
         Parameters:
@@ -440,6 +441,12 @@ class TaskGraph(object):
                 if None, paths will be fingerprinted as a hash of their
                 os.normpath value combined with their filesize on disk and
                 last modified time.
+            copy_duplicate_artifact (bool): if true and the Tasks'
+                argument signature matches a previous Tasks without direct
+                comparison of the target path files in the arguments other
+                than their positions in the target path list, the target
+                artifacts from a previously successful Task execution will
+                be copied to the new one.
 
         Returns:
             Task which was just added to the graph or an existing Task that
@@ -492,25 +499,45 @@ class TaskGraph(object):
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
                     self.worker_pool, self.taskgraph_cache_dir_path, priority,
-                    n_retries, digest_algorithm, self.taskgraph_started_event)
+                    n_retries, digest_algorithm, copy_duplicate_artifact,
+                    self.taskgraph_started_event)
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
-                try:
+                if new_task in self.task_map:
                     duplicate_task = self.task_map[new_task]
-                    if (new_task._target_path_list !=
-                            duplicate_task._target_path_list):
+                    new_task_target_set = set(new_task._target_path_list)
+                    duplicate_task_target_set = set(
+                        duplicate_task._target_path_list)
+                    if new_task_target_set == duplicate_task_target_set:
+                        LOGGER.warning(
+                            "A duplicate task was submitted: %s original: %s",
+                            new_task, self.task_map[new_task])
+                        return duplicate_task
+                    disjoint_target_set = (
+                        new_task_target_set.symmetric_difference(
+                            duplicate_task_target_set))
+                    if len(disjoint_target_set) == (
+                            len(new_task_target_set) +
+                            len(duplicate_task_target_set)):
+                        if duplicate_task not in dependent_task_list:
+                            LOGGER.info(
+                                "A task was created that had an identical "
+                                "args signature sans target paths, but a "
+                                "different target_path_list of the same "
+                                "length. To avoid recomputation, dynamically "
+                                "adding previous Task as a dependent task to "
+                                "this one.")
+                            dependent_task_list = (
+                                dependent_task_list + [duplicate_task])
+                    else:
                         raise RuntimeError(
                             "A task was created that has the same arguments "
-                            "as another task, but different expected target "
-                            "paths: submitted task: %s, existing task: %s" % (
-                                new_task, duplicate_task))
-                    LOGGER.warning(
-                        "A duplicate task was submitted: %s original: %s",
-                        new_task, self.task_map[new_task])
-                    return self.task_map[new_task]
-                except KeyError:
-                    pass
+                            "as another task, but only partially different "
+                            "expected target paths. This runs the risk of "
+                            "unpredictably overwriting output so treating as "
+                            "a runtime error: submitted task: %s, existing "
+                            "task: %s" % (new_task, duplicate_task))
 
                 self.task_map[new_task] = new_task
                 if self.n_workers < 0:
@@ -526,15 +553,13 @@ class TaskGraph(object):
                         dep_task for dep_task in dependent_task_list
                         if dep_task not in self.completed_tasks]
                     if not outstanding_dependent_task_list:
-                        is_precalculated_result = (
-                            new_task.is_precalculated())
-                        if is_precalculated_result is True:
+                        if new_task.is_precalculated:
                             LOGGER.debug(
                                 "multiprocess: %s is precalculated, "
                                 "and dependent tasks are satisified, "
                                 "skipping call", task_name)
                             self.completed_tasks.add(new_task)
-                        elif is_precalculated_result is False:
+                        else:
                             LOGGER.debug(
                                 "task %s has all dependent tasks pre-"
                                 "satisfied, sending to "
@@ -543,10 +568,6 @@ class TaskGraph(object):
                             self.task_ready_priority_queue.put(new_task)
                             self.task_waiting_count += 1
                             self.executor_ready_event.set()
-                        else:
-                            # this is a target copy path list:
-                            for src, target in is_precalculated_result:
-                                shutil.copyfile(src, target)
                     else:
                         # there are unresolved tasks that the waiting
                         # process scheduler has not been notified of.
@@ -1049,20 +1070,7 @@ class Task(object):
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
-            potential_copy_path_list = []
-            for target_path, archived_target_tuple in zip(
-                    self._target_path_list, result_target_path_stats):
-                if target_path != archived_target_tuple[0]:
-                    potential_copy_path_list.append(
-                        (archived_target_tuple[0], target_path))
-                LOGGER.info("precalculated (%s)\n%s\n%s" % (
-                    self, self._target_path_list, result_target_path_stats))
-            with self._deep_hash_lock:
-                self._precalculated = True
-            if potential_copy_path_list:
-                return potential_copy_path_list
-            else:
-                return True
+            return True
         except EOFError:
             return False
 
