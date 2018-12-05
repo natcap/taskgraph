@@ -204,12 +204,12 @@ class TaskGraph(object):
         sql_create_projects_table = (
             """
             CREATE TABLE IF NOT EXISTS taskgraph_data (
-                task_hash TEXT NOT NULL,
+                task_reexecution_hash TEXT NOT NULL,
                 target_path_stats BLOB NOT NULL,
-                PRIMARY KEY (task_hash)
+                PRIMARY KEY (task_reexecution_hash)
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
-            ON taskgraph_data (task_hash);
+            CREATE UNIQUE INDEX IF NOT EXISTS task_reexecution_hash_index
+            ON taskgraph_data (task_reexecution_hash);
             """)
 
         with sqlite3.connect(self._task_database_path) as conn:
@@ -983,8 +983,8 @@ class Task(object):
                 cursor.execute(
                     """
                     SELECT target_path_stats from taskgraph_data
-                    WHERE (task_hash == ?)
-                    """, (self._task_id_hash,))
+                    WHERE (task_reexecution_hash == ?)
+                    """, (self._task_reexecution_hash,))
                 database_result = cursor.fetchone()
             if database_result:
                 result_target_path_stats = pickle.loads(database_result[0])
@@ -1042,7 +1042,7 @@ class Task(object):
                 cursor.execute(
                     """INSERT OR REPLACE INTO taskgraph_data VALUES
                        (?, ?)""", (
-                        self._task_id_hash, pickle.dumps(
+                        self._task_reexecution_hash, pickle.dumps(
                             result_target_path_stats)))
                 conn.commit()
         self._precalculated = True
@@ -1076,8 +1076,11 @@ class Task(object):
         # files have been created/updated/or not.
         self._reexecution_info['file_stat_list'] = pprint.pformat(
             file_stat_list)
-        reexecution_string = '%s:%s' % (
-            self._task_id_hash, self._reexecution_info['file_stat_list'])
+        # the x[2] is to only take the *hash* part of the 'file_stat'
+        reexecution_string = '%s:%s:%s' % (
+            self._reexecution_info['func_name'],
+            self._reexecution_info['source_code_hash'],
+            str([x[2] for x in file_stat_list]))
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
         try:
@@ -1086,8 +1089,8 @@ class Task(object):
                 cursor.execute(
                     """
                         SELECT target_path_stats from taskgraph_data
-                        WHERE (task_hash == ?)
-                    """, (self._task_id_hash,))
+                        WHERE (task_reexecution_hash == ?)
+                    """, (self._task_reexecution_hash,))
                 database_result = cursor.fetchone()
             if database_result is None:
                 LOGGER.info(
@@ -1201,7 +1204,7 @@ def _get_file_stats(
 
 
     Return:
-        list of (path, hash) tuples for any filepaths found in
+        list of (path, hash_algorithm, hash) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
 
