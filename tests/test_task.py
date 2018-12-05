@@ -870,7 +870,7 @@ class TaskGraphTests(unittest.TestCase):
             args=(base_file_path, target_path),
             target_path_list=[target_path],
             copy_duplicate_artifact=True,
-            hash_algorithm='blake2b',
+            hash_algorithm='md5',
             task_name='first _copy_file_once')
 
         task_graph.close()
@@ -884,7 +884,7 @@ class TaskGraphTests(unittest.TestCase):
             args=(base2_file_path, alt_target_path),
             target_path_list=[alt_target_path],
             copy_duplicate_artifact=True,
-            hash_algorithm='blake2b',
+            hash_algorithm='md5',
             task_name='second _copy_file_once')
 
         task_graph.close()
