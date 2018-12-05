@@ -416,7 +416,7 @@ class TaskGraph(object):
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
             dependent_task_list=None, ignore_directories=True, priority=0,
-            n_retries=0, digest_algorithm=None,
+            n_retries=0, hash_algorithm='sizetimestamp',
             copy_duplicate_artifact=False):
         """Add a task to the task graph.
 
@@ -459,12 +459,17 @@ class TaskGraph(object):
                 processed by the taskgraph scheduler. This means the task may
                 attempt to reexecute immediately, or after some other tasks
                 are cleared.
-            digest_algorithm (string): if not None, a hash function id that
-                exists in hashlib.algorithms_available. Any paths to actual
-                files in the arguments will be digested as their fingerprint,
-                if None, paths will be fingerprinted as a hash of their
-                os.path.normpath(os.path.normcase) combined with their
-                filesize on disk and last modified time.
+            hash_algorithm (string): either a hash function id that
+                exists in hashlib.algorithms_available or 'sizetimestamp'.
+                Any paths to actual files in the arguments will be digested
+                with this algorithm. If value is 'sizetimestamp' the digest
+                will only use the normed path, size, and timestamp of any
+                files found in the arguments. This value is used when
+                determining whether a task is precalculated or its target
+                files can be copied to an equivalent task. Note if
+                `hash_algorithm` is 'sizetimestamp' the task will require the
+                same base path files to determine equality. If it is a
+                `hashlib` algorithm only file contents will be considered.
             copy_duplicate_artifact (bool): if true and the Tasks'
                 argument signature matches a previous Tasks without direct
                 comparison of the target path files in the arguments other
@@ -523,7 +528,7 @@ class TaskGraph(object):
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
                     self._worker_pool, self._taskgraph_cache_dir_path,
-                    priority, n_retries, digest_algorithm,
+                    priority, n_retries, hash_algorithm,
                     copy_duplicate_artifact, self._taskgraph_started_event,
                     self._task_database_path)
 
@@ -740,7 +745,7 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
-            worker_pool, cache_dir, priority, n_retries, digest_algorithm,
+            worker_pool, cache_dir, priority, n_retries, hash_algorithm,
             copy_duplicate_artifact, taskgraph_started_event,
             task_database_path):
         """Make a Task.
@@ -778,12 +783,12 @@ class Task(object):
                 attempt to reexecute immediately, or after some othre tasks
                 are cleared. If <= 0, the task will fail on the first
                 unhandled exception the Task encounters.
-            digest_algorithm (string): if not None, a hash function id that
-                exists in hashlib.algorithms_available. Any paths to actual
-                files in the arguments will be digested as their fingerprint,
-                if None, paths will be fingerprinted as a hash of their
-                os.path.normpath(os.path.normcase) combined with their
-                filesize on disk and last modified time.
+            hash_algorithm (string): either a hash function id that
+                exists in hashlib.algorithms_available or 'sizetimestamp'.
+                Any paths to actual files in the arguments will be digested
+                with this algorithm. If value is 'sizetimestamp' the digest
+                will only use the normed path, size, and timestamp of any
+                files found in the arguments.
             copy_duplicate_artifact (bool): if true and the Tasks'
                 argument signature matches a previous Tasks without direct
                 comparison of the target path files in the arguments other
@@ -829,6 +834,7 @@ class Task(object):
         self._taskgraph_started_event = taskgraph_started_event
         self.n_retries = n_retries
         self._task_database_path = task_database_path
+        self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
         self.exception_object = None
 
@@ -985,7 +991,14 @@ class Task(object):
                         self._target_path_list)
                     for artifact_target, new_target in zip(
                             result_target_path_stats, self._target_path_list):
-                        shutil.copyfile(artifact_target[0], new_target)
+                        if artifact_target != new_target:
+                            shutil.copyfile(artifact_target[0], new_target)
+                        else:
+                            LOGGER.warn(
+                                "duplicate artifact and target paths %s, "
+                                "list: %s" % (
+                                    artifact_target, result_target_path_stats,
+                                    self._target_path_list))
                     result_calculated = True
         if not result_calculated:
             if self._worker_pool is not None:
@@ -1001,7 +1014,8 @@ class Task(object):
 
         # check that the target paths exist and record stats for later
         result_target_path_stats = list(
-            _get_file_stats(self._target_path_list, [], False))
+            _get_file_stats(
+                self._target_path_list, self._hash_algorithm, [], False))
         result_target_path_set = set(
             [x[0] for x in result_target_path_stats])
         target_path_set = set(self._target_path_list)
@@ -1047,6 +1061,7 @@ class Task(object):
             return self._precalculated
         file_stat_list = list(_get_file_stats(
             [self._args, self._kwargs],
+            self._hash_algorithm,
             self._target_path_list+self._ignore_path_list,
             self._ignore_directories))
 
@@ -1155,7 +1170,8 @@ class EncapsulatedTaskOp(ABC):
         pass
 
 
-def _get_file_stats(base_value, ignore_list, ignore_directories):
+def _get_file_stats(
+        base_value, hash_algorithm, ignore_list, ignore_directories):
     """Iterate over any values that are filepaths by getting filestats.
 
     Parameters:
@@ -1168,8 +1184,9 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         ignore_directories (boolean): If True directories are not
             considered for filestats.
 
+
     Return:
-        list of (path, timestamp, filesize) tuples for any filepaths found in
+        list of (path, hash) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
 
@@ -1180,8 +1197,7 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             if norm_path not in ignore_list and (
                     not os.path.isdir(norm_path) or
                     not ignore_directories) and os.path.exists(norm_path):
-                yield (norm_path, os.path.getmtime(norm_path),
-                       os.path.getsize(norm_path))
+                yield (norm_path, hash_file(norm_path, hash_algorithm))
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.
@@ -1194,12 +1210,12 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         for key in sorted(base_value.keys()):
             value = base_value[key]
             for stat in _get_file_stats(
-                    value, ignore_list, ignore_directories):
+                    value, hash_algorithm, ignore_list, ignore_directories):
                 yield stat
     elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for stat in _get_file_stats(
-                    value, ignore_list, ignore_directories):
+                    value, hash_algorithm, ignore_list, ignore_directories):
                 yield stat
 
 
@@ -1260,7 +1276,12 @@ def hash_file(file_path, hash_algorithm, buf_size=2**20):
     Parameters:
         file_path (string): path to file to hash.
         hash_algorithm (string): a hash function id that exists in
-            hashlib.algorithms_available.
+            hashlib.algorithms_available or 'sizetimestamp'. If function id
+            is in hashlib.algorithms_available, the file contents are hashed
+            with that function and the fingerprint is returned. If value is
+            'sizetimestamp' the size and timestamp of the file are returned
+            in a string of the form
+            '[normpath]:[sizeinbytes]:[lastmodifiedtime]'.
         buf_size (int): number of bytes to read from `file_path` at a time
             for digesting.
 
@@ -1269,6 +1290,11 @@ def hash_file(file_path, hash_algorithm, buf_size=2**20):
         of the binary contents of the file located at `file_path`.
 
     """
+    if hash_algorithm == 'sizetimestamp':
+        norm_path = os.path.normpath(os.path.normcase(file_path))
+        return '%s:%s:%s' % (
+            norm_path, os.path.getsize(norm_path),
+            os.path.getmtime(norm_path))
     hash_func = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:
         binary_data = f.read(buf_size)
