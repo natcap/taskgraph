@@ -483,16 +483,18 @@ class TaskGraphTests(unittest.TestCase):
         base_value = [
             'foo', test_dir, test_file, 10, {'a': {'b': test_file}},
             {'a': {'b': test_dir, 'foo': 9}}]
-        ignore_dir_result = list(_get_file_stats(base_value, [], True))
+        ignore_dir_result = list(_get_file_stats(
+            base_value, 'sizetimestamp', [], True))
         # should get two results if we ignore the directories because there's
         # only two files
         self.assertEqual(len(ignore_dir_result), 2)
-        dir_result = list(_get_file_stats(base_value, [], False))
+        dir_result = list(_get_file_stats(
+            base_value, 'sizetimestamp', [], False))
         # should get four results if we track directories because of two files
         # and two directories
         self.assertEqual(len(dir_result), 4)
 
-        result = list(_get_file_stats(u'foo', [], False))
+        result = list(_get_file_stats(u'foo', 'sizetimestamp', [], False))
         self.assertEqual(result, [])
 
     def test_encapsulatedtaskop(self):
@@ -843,7 +845,7 @@ class TaskGraphTests(unittest.TestCase):
             'c:' + r'\\\\\\\\x\\\\\\\\'*2**10 + 'foo',
             'wfeji3223j8923j9' * 2**10]
         self.assertEqual(
-            list(_get_file_stats(base_value, [], True)), [])
+            list(_get_file_stats(base_value, 'sizetimestamp', [], True)), [])
 
     def test_duplicate_call(self):
         """TaskGraph: test that duplicate calls copy target path."""

@@ -13,10 +13,16 @@ import multiprocessing
 import multiprocessing.pool
 import threading
 import sqlite3
+import math
 try:
     import Queue as queue
     # In python 2 basestring is superclass of str and unicode.
     _VALID_PATH_TYPES = (basestring,)
+
+    def _isclose(a, b, rel_tol=1e-9, abs_tol=0.0):
+        """Define isclose function for Python 2.7, >3.6 has math.isclose."""
+        return abs(a-b) < max(rel_tol * max(abs(a), abs(b)), abs_tol)
+    math.isclose = _isclose
 except ImportError:
     # Python3 renamed queue as queue
     import queue
@@ -1093,7 +1099,7 @@ class Task(object):
             if database_result:
                 result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
-            for path, modified_time, size in result_target_path_stats:
+            for path, hash_algorithm, hash_string in result_target_path_stats:
                 if path not in self._target_path_list:
                     mismatched_target_file_list.append(
                         'Recorded path not in target path list %s' % path)
@@ -1101,19 +1107,24 @@ class Task(object):
                     mismatched_target_file_list.append(
                         'Path not found: %s' % path)
                     continue
-                target_modified_time = os.path.getmtime(path)
-                if modified_time != target_modified_time:
-                    mismatched_target_file_list.append(
-                        "Modified times don't match "
-                        "desired: (%s) target: (%s)" % (
-                            modified_time, target_modified_time))
-                    continue
-                target_size = os.path.getsize(path)
-                if size != target_size:
-                    mismatched_target_file_list.append(
-                        "File sizes don't match "
-                        "desired: (%s) target: (%s)" % (
-                            size, target_size))
+                if hash_algorithm == 'sizetimestamp':
+                    size, modified_time = [
+                        float(x) for x in hash_string.split(':')]
+                    target_modified_time = os.path.getmtime(path)
+                    if not math.isclose(modified_time, target_modified_time):
+                        mismatched_target_file_list.append(
+                            "Modified times don't match "
+                            "desired: (%f) target: (%f)" % (
+                                modified_time, target_modified_time))
+                        continue
+                    target_size = os.path.getsize(path)
+                    if size != target_size:
+                        mismatched_target_file_list.append(
+                            "File sizes don't match "
+                            "desired: (%s) target: (%s)" % (
+                                size, target_size))
+                else:
+                    raise RuntimeError("not implemented")
             if mismatched_target_file_list:
                 LOGGER.warning(
                     "not precalculated (%s), Task hash exists, "
@@ -1197,7 +1208,9 @@ def _get_file_stats(
             if norm_path not in ignore_list and (
                     not os.path.isdir(norm_path) or
                     not ignore_directories) and os.path.exists(norm_path):
-                yield (norm_path, hash_file(norm_path, hash_algorithm))
+                yield (
+                    norm_path, hash_algorithm,
+                    _hash_file(norm_path, hash_algorithm))
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.
@@ -1270,7 +1283,7 @@ def _scrub_task_args(base_value, target_path_list):
         return base_value
 
 
-def hash_file(file_path, hash_algorithm, buf_size=2**20):
+def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """Return a hex digest of `file_path`.
 
     Parameters:
@@ -1281,7 +1294,7 @@ def hash_file(file_path, hash_algorithm, buf_size=2**20):
             with that function and the fingerprint is returned. If value is
             'sizetimestamp' the size and timestamp of the file are returned
             in a string of the form
-            '[normpath]:[sizeinbytes]:[lastmodifiedtime]'.
+            '[sizeinbytes]:[lastmodifiedtime]'.
         buf_size (int): number of bytes to read from `file_path` at a time
             for digesting.
 
@@ -1292,9 +1305,8 @@ def hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = os.path.normpath(os.path.normcase(file_path))
-        return '%s:%s:%s' % (
-            norm_path, os.path.getsize(norm_path),
-            os.path.getmtime(norm_path))
+        return '%d:%f' % (
+            os.path.getsize(norm_path), os.path.getmtime(norm_path))
     hash_func = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:
         binary_data = f.read(buf_size)
