@@ -1283,6 +1283,8 @@ def _scrub_task_args(base_value, target_path_list):
         if normalized_path in target_path_list:
             return 'target_path_list[%d]' % target_path_list.index(
                 normalized_path)
+        else:
+            return normalized_path
     else:
         return base_value
 
