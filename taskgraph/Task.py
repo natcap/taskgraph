@@ -1114,17 +1114,21 @@ class Task(object):
                     if not math.isclose(modified_time, target_modified_time):
                         mismatched_target_file_list.append(
                             "Modified times don't match "
-                            "desired: (%f) target: (%f)" % (
+                            "cached: (%f) actual: (%f)" % (
                                 modified_time, target_modified_time))
                         continue
                     target_size = os.path.getsize(path)
                     if size != target_size:
                         mismatched_target_file_list.append(
                             "File sizes don't match "
-                            "desired: (%s) target: (%s)" % (
+                            "cached: (%s) actual: (%s)" % (
                                 size, target_size))
                 else:
-                    raise RuntimeError("not implemented")
+                    target_hash = _hash_file(path, hash_algorithm)
+                    if hash_string != target_hash:
+                        mismatched_target_file_list.append(
+                            "File hashes are different. cached: (%s) "
+                            "actual: (%s)" % (hash_string, target_hash))
             if mismatched_target_file_list:
                 LOGGER.warning(
                     "not precalculated (%s), Task hash exists, "

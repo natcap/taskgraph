@@ -84,9 +84,9 @@ def _create_file_once(target_path, content):
 
 def _copy_file_once(base_path, target_path):
     """Copy base to target on the first call, raise exception on second."""
-    if hasattr(_create_file_once, 'executed'):
+    if hasattr(_copy_file_once, 'executed'):
         raise RuntimeError("this function was called twice")
-    _create_file_once.executed = True
+    _copy_file_once.executed = True
     shutil.copyfile(base_path, target_path)
 
 
