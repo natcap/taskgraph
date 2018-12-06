@@ -173,6 +173,9 @@ class TaskGraph(object):
         # this lock is used to synchronize the following objects
         self._taskgraph_lock = threading.RLock()
 
+        # this is used to guard multiple connections to the same database
+        self._task_database_lock = threading.Lock()
+
         # this might hold the threads to execute tasks if n_workers >= 0
         self._task_executor_thread_list = []
 
@@ -510,7 +513,7 @@ class TaskGraph(object):
                     ignore_path_list, ignore_directories,
                     self._worker_pool, self._taskgraph_cache_dir_path,
                     priority, n_retries, self._taskgraph_started_event,
-                    self._task_database_path)
+                    self._task_database_path, self._task_database_lock)
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
@@ -698,7 +701,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
             worker_pool, cache_dir, priority, n_retries,
-            taskgraph_started_event, task_database_path):
+            taskgraph_started_event, task_database_path, task_database_lock):
         """Make a Task.
 
         Parameters:
@@ -742,6 +745,8 @@ class Task(object):
                     data_blob BLOB NOT NULL
                 If a call is successful its hash is inserted/updated in the
                 table and the data_blob stores the base/target stats.
+            task_database_lock (threading.Lock): used to lock the task
+                database before a .connect.
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -770,6 +775,7 @@ class Task(object):
         self._taskgraph_started_event = taskgraph_started_event
         self.n_retries = n_retries
         self._task_database_path = task_database_path
+        self._task_database_lock = task_database_lock
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
@@ -932,14 +938,15 @@ class Task(object):
         # transient between taskgraph executions and we should expect to
         # run it again.
         if self._target_path_list:
-            with sqlite3.connect(self._task_database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """INSERT OR REPLACE INTO taskgraph_data VALUES
-                       (?, ?)""", (
-                        self._task_reexecution_hash, pickle.dumps(
-                            result_target_path_stats)))
-                conn.commit()
+            with self._task_database_lock:
+                with sqlite3.connect(self._task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """INSERT OR REPLACE INTO taskgraph_data VALUES
+                           (?, ?)""", (
+                            self._task_reexecution_hash, pickle.dumps(
+                                result_target_path_stats)))
+                    conn.commit()
         self._precalculated = True
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
@@ -975,14 +982,15 @@ class Task(object):
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
         try:
-            with sqlite3.connect(self._task_database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                        SELECT data_blob from taskgraph_data
-                        WHERE (task_hash == ?)
-                    """, (self._task_reexecution_hash,))
-                database_result = cursor.fetchone()
+            with self._task_database_lock:
+                with sqlite3.connect(self._task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                            SELECT data_blob from taskgraph_data
+                            WHERE (task_hash == ?)
+                        """, (self._task_reexecution_hash,))
+                    database_result = cursor.fetchone()
             if database_result is None:
                 LOGGER.info(
                     "not precalculated, Task hash does not "

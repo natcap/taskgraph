@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Fixed a race condition that would sometimes cause an exception when multiple
+  threads attempted to read or write to the completed Task Database.
+
 0.7.2 (2018-11-21)
 ------------------
 * TaskGraph now stores all task completion information in a single SQLite
