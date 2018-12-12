@@ -264,62 +264,66 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        if self._n_workers > 0:
-            LOGGER.debug("shutting down workers")
-            self._worker_pool.terminate()
-            # close down the log monitor thread
-            self._logging_queue.put(None)
-            timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
-            if timedout:
-                LOGGER.warning(
-                    '_logging_monitor_thread %s timed out',
-                    self._logging_monitor_thread)
-
-        if self._logging_queue:
-            # Close down the logging monitor thread.
-            self._logging_queue.put(None)
-            self._logging_monitor_thread.join(_MAX_TIMEOUT)
-            # drain the queue if anything is left
-            while True:
-                try:
-                    x = self._logging_queue.get_nowait()
-                    LOGGER.error("the logging queue had this in it: %s", x)
-                except queue.Empty:
-                    break
-
-        self._taskgraph_started_event.set()
-        if self._n_workers >= 0:
-            self._executor_ready_event.set()
-            for executor_thread in self._task_executor_thread_list:
-                try:
-                    timedout = not executor_thread.join(_MAX_TIMEOUT)
-                    if timedout:
-                        LOGGER.warning(
-                            'task executor thread timed out %s',
-                            executor_thread)
-                except Exception:
-                    LOGGER.exception(
-                        "Exception when joining %s", executor_thread)
-            if self._reporting_interval is not None:
-                LOGGER.debug("joining _monitor_thread.")
-                timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+        try:
+            # it's possible the global state is not well defined, so just in
+            # case we'll wrap it all up in a try/except
+            if self._n_workers > 0:
+                LOGGER.debug("shutting down workers")
+                self._worker_pool.terminate()
+                # close down the log monitor thread
+                self._logging_queue.put(None)
+                timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
                 if timedout:
                     LOGGER.warning(
-                        '_monitor_thread %s timed out', self._monitor_thread)
-                for task in self._task_map.values():
-                    # this is a shortcut to get the tasks to mark as joined
-                    task.task_done_executing_event.set()
+                        '_logging_monitor_thread %s timed out',
+                        self._logging_monitor_thread)
 
-        # drain the task ready queue if there's anything left
-        while True:
-            try:
-                x = self._task_ready_priority_queue.get_nowait()
-                LOGGER.error(
-                    "task_ready_priority_queue not empty contains: %s", x)
-            except queue.Empty:
-                break
+            if self._logging_queue:
+                # Close down the logging monitor thread.
+                self._logging_queue.put(None)
+                self._logging_monitor_thread.join(_MAX_TIMEOUT)
+                # drain the queue if anything is left
+                while True:
+                    try:
+                        x = self._logging_queue.get_nowait()
+                        LOGGER.error("the logging queue had this in it: %s", x)
+                    except queue.Empty:
+                        break
 
-        LOGGER.debug('taskgraph terminated')
+            self._taskgraph_started_event.set()
+            if self._n_workers >= 0:
+                self._executor_ready_event.set()
+                for executor_thread in self._task_executor_thread_list:
+                    try:
+                        timedout = not executor_thread.join(_MAX_TIMEOUT)
+                        if timedout:
+                            LOGGER.warning(
+                                'task executor thread timed out %s',
+                                executor_thread)
+                    except Exception:
+                        LOGGER.exception(
+                            "Exception when joining %s", executor_thread)
+                if self._reporting_interval is not None:
+                    LOGGER.debug("joining _monitor_thread.")
+                    timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+                    if timedout:
+                        LOGGER.warning(
+                            '_monitor_thread %s timed out', self._monitor_thread)
+                    for task in self._task_map.values():
+                        # this is a shortcut to get the tasks to mark as joined
+                        task.task_done_executing_event.set()
+
+            # drain the task ready queue if there's anything left
+            while True:
+                try:
+                    x = self._task_ready_priority_queue.get_nowait()
+                    LOGGER.error(
+                        "task_ready_priority_queue not empty contains: %s", x)
+                except queue.Empty:
+                    break
+            LOGGER.debug('taskgraph terminated')
+        except:
+            pass
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
