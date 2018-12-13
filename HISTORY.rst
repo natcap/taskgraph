@@ -8,8 +8,19 @@ Unreleased Changes
 ------------------
 * Fixed a race condition that would sometimes cause an exception when multiple
   threads attempted to read or write to the completed Task Database.
-* Fixed an issue that could cause an exception in `__del__` to print to stderr
-  during Python interpreter shutdown.
+* Fixed an issue that could cause an exception in ``__del__`` to print to
+  stderr during Python interpreter shutdown.
+* Added a ``hash_algorithm`` parameter to ``add_task`` that is a string of
+  either 'sizetimestamp' or anything in ``hashlib.available_algorithms``. This
+  option tells TaskGraph how to fingerprint input and target files to
+  determine the need for recomputation.
+* Added a ``copy_duplicate_artifact`` parameter to ``add_task`` that when True
+  tells TaskGraph to copy duplicate target results to a new target so long as
+  all the parameters and base/target files fingerprint to the same value.
+  This can save significant computation time when use in scenarios where
+  there are small changes in a workflow, but otherwise significant changes
+  in filenames. This often occurs when putting timestamps or other suffixes
+  on files that otherwise have identical content.
 
 0.7.2 (2018-11-21)
 ------------------
