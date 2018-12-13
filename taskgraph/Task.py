@@ -892,10 +892,8 @@ class Task(object):
         for index, arg in enumerate(self._args):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
-                pickled_value = pickle.dumps(scrubbed_value)
-                args_clean.append((
-                    scrubbed_value,
-                    hashlib.sha1(pickled_value).hexdigest()))
+                _ = pickle.dumps(scrubbed_value)
+                args_clean.append(scrubbed_value)
             except TypeError:
                 LOGGER.warning(
                     "could not pickle argument at index %d (%s). "
@@ -909,10 +907,8 @@ class Task(object):
         for key, arg in sorted(self._kwargs.items()):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
-                pickled_value = pickle.dumps(scrubbed_value)
-                kwargs_clean[arg] = (
-                    scrubbed_value,
-                    hashlib.sha1(pickled_value).hexdigest())
+                _ = pickle.dumps(scrubbed_value)
+                kwargs_clean[arg] = scrubbed_value
             except TypeError:
                 LOGGER.warning(
                     "could not pickle kw argument %s (%s). "
@@ -1080,26 +1076,38 @@ class Task(object):
         # case a different version of a file was passed in.
         if self._precalculated is not None:
             return self._precalculated
+
+        # these are the stats of the files that exist that aren't ignored
         file_stat_list = list(_get_file_stats(
             [self._args, self._kwargs],
             self._hash_algorithm,
             self._target_path_list+self._ignore_path_list,
             self._ignore_directories))
 
+        other_arguments = list(_filter_non_files(
+            [self._reexecution_info['args_clean'],
+             self._reexecution_info['kwargs_clean']],
+            self._target_path_list+self._ignore_path_list,
+            self._ignore_directories))
+
+        LOGGER.debug("file_stat_list: %s", file_stat_list)
+        LOGGER.debug("other_arguments: %s", other_arguments)
+
         # add the file stat list to the already existing reexecution info
         # dictionary that contains stats that should not change whether
         # files have been created/updated/or not.
-        self._reexecution_info['file_stat_list'] = pprint.pformat(
-            file_stat_list)
-        # the x[2] is to only take the *hash* part of the 'file_stat'
-        # TODO: want reexecution string to account for actual arguments too
-        #       not just file stats
-        reexecution_string = '%s:%s:%s:%s:%s' % (
+        self._reexecution_info['file_stat_list'] = file_stat_list
+        self._reexecution_info['other_arguments'] = other_arguments
+
+        # TODO: get the args that aren't files in here too:
+
+        reexecution_string = '%s:%s:%s:%s' % (
             self._reexecution_info['func_name'],
             self._reexecution_info['source_code_hash'],
-            self._reexecution_info['args_clean'],
-            self._reexecution_info['kwargs_clean'],
+            self._reexecution_info['other_arguments'],
+            # the x[2] is to only take the *hash* part of the 'file_stat'
             str([x[2] for x in file_stat_list]))
+
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
         try:
@@ -1210,7 +1218,7 @@ class EncapsulatedTaskOp(ABC):
 
 def _get_file_stats(
         base_value, hash_algorithm, ignore_list, ignore_directories):
-    """Iterate over any values that are filepaths by getting filestats.
+    """Return fingerprints of any filepaths in `base_value`.
 
     Parameters:
         base_value: any python value. Any file paths in `base_value`
@@ -1257,6 +1265,54 @@ def _get_file_stats(
             for stat in _get_file_stats(
                     value, hash_algorithm, ignore_list, ignore_directories):
                 yield stat
+
+
+def _filter_non_files(
+        base_value, keep_list, keep_directories):
+    """Remove any values that are files not in ignore list or directories.
+
+    Parameters:
+        base_value: any python value. Any file paths in `base_value`
+            should be "os.path.norm"ed before this function is called.
+            contains filepaths in any nested structure.
+        keep_list (list): any paths found in this list are not filtered.
+            All paths in this list should be "os.path.norm"ed.
+        keep_directories (boolean): If True directories are not filtered
+            out.
+
+    Return:
+        original `base_value` with any nested file paths for files that
+        exist in the os.exists removed.
+
+    """
+    if isinstance(base_value, _VALID_PATH_TYPES):
+        try:
+            norm_path = os.path.normpath(os.path.normcase(base_value))
+            if (norm_path in keep_list or (
+                    os.path.isdir(norm_path) and keep_directories) or
+                    not os.path.isfile(norm_path)):
+                yield norm_path
+        except (OSError, ValueError):
+            # I ran across a ValueError when one of the os.path functions
+            # interpreted the value as a path that was too long.
+            # OSErrors could happen if there's coincidentally a directory we
+            # can't read or it's not a file or something else out of our
+            # control
+            LOGGER.exception(
+                "base_value couldn't be analyzed somehow '%s'", base_value)
+    elif isinstance(base_value, dict):
+        for key in sorted(base_value.keys()):
+            value = base_value[key]
+            for value in _filter_non_files(
+                    value, keep_list, keep_directories):
+                yield value
+    elif isinstance(base_value, (list, set, tuple)):
+        for value in base_value:
+            for value in _filter_non_files(
+                    value, keep_list, keep_directories):
+                yield value
+    else:
+        yield base_value
 
 
 def _scrub_task_args(base_value, target_path_list):

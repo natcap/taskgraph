@@ -494,9 +494,10 @@ class TaskGraphTests(unittest.TestCase):
         os.mkdir(test_dir)
         with open(test_file, 'w') as f:
             f.write('\n')
+        nofile = os.path.join(self.workspace_dir, 'nofile')
         base_value = [
-            'foo', test_dir, test_file, 10, {'a': {'b': test_file}},
-            {'a': {'b': test_dir, 'foo': 9}}]
+            nofile, test_dir, test_file,
+            10, {'a': {'b': test_file}}, {'a': {'b': test_dir, 'foo': 9}}]
         ignore_dir_result = list(_get_file_stats(
             base_value, 'sizetimestamp', [], True))
         # should get two results if we ignore the directories because there's
@@ -508,7 +509,7 @@ class TaskGraphTests(unittest.TestCase):
         # and two directories
         self.assertEqual(len(dir_result), 4)
 
-        result = list(_get_file_stats(u'foo', 'sizetimestamp', [], False))
+        result = list(_get_file_stats(nofile, 'sizetimestamp', [], False))
         self.assertEqual(result, [])
 
     def test_encapsulatedtaskop(self):
