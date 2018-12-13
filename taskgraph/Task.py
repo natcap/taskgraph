@@ -180,6 +180,9 @@ class TaskGraph(object):
         # this lock is used to synchronize the following objects
         self._taskgraph_lock = threading.RLock()
 
+        # this is used to guard multiple connections to the same database
+        self._task_database_lock = threading.Lock()
+
         # this might hold the threads to execute tasks if n_workers >= 0
         self._task_executor_thread_list = []
 
@@ -268,62 +271,66 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        if self._n_workers > 0:
-            LOGGER.debug("shutting down workers")
-            self._worker_pool.terminate()
-            # close down the log monitor thread
-            self._logging_queue.put(None)
-            timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
-            if timedout:
-                LOGGER.warning(
-                    '_logging_monitor_thread %s timed out',
-                    self._logging_monitor_thread)
-
-        if self._logging_queue:
-            # Close down the logging monitor thread.
-            self._logging_queue.put(None)
-            self._logging_monitor_thread.join(_MAX_TIMEOUT)
-            # drain the queue if anything is left
-            while True:
-                try:
-                    x = self._logging_queue.get_nowait()
-                    LOGGER.error("the logging queue had this in it: %s", x)
-                except queue.Empty:
-                    break
-
-        self._taskgraph_started_event.set()
-        if self._n_workers >= 0:
-            self._executor_ready_event.set()
-            for executor_thread in self._task_executor_thread_list:
-                try:
-                    timedout = not executor_thread.join(_MAX_TIMEOUT)
-                    if timedout:
-                        LOGGER.warning(
-                            'task executor thread timed out %s',
-                            executor_thread)
-                except Exception:
-                    LOGGER.exception(
-                        "Exception when joining %s", executor_thread)
-            if self._reporting_interval is not None:
-                LOGGER.debug("joining _monitor_thread.")
-                timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+        try:
+            # it's possible the global state is not well defined, so just in
+            # case we'll wrap it all up in a try/except
+            if self._n_workers > 0:
+                LOGGER.debug("shutting down workers")
+                self._worker_pool.terminate()
+                # close down the log monitor thread
+                self._logging_queue.put(None)
+                timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
                 if timedout:
                     LOGGER.warning(
-                        '_monitor_thread %s timed out', self._monitor_thread)
-                for task in self._task_map.values():
-                    # this is a shortcut to get the tasks to mark as joined
-                    task.task_done_executing_event.set()
+                        '_logging_monitor_thread %s timed out',
+                        self._logging_monitor_thread)
 
-        # drain the task ready queue if there's anything left
-        while True:
-            try:
-                x = self._task_ready_priority_queue.get_nowait()
-                LOGGER.error(
-                    "task_ready_priority_queue not empty contains: %s", x)
-            except queue.Empty:
-                break
+            if self._logging_queue:
+                # Close down the logging monitor thread.
+                self._logging_queue.put(None)
+                self._logging_monitor_thread.join(_MAX_TIMEOUT)
+                # drain the queue if anything is left
+                while True:
+                    try:
+                        x = self._logging_queue.get_nowait()
+                        LOGGER.error("the logging queue had this in it: %s", x)
+                    except queue.Empty:
+                        break
 
-        LOGGER.debug('taskgraph terminated')
+            self._taskgraph_started_event.set()
+            if self._n_workers >= 0:
+                self._executor_ready_event.set()
+                for executor_thread in self._task_executor_thread_list:
+                    try:
+                        timedout = not executor_thread.join(_MAX_TIMEOUT)
+                        if timedout:
+                            LOGGER.warning(
+                                'task executor thread timed out %s',
+                                executor_thread)
+                    except Exception:
+                        LOGGER.exception(
+                            "Exception when joining %s", executor_thread)
+                if self._reporting_interval is not None:
+                    LOGGER.debug("joining _monitor_thread.")
+                    timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+                    if timedout:
+                        LOGGER.warning(
+                            '_monitor_thread %s timed out', self._monitor_thread)
+                    for task in self._task_map.values():
+                        # this is a shortcut to get the tasks to mark as joined
+                        task.task_done_executing_event.set()
+
+            # drain the task ready queue if there's anything left
+            while True:
+                try:
+                    x = self._task_ready_priority_queue.get_nowait()
+                    LOGGER.error(
+                        "task_ready_priority_queue not empty contains: %s", x)
+                except queue.Empty:
+                    break
+            LOGGER.debug('taskgraph terminated')
+        except:
+            pass
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -536,7 +543,7 @@ class TaskGraph(object):
                     self._worker_pool, self._taskgraph_cache_dir_path,
                     priority, n_retries, hash_algorithm,
                     copy_duplicate_artifact, self._taskgraph_started_event,
-                    self._task_database_path)
+                    self._task_database_path, self._task_database_lock)
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
@@ -753,7 +760,7 @@ class Task(object):
             ignore_path_list, ignore_directories,
             worker_pool, cache_dir, priority, n_retries, hash_algorithm,
             copy_duplicate_artifact, taskgraph_started_event,
-            task_database_path):
+            task_database_path, task_database_lock):
         """Make a Task.
 
         Parameters:
@@ -811,6 +818,8 @@ class Task(object):
                 table and the target_path_stats stores the base/target stats
                 for the target files created by the call and listed in
                 `target_path_list`.
+            task_database_lock (threading.Lock): used to lock the task
+                database before a .connect.
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -842,6 +851,7 @@ class Task(object):
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
+        self._task_database_lock = task_database_lock
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
@@ -1037,14 +1047,15 @@ class Task(object):
         # transient between taskgraph executions and we should expect to
         # run it again.
         if self._target_path_list:
-            with sqlite3.connect(self._task_database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """INSERT OR REPLACE INTO taskgraph_data VALUES
-                       (?, ?)""", (
-                        self._task_reexecution_hash, pickle.dumps(
-                            result_target_path_stats)))
-                conn.commit()
+            with self._task_database_lock:
+                with sqlite3.connect(self._task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """INSERT OR REPLACE INTO taskgraph_data VALUES
+                           (?, ?)""", (
+                            self._task_reexecution_hash, pickle.dumps(
+                                result_target_path_stats)))
+                    conn.commit()
         self._precalculated = True
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
@@ -1084,14 +1095,15 @@ class Task(object):
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
         try:
-            with sqlite3.connect(self._task_database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                        SELECT target_path_stats from taskgraph_data
-                        WHERE (task_reexecution_hash == ?)
-                    """, (self._task_reexecution_hash,))
-                database_result = cursor.fetchone()
+            with self._task_database_lock:
+                with sqlite3.connect(self._task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                            SELECT target_path_stats from taskgraph_data
+                            WHERE (task_reexecution_hash == ?)
+                        """, (self._task_reexecution_hash,))
+                    database_result = cursor.fetchone()
             if database_result is None:
                 LOGGER.info(
                     "not precalculated, Task hash does not "
