@@ -892,8 +892,10 @@ class Task(object):
         for index, arg in enumerate(self._args):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
-                _ = pickle.dumps(scrubbed_value)
-                args_clean.append(scrubbed_value)
+                pickled_value = pickle.dumps(scrubbed_value)
+                args_clean.append((
+                    scrubbed_value,
+                    hashlib.sha1(pickled_value).hexdigest()))
             except TypeError:
                 LOGGER.warning(
                     "could not pickle argument at index %d (%s). "
@@ -907,8 +909,10 @@ class Task(object):
         for key, arg in sorted(self._kwargs.items()):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
-                _ = pickle.dumps(scrubbed_value)
-                kwargs_clean[arg] = scrubbed_value
+                pickled_value = pickle.dumps(scrubbed_value)
+                kwargs_clean[arg] = (
+                    scrubbed_value,
+                    hashlib.sha1(pickled_value).hexdigest())
             except TypeError:
                 LOGGER.warning(
                     "could not pickle kw argument %s (%s). "
@@ -918,14 +922,14 @@ class Task(object):
 
         self._reexecution_info = {
             'func_name': self._func.__name__,
-            'args': pprint.pformat(args_clean),
-            'kwargs': pprint.pformat(kwargs_clean),
+            'args_clean': args_clean,
+            'kwargs_clean': kwargs_clean,
             'source_code_hash': hashlib.sha1(
                 source_code.encode('utf-8')).hexdigest(),
         }
 
         argument_hash_string = ':'.join([
-            self._reexecution_info[key]
+            str(self._reexecution_info[key])
             for key in sorted(self._reexecution_info.keys())])
 
         self._task_id_hash = hashlib.sha1(
@@ -1088,9 +1092,13 @@ class Task(object):
         self._reexecution_info['file_stat_list'] = pprint.pformat(
             file_stat_list)
         # the x[2] is to only take the *hash* part of the 'file_stat'
-        reexecution_string = '%s:%s:%s' % (
+        # TODO: want reexecution string to account for actual arguments too
+        #       not just file stats
+        reexecution_string = '%s:%s:%s:%s:%s' % (
             self._reexecution_info['func_name'],
             self._reexecution_info['source_code_hash'],
+            self._reexecution_info['args_clean'],
+            self._reexecution_info['kwargs_clean'],
             str([x[2] for x in file_stat_list]))
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
@@ -1252,10 +1260,15 @@ def _get_file_stats(
 
 
 def _scrub_task_args(base_value, target_path_list):
-    """Scrub a `base_value` so that it's compatible with reexecution hashes.
+    """Attempt to convert `base_value` to canonical values.
 
-    Replace functions with stable string representations and remove any
-    references to normalized target paths.
+    Any paths in `base_value` are normalized, any paths that are also in
+    the `target_path_list` are replaced with a placeholder so that if
+    all other arguments are the same in `base_value` except target path
+    name the function will hash to the same.
+
+    This function can be called before the Task dependencies are satisfied
+    since it doesn't inspect any file stats on disk.
 
     Parameters:
         base_value: any python value
@@ -1263,7 +1276,8 @@ def _scrub_task_args(base_value, target_path_list):
             `base_value` should be replaced with 'in_target_path' so
 
     Returns:
-        base_value with any functions replaced as strings.
+        base_value with any functions replaced as strings and paths in
+            `target_path_list` with a 'target_path_list[n]' placeholder.
 
     """
     if callable(base_value):

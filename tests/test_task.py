@@ -283,14 +283,16 @@ class TaskGraphTests(unittest.TestCase):
             kwargs={
                 'target_path': target_a_path,
             },
-            target_path_list=[target_a_path])
+            target_path_list=[target_a_path],
+            task_name='task a')
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value_b, list_len),
             kwargs={
                 'target_path': target_b_path,
             },
-            target_path_list=[target_b_path])
+            target_path_list=[target_b_path],
+            task_name='task b')
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
             args=(target_a_path, target_b_path),
@@ -298,7 +300,8 @@ class TaskGraphTests(unittest.TestCase):
                 'target_path': result_path,
             },
             target_path_list=[result_path],
-            dependent_task_list=[task_a, task_b])
+            dependent_task_list=[task_a, task_b],
+            task_name='task c')
         sum_task.join()
 
         result = pickle.load(open(result_path, 'rb'))
@@ -308,7 +311,8 @@ class TaskGraphTests(unittest.TestCase):
             func=_sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
-            dependent_task_list=[task_a, sum_task])
+            dependent_task_list=[task_a, sum_task],
+            task_name='task sum_2')
         sum_2_task.join()
         result2 = pickle.load(open(result_2_path, 'rb'))
         expected_result = [(value_a*2+value_b)]*list_len
@@ -318,13 +322,15 @@ class TaskGraphTests(unittest.TestCase):
             func=_sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
-            dependent_task_list=[task_a, sum_task])
+            dependent_task_list=[task_a, sum_task],
+            task_name='task sum_3')
         task_graph.close()
         sum_3_task.join()
         result3 = pickle.load(open(result_2_path, 'rb'))
         expected_result = [(value_a*2+value_b)]*list_len
-        self.assertEqual(result3, expected_result)
         task_graph.join()
+        task_graph = None
+        self.assertEqual(result3, expected_result)
 
         # we should have 4 completed values in the database, 5 total but one
         # was a duplicate
