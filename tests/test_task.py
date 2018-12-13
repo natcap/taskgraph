@@ -90,6 +90,16 @@ def _copy_file_once(base_path, target_path):
     shutil.copyfile(base_path, target_path)
 
 
+def _copy_two_files_once(base_path, target_a_path, target_b_path):
+    """Copy base to target a/b on first call, raise exception on second."""
+    if hasattr(_copy_file_once, 'executed'):
+        raise RuntimeError("this function was called twice")
+    _copy_file_once.executed = True
+    shutil.copyfile(base_path, target_a_path)
+    shutil.copyfile(base_path, target_b_path)
+
+
+
 def _log_from_another_process(logger_name, log_message):
     """Write a log message to a given logger.
 
@@ -360,12 +370,7 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_div_by_zero,
-            args=(value_b, list_len),
-            kwargs={
-                'target_path': target_b_path,
-            },
-            dependent_task_list=[task_a],
-            target_path_list=[target_b_path])
+            dependent_task_list=[task_a])
         _ = task_graph.add_task(
             func=_sum_lists_from_disk,
             args=(target_a_path, target_b_path),
@@ -376,12 +381,8 @@ class TaskGraphTests(unittest.TestCase):
             dependent_task_list=[task_a, task_b])
         task_graph.close()
 
-        with self.assertRaises(TypeError) as cm:
+        with self.assertRaises(ZeroDivisionError) as cm:
             task_graph.join()
-
-        expected_message = '_div_by_zero()'
-        actual_message = str(cm.exception)
-        self.assertTrue(expected_message in actual_message, actual_message)
 
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
@@ -960,6 +961,70 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph.close()
         task_graph.join()
+
+    def test_terminated_taskgraph(self):
+        """TaskGraph: terminated task graph raises exception correctly."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
+        _ = task_graph.add_task(func=_div_by_zero)
+        with self.assertRaises(ZeroDivisionError):
+            task_graph.join()
+
+        with self.assertRaises(RuntimeError) as cm:
+            _ = task_graph.add_task(func=_div_by_zero)
+        expected_message = "add_task when Taskgraph is terminated"
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
+        task_graph.close()
+        # try closing twice just to mess with coverage
+        task_graph.close()
+
+
+    def test_type_list_error(self):
+        """TaskGraph: Task not passed to dependent task list."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        with self.assertRaises(ValueError) as cm:
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[target_path],
+                dependent_task_list=[target_path],
+                task_name='first _create_list_on_disk')
+        expected_message = (
+            "Objects passed to dependent task list that are not tasks")
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
+    def test_target_list_error(self):
+        """TaskGraph: Path not passed to target list."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        with self.assertRaises(ValueError) as cm:
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[1],
+                task_name='_create_list_on_disk')
+        expected_message = (
+            "Values passed to target_path_list are not strings")
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
+    def test_target_path_missing_file(self):
+        """TaskGraph: func runs, but missing target."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        not_target_path = os.path.join(self.workspace_dir, 'not_target.txt')
+        with self.assertRaises(RuntimeError) as cm:
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[not_target_path],
+                task_name='_create_list_on_disk')
+        expected_message = "Missing expected target path results"
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
 
 
 def Fail(n_tries, result_path):

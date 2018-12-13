@@ -827,7 +827,7 @@ class Task(object):
         if any([not (isinstance(path, _VALID_PATH_TYPES))
                 for path in target_path_list]):
             raise ValueError(
-                "Values pass to target_path_list are not strings: %s",
+                "Values passed to target_path_list are not strings: %s",
                 target_path_list)
 
         # sort the target path list because the order doesn't matter for
@@ -936,9 +936,9 @@ class Task(object):
 
     def __eq__(self, other):
         """Two tasks are equal if their hashes are equal."""
-        if isinstance(self, other.__class__):
-            return self._task_id_hash == other._task_id_hash
-        return False
+        return (
+            isinstance(self, other.__class__) and
+            (self._task_id_hash == other._task_id_hash))
 
     def __hash__(self):
         """Return the base-16 integer hash of this hash string."""
@@ -1010,9 +1010,13 @@ class Task(object):
                         if artifact_target != new_target:
                             shutil.copyfile(artifact_target[0], new_target)
                         else:
-                            LOGGER.warn(
-                                "duplicate artifact and target paths %s, "
-                                "list: %s" % (
+                            # This is a bug if this ever happens, but it's so
+                            # bad if it does I want to stop and report a
+                            # helpful error message
+                            raise RuntimeError(
+                                "duplicate copy artifact and target path: "
+                                "%s, result_path_stats: %s, "
+                                "target_path_list: %s" % (
                                     artifact_target, result_target_path_stats,
                                     self._target_path_list))
                     result_calculated = True
