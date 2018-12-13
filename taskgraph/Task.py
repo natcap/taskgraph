@@ -1000,32 +1000,40 @@ class Task(object):
                 result_target_path_stats = pickle.loads(database_result[0])
                 if (len(result_target_path_stats) ==
                         len(self._target_path_list)):
-                    LOGGER.debug(
-                        "copying stored artifacts to target path list. \n"
-                        "\tstored artifacts: %s\n\ttarget_path_list: %s\n",
-                        [x[0] for x in result_target_path_stats],
-                        self._target_path_list)
-                    for artifact_target, new_target in zip(
-                            result_target_path_stats, self._target_path_list):
-                        if artifact_target != new_target:
-                            shutil.copyfile(artifact_target[0], new_target)
-                        else:
-                            # This is a bug if this ever happens, but it's so
-                            # bad if it does I want to stop and report a
-                            # helpful error message
-                            raise RuntimeError(
-                                "duplicate copy artifact and target path: "
-                                "%s, result_path_stats: %s, "
-                                "target_path_list: %s" % (
-                                    artifact_target, result_target_path_stats,
-                                    self._target_path_list))
-                    result_calculated = True
+                    if all([
+                        file_fingerprint == _hash_file(path, hash_algorithm)
+                        for path, hash_algorithm, file_fingerprint in (
+                            result_target_path_stats)]):
+                        LOGGER.debug(
+                            "copying stored artifacts to target path list. \n"
+                            "\tstored artifacts: %s\n\t"
+                            "target_path_list: %s\n",
+                            [x[0] for x in result_target_path_stats],
+                            self._target_path_list)
+                        for artifact_target, new_target in zip(
+                                result_target_path_stats,
+                                self._target_path_list):
+                            if artifact_target != new_target:
+                                shutil.copyfile(
+                                    artifact_target[0], new_target)
+                            else:
+                                # This is a bug if this ever happens, but so
+                                # bad if it does I want to stop and report a
+                                # helpful error message
+                                raise RuntimeError(
+                                    "duplicate copy artifact and target "
+                                    "path: %s, result_path_stats: %s, "
+                                    "target_path_list: %s" % (
+                                        artifact_target,
+                                        result_target_path_stats,
+                                        self._target_path_list))
+                        result_calculated = True
         if not result_calculated:
             if self._worker_pool is not None:
                 result = self._worker_pool.apply_async(
                     func=self._func, args=self._args, kwds=self._kwargs)
-                # the following blocks and raises an exception if result raised
-                # an exception
+                # the following blocks and raises an exception if result
+                # raised an exception
                 LOGGER.debug("apply_async for task %s", self.task_name)
                 result.get()
             else:
