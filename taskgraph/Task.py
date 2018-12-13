@@ -1111,8 +1111,6 @@ class Task(object):
         self._reexecution_info['file_stat_list'] = file_stat_list
         self._reexecution_info['other_arguments'] = other_arguments
 
-        # TODO: get the args that aren't files in here too:
-
         reexecution_string = '%s:%s:%s:%s' % (
             self._reexecution_info['func_name'],
             self._reexecution_info['source_code_hash'],
