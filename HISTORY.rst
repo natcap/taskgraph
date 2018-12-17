@@ -11,7 +11,7 @@ Unreleased Changes
 * Fixed an issue that could cause an exception in ``__del__`` to print to
   stderr during Python interpreter shutdown.
 * Added a ``hash_algorithm`` parameter to ``add_task`` that is a string of
-  either 'sizetimestamp' or anything in ``hashlib.available_algorithms``. This
+  either 'sizetimestamp' or anything in ``hashlib.algorithms_available``. This
   option tells TaskGraph how to fingerprint input and target files to
   determine the need for recomputation.
 * Added a ``copy_duplicate_artifact`` parameter to ``add_task`` that when True
