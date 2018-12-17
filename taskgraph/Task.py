@@ -925,7 +925,7 @@ class Task(object):
         }
 
         argument_hash_string = ':'.join([
-            str(self._reexecution_info[key])
+            repr(self._reexecution_info[key])
             for key in sorted(self._reexecution_info.keys())])
 
         self._task_id_hash = hashlib.sha1(
