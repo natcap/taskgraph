@@ -1265,7 +1265,7 @@ def _get_file_stats(
             LOGGER.exception(
                 "base_value couldn't be analyzed somehow '%s'", base_value)
     elif isinstance(base_value, dict):
-        for key in sorted(base_value.keys()):
+        for key in base_value.keys():
             value = base_value[key]
             for stat in _get_file_stats(
                     value, hash_algorithm, ignore_list, ignore_directories):
@@ -1311,16 +1311,16 @@ def _filter_non_files(
             LOGGER.exception(
                 "base_value couldn't be analyzed somehow '%s'", base_value)
     elif isinstance(base_value, dict):
-        for key in sorted(base_value.keys()):
+        for key in base_value.keys():
             value = base_value[key]
-            for value in _filter_non_files(
+            for filter_value in _filter_non_files(
                     value, keep_list, keep_directories):
-                yield value
+                yield filter_value
     elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
-            for value in _filter_non_files(
+            for filter_value in _filter_non_files(
                     value, keep_list, keep_directories):
-                yield value
+                yield filter_value
     else:
         yield base_value
 
@@ -1364,7 +1364,7 @@ def _scrub_task_args(base_value, target_path_list):
         return '%s:%s' % (base_value.__name__, source_code)
     elif isinstance(base_value, dict):
         result_dict = {}
-        for key in sorted(base_value.keys()):
+        for key in base_value.keys():
             result_dict[key] = _scrub_task_args(
                 base_value[key], target_path_list)
         return result_dict
