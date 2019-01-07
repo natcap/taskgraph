@@ -1,6 +1,7 @@
 """Task graph framework."""
 from __future__ import absolute_import
 
+import shutil
 import time
 import pprint
 import collections
@@ -12,16 +13,22 @@ import multiprocessing
 import multiprocessing.pool
 import threading
 import sqlite3
+import math
 try:
     import Queue as queue
     # In python 2 basestring is superclass of str and unicode.
-    VALID_PATH_TYPES = (basestring,)
+    _VALID_PATH_TYPES = (basestring,)
+
+    def _isclose(a, b, rel_tol=1e-9, abs_tol=0.0):
+        """Define isclose function for Python 2.7, >3.6 has math.isclose."""
+        return abs(a-b) < max(rel_tol * max(abs(a), abs(b)), abs_tol)
+    math.isclose = _isclose
 except ImportError:
     # Python3 renamed queue as queue
     import queue
     import pathlib
     # pathlib only exists in Python3
-    VALID_PATH_TYPES = (str, pathlib.Path)
+    _VALID_PATH_TYPES = (str, pathlib.Path)
 import inspect
 import abc
 
@@ -173,6 +180,9 @@ class TaskGraph(object):
         # this lock is used to synchronize the following objects
         self._taskgraph_lock = threading.RLock()
 
+        # this is used to guard multiple connections to the same database
+        self._task_database_lock = threading.Lock()
+
         # this might hold the threads to execute tasks if n_workers >= 0
         self._task_executor_thread_list = []
 
@@ -197,12 +207,12 @@ class TaskGraph(object):
         sql_create_projects_table = (
             """
             CREATE TABLE IF NOT EXISTS taskgraph_data (
-                task_hash TEXT NOT NULL,
-                data_blob BLOB NOT NULL,
-                PRIMARY KEY (task_hash)
+                task_reexecution_hash TEXT NOT NULL,
+                target_path_stats BLOB NOT NULL,
+                PRIMARY KEY (task_reexecution_hash)
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS task_hash_index
-            ON taskgraph_data (task_hash);
+            CREATE UNIQUE INDEX IF NOT EXISTS task_reexecution_hash_index
+            ON taskgraph_data (task_reexecution_hash);
             """)
 
         with sqlite3.connect(self._task_database_path) as conn:
@@ -261,62 +271,66 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        if self._n_workers > 0:
-            LOGGER.debug("shutting down workers")
-            self._worker_pool.terminate()
-            # close down the log monitor thread
-            self._logging_queue.put(None)
-            timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
-            if timedout:
-                LOGGER.warning(
-                    '_logging_monitor_thread %s timed out',
-                    self._logging_monitor_thread)
-
-        if self._logging_queue:
-            # Close down the logging monitor thread.
-            self._logging_queue.put(None)
-            self._logging_monitor_thread.join(_MAX_TIMEOUT)
-            # drain the queue if anything is left
-            while True:
-                try:
-                    x = self._logging_queue.get_nowait()
-                    LOGGER.error("the logging queue had this in it: %s", x)
-                except queue.Empty:
-                    break
-
-        self._taskgraph_started_event.set()
-        if self._n_workers >= 0:
-            self._executor_ready_event.set()
-            for executor_thread in self._task_executor_thread_list:
-                try:
-                    timedout = not executor_thread.join(_MAX_TIMEOUT)
-                    if timedout:
-                        LOGGER.warning(
-                            'task executor thread timed out %s',
-                            executor_thread)
-                except Exception:
-                    LOGGER.exception(
-                        "Exception when joining %s", executor_thread)
-            if self._reporting_interval is not None:
-                LOGGER.debug("joining _monitor_thread.")
-                timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+        try:
+            # it's possible the global state is not well defined, so just in
+            # case we'll wrap it all up in a try/except
+            if self._n_workers > 0:
+                LOGGER.debug("shutting down workers")
+                self._worker_pool.terminate()
+                # close down the log monitor thread
+                self._logging_queue.put(None)
+                timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
                 if timedout:
                     LOGGER.warning(
-                        '_monitor_thread %s timed out', self._monitor_thread)
-                for task in self._task_map.values():
-                    # this is a shortcut to get the tasks to mark as joined
-                    task.task_done_executing_event.set()
+                        '_logging_monitor_thread %s timed out',
+                        self._logging_monitor_thread)
 
-        # drain the task ready queue if there's anything left
-        while True:
-            try:
-                x = self._task_ready_priority_queue.get_nowait()
-                LOGGER.error(
-                    "task_ready_priority_queue not empty contains: %s", x)
-            except queue.Empty:
-                break
+            if self._logging_queue:
+                # Close down the logging monitor thread.
+                self._logging_queue.put(None)
+                self._logging_monitor_thread.join(_MAX_TIMEOUT)
+                # drain the queue if anything is left
+                while True:
+                    try:
+                        x = self._logging_queue.get_nowait()
+                        LOGGER.error("the logging queue had this in it: %s", x)
+                    except queue.Empty:
+                        break
 
-        LOGGER.debug('taskgraph terminated')
+            self._taskgraph_started_event.set()
+            if self._n_workers >= 0:
+                self._executor_ready_event.set()
+                for executor_thread in self._task_executor_thread_list:
+                    try:
+                        timedout = not executor_thread.join(_MAX_TIMEOUT)
+                        if timedout:
+                            LOGGER.warning(
+                                'task executor thread timed out %s',
+                                executor_thread)
+                    except Exception:
+                        LOGGER.exception(
+                            "Exception when joining %s", executor_thread)
+                if self._reporting_interval is not None:
+                    LOGGER.debug("joining _monitor_thread.")
+                    timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+                    if timedout:
+                        LOGGER.warning(
+                            '_monitor_thread %s timed out', self._monitor_thread)
+                    for task in self._task_map.values():
+                        # this is a shortcut to get the tasks to mark as joined
+                        task.task_done_executing_event.set()
+
+            # drain the task ready queue if there's anything left
+            while True:
+                try:
+                    x = self._task_ready_priority_queue.get_nowait()
+                    LOGGER.error(
+                        "task_ready_priority_queue not empty contains: %s", x)
+                except queue.Empty:
+                    break
+            LOGGER.debug('taskgraph terminated')
+        except:
+            pass
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -414,8 +428,9 @@ class TaskGraph(object):
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
-            dependent_task_list=None, ignore_directories=True, n_retries=0,
-            priority=0):
+            dependent_task_list=None, ignore_directories=True, priority=0,
+            n_retries=0, hash_algorithm='sizetimestamp',
+            copy_duplicate_artifact=False):
         """Add a task to the task graph.
 
         Parameters:
@@ -457,6 +472,23 @@ class TaskGraph(object):
                 processed by the taskgraph scheduler. This means the task may
                 attempt to reexecute immediately, or after some other tasks
                 are cleared.
+            hash_algorithm (string): either a hash function id that
+                exists in hashlib.algorithms_available or 'sizetimestamp'.
+                Any paths to actual files in the arguments will be digested
+                with this algorithm. If value is 'sizetimestamp' the digest
+                will only use the normed path, size, and timestamp of any
+                files found in the arguments. This value is used when
+                determining whether a task is precalculated or its target
+                files can be copied to an equivalent task. Note if
+                `hash_algorithm` is 'sizetimestamp' the task will require the
+                same base path files to determine equality. If it is a
+                `hashlib` algorithm only file contents will be considered.
+            copy_duplicate_artifact (bool): if true and the Tasks'
+                argument signature matches a previous Tasks without direct
+                comparison of the target path files in the arguments other
+                than their positions in the target path list, the target
+                artifacts from a previously successful Task execution will
+                be copied to the new one.
 
         Returns:
             Task which was just added to the graph or an existing Task that
@@ -509,17 +541,46 @@ class TaskGraph(object):
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
                     self._worker_pool, self._taskgraph_cache_dir_path,
-                    priority, n_retries, self._taskgraph_started_event,
-                    self._task_database_path)
+                    priority, n_retries, hash_algorithm,
+                    copy_duplicate_artifact, self._taskgraph_started_event,
+                    self._task_database_path, self._task_database_lock)
 
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
                 if new_task in self._task_map:
-                    LOGGER.warning(
-                        "A duplicate task was submitted: %s original: %s",
-                        new_task, self._task_map[new_task])
-                    return self._task_map[new_task]
-
+                    duplicate_task = self._task_map[new_task]
+                    new_task_target_set = set(new_task._target_path_list)
+                    duplicate_task_target_set = set(
+                        duplicate_task._target_path_list)
+                    if new_task_target_set == duplicate_task_target_set:
+                        LOGGER.warning(
+                            "A duplicate task was submitted: %s original: %s",
+                            new_task, self._task_map[new_task])
+                        return duplicate_task
+                    disjoint_target_set = (
+                        new_task_target_set.symmetric_difference(
+                            duplicate_task_target_set))
+                    if len(disjoint_target_set) == (
+                            len(new_task_target_set) +
+                            len(duplicate_task_target_set)):
+                        if duplicate_task not in dependent_task_list:
+                            LOGGER.info(
+                                "A task was created that had an identical "
+                                "args signature sans target paths, but a "
+                                "different target_path_list of the same "
+                                "length. To avoid recomputation, dynamically "
+                                "adding previous Task as a dependent task to "
+                                "this one.")
+                            dependent_task_list = (
+                                dependent_task_list + [duplicate_task])
+                    else:
+                        raise RuntimeError(
+                            "A task was created that has the same arguments "
+                            "as another task, but only partially different "
+                            "expected target paths. This runs the risk of "
+                            "unpredictably overwriting output so treating as "
+                            "a runtime error: submitted task: %s, existing "
+                            "task: %s" % (new_task, duplicate_task))
                 self._task_map[new_task] = new_task
                 if self._n_workers < 0:
                     # call directly if single threaded
@@ -697,8 +758,9 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
-            worker_pool, cache_dir, priority, n_retries,
-            taskgraph_started_event, task_database_path):
+            worker_pool, cache_dir, priority, n_retries, hash_algorithm,
+            copy_duplicate_artifact, taskgraph_started_event,
+            task_database_path, task_database_lock):
         """Make a Task.
 
         Parameters:
@@ -734,42 +796,62 @@ class Task(object):
                 attempt to reexecute immediately, or after some othre tasks
                 are cleared. If <= 0, the task will fail on the first
                 unhandled exception the Task encounters.
+            hash_algorithm (string): either a hash function id that
+                exists in hashlib.algorithms_available or 'sizetimestamp'.
+                Any paths to actual files in the arguments will be digested
+                with this algorithm. If value is 'sizetimestamp' the digest
+                will only use the normed path, size, and timestamp of any
+                files found in the arguments.
+            copy_duplicate_artifact (bool): if true and the Tasks'
+                argument signature matches a previous Tasks without direct
+                comparison of the target path files in the arguments other
+                than their positions in the target path list, the target
+                artifacts from a previously successful Task execution will
+                be copied to the new one.
             taskgraph_started_event (Event): can be used to start the main
                 TaskGraph if it has not yet started in case a Task is joined.
             task_database_path (str): path to an SQLITE database that has
                 table named "taskgraph_data" with the two fields:
                     task_hash TEXT NOT NULL,
-                    data_blob BLOB NOT NULL
+                    target_path_stats BLOB NOT NULL
                 If a call is successful its hash is inserted/updated in the
-                table and the data_blob stores the base/target stats.
+                table and the target_path_stats stores the base/target stats
+                for the target files created by the call and listed in
+                `target_path_list`.
+            task_database_lock (threading.Lock): used to lock the task
+                database before a .connect.
 
         """
         # it is a common error to accidentally pass a non string as to the
         # target path list, this terminates early if so
-        if any([not (isinstance(path, VALID_PATH_TYPES))
+        if any([not (isinstance(path, _VALID_PATH_TYPES))
                 for path in target_path_list]):
             raise ValueError(
-                "Values pass to target_path_list are not strings: %s",
+                "Values passed to target_path_list are not strings: %s",
                 target_path_list)
 
         # sort the target path list because the order doesn't matter for
         # a result, but it would cause a task to be reexecuted if the only
         # difference was a different order.
         self._target_path_list = sorted(
-            [os.path.normpath(path) for path in target_path_list])
-
+            [os.path.normpath(os.path.normcase(path))
+             for path in target_path_list])
         self.task_name = task_name
         self._func = func
         self._args = args
         self._kwargs = kwargs
         self._cache_dir = cache_dir
         self._ignore_path_list = [
-            os.path.normpath(path) for path in ignore_path_list]
+            os.path.normpath(os.path.normcase(path))
+            for path in ignore_path_list]
         self._ignore_directories = ignore_directories
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
         self.n_retries = n_retries
         self._task_database_path = task_database_path
+        self._hash_algorithm = hash_algorithm
+        self._copy_duplicate_artifact = copy_duplicate_artifact
+        self._task_database_lock = task_database_lock
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
@@ -809,7 +891,7 @@ class Task(object):
         args_clean = []
         for index, arg in enumerate(self._args):
             try:
-                scrubbed_value = _scrub_functions(arg)
+                scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
                 args_clean.append(scrubbed_value)
             except TypeError:
@@ -822,11 +904,11 @@ class Task(object):
         kwargs_clean = {}
         # iterate through sorted order so we get the same hash result with the
         # same set of kwargs irrespective of the item dict order.
-        for key, value in sorted(self._kwargs.items()):
+        for key, arg in sorted(self._kwargs.items()):
             try:
-                scrubbed_value = _scrub_functions(arg)
+                scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
-                kwargs_clean[key] = scrubbed_value
+                kwargs_clean[arg] = scrubbed_value
             except TypeError:
                 LOGGER.warning(
                     "could not pickle kw argument %s (%s). "
@@ -836,15 +918,14 @@ class Task(object):
 
         self._reexecution_info = {
             'func_name': self._func.__name__,
-            'args': pprint.pformat(args_clean),
-            'kwargs': pprint.pformat(kwargs_clean),
+            'args_clean': args_clean,
+            'kwargs_clean': kwargs_clean,
             'source_code_hash': hashlib.sha1(
                 source_code.encode('utf-8')).hexdigest(),
-            'target_path_list': pprint.pformat(self._target_path_list),
         }
 
         argument_hash_string = ':'.join([
-            self._reexecution_info[key]
+            repr(self._reexecution_info[key])
             for key in sorted(self._reexecution_info.keys())])
 
         self._task_id_hash = hashlib.sha1(
@@ -855,9 +936,9 @@ class Task(object):
 
     def __eq__(self, other):
         """Two tasks are equal if their hashes are equal."""
-        if isinstance(self, other.__class__):
-            return self._task_id_hash == other._task_id_hash
-        return False
+        return (
+            isinstance(self, other.__class__) and
+            (self._task_id_hash == other._task_id_hash))
 
     def __hash__(self):
         """Return the base-16 integer hash of this hash string."""
@@ -879,6 +960,7 @@ class Task(object):
                 "priority": self._priority,
                 "ignore_path_list": self._ignore_path_list,
                 "ignore_directories": self._ignore_directories,
+                "target_path_list": self._target_path_list,
                 "task_id_hash": self._task_id_hash,
                 "task_reexecution_hash": self._task_reexecution_hash,
                 "exception_object": self.exception_object,
@@ -903,20 +985,65 @@ class Task(object):
             self.task_done_executing_event.set()
             return
         LOGGER.debug("not precalculated %s", self.task_name)
-        if self._worker_pool is not None:
-            result = self._worker_pool.apply_async(
-                func=self._func, args=self._args, kwds=self._kwargs)
-            # the following blocks and raises an exception if result raised
-            # an exception
-            LOGGER.debug("apply_async for task %s", self.task_name)
-            result.get()
-        else:
-            LOGGER.debug("direct _func for task %s", self.task_name)
-            self._func(*self._args, **self._kwargs)
+        result_calculated = False
+        if self._copy_duplicate_artifact:
+            # try to see if we can copy old files
+            with sqlite3.connect(self._task_database_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT target_path_stats from taskgraph_data
+                    WHERE (task_reexecution_hash == ?)
+                    """, (self._task_reexecution_hash,))
+                database_result = cursor.fetchone()
+            if database_result:
+                result_target_path_stats = pickle.loads(database_result[0])
+                if (len(result_target_path_stats) ==
+                        len(self._target_path_list)):
+                    if all([
+                        file_fingerprint == _hash_file(path, hash_algorithm)
+                        for path, hash_algorithm, file_fingerprint in (
+                            result_target_path_stats)]):
+                        LOGGER.debug(
+                            "copying stored artifacts to target path list. \n"
+                            "\tstored artifacts: %s\n\t"
+                            "target_path_list: %s\n",
+                            [x[0] for x in result_target_path_stats],
+                            self._target_path_list)
+                        for artifact_target, new_target in zip(
+                                result_target_path_stats,
+                                self._target_path_list):
+                            if artifact_target != new_target:
+                                shutil.copyfile(
+                                    artifact_target[0], new_target)
+                            else:
+                                # This is a bug if this ever happens, but so
+                                # bad if it does I want to stop and report a
+                                # helpful error message
+                                raise RuntimeError(
+                                    "duplicate copy artifact and target "
+                                    "path: %s, result_path_stats: %s, "
+                                    "target_path_list: %s" % (
+                                        artifact_target,
+                                        result_target_path_stats,
+                                        self._target_path_list))
+                        result_calculated = True
+        if not result_calculated:
+            if self._worker_pool is not None:
+                result = self._worker_pool.apply_async(
+                    func=self._func, args=self._args, kwds=self._kwargs)
+                # the following blocks and raises an exception if result
+                # raised an exception
+                LOGGER.debug("apply_async for task %s", self.task_name)
+                result.get()
+            else:
+                LOGGER.debug("direct _func for task %s", self.task_name)
+                self._func(*self._args, **self._kwargs)
 
         # check that the target paths exist and record stats for later
         result_target_path_stats = list(
-            _get_file_stats(self._target_path_list, [], False))
+            _get_file_stats(
+                self._target_path_list, self._hash_algorithm, [], False))
         result_target_path_set = set(
             [x[0] for x in result_target_path_stats])
         target_path_set = set(self._target_path_list)
@@ -932,14 +1059,15 @@ class Task(object):
         # transient between taskgraph executions and we should expect to
         # run it again.
         if self._target_path_list:
-            with sqlite3.connect(self._task_database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """INSERT OR REPLACE INTO taskgraph_data VALUES
-                       (?, ?)""", (
-                        self._task_reexecution_hash, pickle.dumps(
-                            result_target_path_stats)))
-                conn.commit()
+            with self._task_database_lock:
+                with sqlite3.connect(self._task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """INSERT OR REPLACE INTO taskgraph_data VALUES
+                           (?, ?)""", (
+                            self._task_reexecution_hash, pickle.dumps(
+                                result_target_path_stats)))
+                    conn.commit()
         self._precalculated = True
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
@@ -960,29 +1088,48 @@ class Task(object):
         # case a different version of a file was passed in.
         if self._precalculated is not None:
             return self._precalculated
+
+        # these are the stats of the files that exist that aren't ignored
         file_stat_list = list(_get_file_stats(
             [self._args, self._kwargs],
+            self._hash_algorithm,
             self._target_path_list+self._ignore_path_list,
             self._ignore_directories))
+
+        other_arguments = list(_filter_non_files(
+            [self._reexecution_info['args_clean'],
+             self._reexecution_info['kwargs_clean']],
+            self._target_path_list+self._ignore_path_list,
+            self._ignore_directories))
+
+        LOGGER.debug("file_stat_list: %s", file_stat_list)
+        LOGGER.debug("other_arguments: %s", other_arguments)
 
         # add the file stat list to the already existing reexecution info
         # dictionary that contains stats that should not change whether
         # files have been created/updated/or not.
-        self._reexecution_info['file_stat_list'] = pprint.pformat(
-            file_stat_list)
-        reexecution_string = '%s:%s' % (
-            self._task_id_hash, self._reexecution_info['file_stat_list'])
+        self._reexecution_info['file_stat_list'] = file_stat_list
+        self._reexecution_info['other_arguments'] = other_arguments
+
+        reexecution_string = '%s:%s:%s:%s' % (
+            self._reexecution_info['func_name'],
+            self._reexecution_info['source_code_hash'],
+            self._reexecution_info['other_arguments'],
+            # the x[2] is to only take the *hash* part of the 'file_stat'
+            str([x[2] for x in file_stat_list]))
+
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
         try:
-            with sqlite3.connect(self._task_database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                        SELECT data_blob from taskgraph_data
-                        WHERE (task_hash == ?)
-                    """, (self._task_reexecution_hash,))
-                database_result = cursor.fetchone()
+            with self._task_database_lock:
+                with sqlite3.connect(self._task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                            SELECT target_path_stats from taskgraph_data
+                            WHERE (task_reexecution_hash == ?)
+                        """, (self._task_reexecution_hash,))
+                    database_result = cursor.fetchone()
             if database_result is None:
                 LOGGER.info(
                     "not precalculated, Task hash does not "
@@ -993,24 +1140,36 @@ class Task(object):
             if database_result:
                 result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
-            for path, modified_time, size in result_target_path_stats:
+            for path, hash_algorithm, hash_string in result_target_path_stats:
+                if path not in self._target_path_list:
+                    mismatched_target_file_list.append(
+                        'Recorded path not in target path list %s' % path)
                 if not os.path.exists(path):
                     mismatched_target_file_list.append(
                         'Path not found: %s' % path)
                     continue
-                target_modified_time = os.path.getmtime(path)
-                if modified_time != target_modified_time:
-                    mismatched_target_file_list.append(
-                        "Modified times don't match "
-                        "desired: (%s) target: (%s)" % (
-                            modified_time, target_modified_time))
-                    continue
-                target_size = os.path.getsize(path)
-                if size != target_size:
-                    mismatched_target_file_list.append(
-                        "File sizes don't match "
-                        "desired: (%s) target: (%s)" % (
-                            size, target_size))
+                if hash_algorithm == 'sizetimestamp':
+                    size, modified_time = [
+                        float(x) for x in hash_string.split(':')]
+                    target_modified_time = os.path.getmtime(path)
+                    if not math.isclose(modified_time, target_modified_time):
+                        mismatched_target_file_list.append(
+                            "Modified times don't match "
+                            "cached: (%f) actual: (%f)" % (
+                                modified_time, target_modified_time))
+                        continue
+                    target_size = os.path.getsize(path)
+                    if size != target_size:
+                        mismatched_target_file_list.append(
+                            "File sizes don't match "
+                            "cached: (%s) actual: (%s)" % (
+                                size, target_size))
+                else:
+                    target_hash = _hash_file(path, hash_algorithm)
+                    if hash_string != target_hash:
+                        mismatched_target_file_list.append(
+                            "File hashes are different. cached: (%s) "
+                            "actual: (%s)" % (hash_string, target_hash))
             if mismatched_target_file_list:
                 LOGGER.warning(
                     "not precalculated (%s), Task hash exists, "
@@ -1018,7 +1177,7 @@ class Task(object):
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 self._precalculated = False
                 return False
-            LOGGER.info("precalculated (%s)" % self.task_name)
+            LOGGER.info("precalculated (%s)" % self)
             self._precalculated = True
             return True
         except EOFError:
@@ -1067,8 +1226,9 @@ class EncapsulatedTaskOp(ABC):
         pass
 
 
-def _get_file_stats(base_value, ignore_list, ignore_directories):
-    """Iterate over any values that are filepaths by getting filestats.
+def _get_file_stats(
+        base_value, hash_algorithm, ignore_list, ignore_directories):
+    """Return fingerprints of any filepaths in `base_value`.
 
     Parameters:
         base_value: any python value. Any file paths in `base_value`
@@ -1080,20 +1240,22 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
         ignore_directories (boolean): If True directories are not
             considered for filestats.
 
+
     Return:
-        list of (path, timestamp, filesize) tuples for any filepaths found in
+        list of (path, hash_algorithm, hash) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
 
     """
-    if isinstance(base_value, VALID_PATH_TYPES):
+    if isinstance(base_value, _VALID_PATH_TYPES):
         try:
-            norm_path = os.path.normpath(base_value)
+            norm_path = os.path.normpath(os.path.normcase(base_value))
             if norm_path not in ignore_list and (
                     not os.path.isdir(norm_path) or
                     not ignore_directories) and os.path.exists(norm_path):
-                yield (norm_path, os.path.getmtime(norm_path),
-                       os.path.getsize(norm_path))
+                yield (
+                    norm_path, hash_algorithm,
+                    _hash_file(norm_path, hash_algorithm))
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.
@@ -1103,26 +1265,85 @@ def _get_file_stats(base_value, ignore_list, ignore_directories):
             LOGGER.exception(
                 "base_value couldn't be analyzed somehow '%s'", base_value)
     elif isinstance(base_value, dict):
-        for key in sorted(base_value.keys()):
+        for key in base_value.keys():
             value = base_value[key]
             for stat in _get_file_stats(
-                    value, ignore_list, ignore_directories):
+                    value, hash_algorithm, ignore_list, ignore_directories):
                 yield stat
     elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for stat in _get_file_stats(
-                    value, ignore_list, ignore_directories):
+                    value, hash_algorithm, ignore_list, ignore_directories):
                 yield stat
 
 
-def _scrub_functions(base_value):
-    """Replace functions with stable string representations.
+def _filter_non_files(
+        base_value, keep_list, keep_directories):
+    """Remove any values that are files not in ignore list or directories.
+
+    Parameters:
+        base_value: any python value. Any file paths in `base_value`
+            should be "os.path.norm"ed before this function is called.
+            contains filepaths in any nested structure.
+        keep_list (list): any paths found in this list are not filtered.
+            All paths in this list should be "os.path.norm"ed.
+        keep_directories (boolean): If True directories are not filtered
+            out.
+
+    Return:
+        original `base_value` with any nested file paths for files that
+        exist in the os.exists removed.
+
+    """
+    if isinstance(base_value, _VALID_PATH_TYPES):
+        try:
+            norm_path = os.path.normpath(os.path.normcase(base_value))
+            if (norm_path in keep_list or (
+                    os.path.isdir(norm_path) and keep_directories) or
+                    not os.path.isfile(norm_path)):
+                yield norm_path
+        except (OSError, ValueError):
+            # I ran across a ValueError when one of the os.path functions
+            # interpreted the value as a path that was too long.
+            # OSErrors could happen if there's coincidentally a directory we
+            # can't read or it's not a file or something else out of our
+            # control
+            LOGGER.exception(
+                "base_value couldn't be analyzed somehow '%s'", base_value)
+    elif isinstance(base_value, dict):
+        for key in base_value.keys():
+            value = base_value[key]
+            for filter_value in _filter_non_files(
+                    value, keep_list, keep_directories):
+                yield filter_value
+    elif isinstance(base_value, (list, set, tuple)):
+        for value in base_value:
+            for filter_value in _filter_non_files(
+                    value, keep_list, keep_directories):
+                yield filter_value
+    else:
+        yield base_value
+
+
+def _scrub_task_args(base_value, target_path_list):
+    """Attempt to convert `base_value` to canonical values.
+
+    Any paths in `base_value` are normalized, any paths that are also in
+    the `target_path_list` are replaced with a placeholder so that if
+    all other arguments are the same in `base_value` except target path
+    name the function will hash to the same.
+
+    This function can be called before the Task dependencies are satisfied
+    since it doesn't inspect any file stats on disk.
 
     Parameters:
         base_value: any python value
+        target_path_list (list): a list of strings that if found in
+            `base_value` should be replaced with 'in_target_path' so
 
     Returns:
-        base_value with any functions replaced as strings.
+        base_value with any functions replaced as strings and paths in
+            `target_path_list` with a 'target_path_list[n]' placeholder.
 
     """
     if callable(base_value):
@@ -1143,12 +1364,54 @@ def _scrub_functions(base_value):
         return '%s:%s' % (base_value.__name__, source_code)
     elif isinstance(base_value, dict):
         result_dict = {}
-        for key in sorted(base_value.keys()):
-            result_dict[key] = _scrub_functions(base_value[key])
+        for key in base_value.keys():
+            result_dict[key] = _scrub_task_args(
+                base_value[key], target_path_list)
         return result_dict
     elif isinstance(base_value, (list, set, tuple)):
         result_list = []
         for value in base_value:
-            result_list.append(_scrub_functions(value))
+            result_list.append(_scrub_task_args(value, target_path_list))
         return type(base_value)(result_list)
-    return base_value
+    elif isinstance(base_value, _VALID_PATH_TYPES):
+        normalized_path = os.path.normpath(os.path.normcase(base_value))
+        if normalized_path in target_path_list:
+            return 'target_path_list[%d]' % target_path_list.index(
+                normalized_path)
+        else:
+            return normalized_path
+    else:
+        return base_value
+
+
+def _hash_file(file_path, hash_algorithm, buf_size=2**20):
+    """Return a hex digest of `file_path`.
+
+    Parameters:
+        file_path (string): path to file to hash.
+        hash_algorithm (string): a hash function id that exists in
+            hashlib.algorithms_available or 'sizetimestamp'. If function id
+            is in hashlib.algorithms_available, the file contents are hashed
+            with that function and the fingerprint is returned. If value is
+            'sizetimestamp' the size and timestamp of the file are returned
+            in a string of the form
+            '[sizeinbytes]:[lastmodifiedtime]'.
+        buf_size (int): number of bytes to read from `file_path` at a time
+            for digesting.
+
+    Returns:
+        a hash hex digest computed with hash algorithm `hash_algorithm`
+        of the binary contents of the file located at `file_path`.
+
+    """
+    if hash_algorithm == 'sizetimestamp':
+        norm_path = os.path.normpath(os.path.normcase(file_path))
+        return '%d:%f' % (
+            os.path.getsize(norm_path), os.path.getmtime(norm_path))
+    hash_func = hashlib.new(hash_algorithm)
+    with open(file_path, 'rb') as f:
+        binary_data = f.read(buf_size)
+        while binary_data:
+            hash_func.update(binary_data)
+            binary_data = f.read(buf_size)
+    return hash_func.hexdigest()

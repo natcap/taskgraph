@@ -73,6 +73,39 @@ def _div_by_zero():
     return 1/0
 
 
+def _create_file(target_path, content):
+    """Create a file with contents."""
+    with open(target_path, 'w') as target_file:
+        target_file.write(content)
+
+
+def _create_file_once(target_path, content):
+    """Create a file on the first call, raise an exception on the second."""
+    if hasattr(_create_file_once, 'executed'):
+        raise RuntimeError("this function was called twice")
+    _create_file_once.executed = True
+    with open(target_path, 'w') as target_file:
+        target_file.write(content)
+
+
+def _copy_file_once(base_path, target_path):
+    """Copy base to target on the first call, raise exception on second."""
+    if hasattr(_copy_file_once, 'executed'):
+        raise RuntimeError("this function was called twice")
+    _copy_file_once.executed = True
+    shutil.copyfile(base_path, target_path)
+
+
+def _copy_two_files_once(base_path, target_a_path, target_b_path):
+    """Copy base to target a/b on first call, raise exception on second."""
+    if hasattr(_copy_two_files_once, 'executed'):
+        raise RuntimeError("this function was called twice")
+    _copy_two_files_once.executed = True
+    shutil.copyfile(base_path, target_a_path)
+    shutil.copyfile(base_path, target_b_path)
+
+
+
 def _log_from_another_process(logger_name, log_message):
     """Write a log message to a given logger.
 
@@ -266,14 +299,16 @@ class TaskGraphTests(unittest.TestCase):
             kwargs={
                 'target_path': target_a_path,
             },
-            target_path_list=[target_a_path])
+            target_path_list=[target_a_path],
+            task_name='task a')
         task_b = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value_b, list_len),
             kwargs={
                 'target_path': target_b_path,
             },
-            target_path_list=[target_b_path])
+            target_path_list=[target_b_path],
+            task_name='task b')
         sum_task = task_graph.add_task(
             func=_sum_lists_from_disk,
             args=(target_a_path, target_b_path),
@@ -281,7 +316,8 @@ class TaskGraphTests(unittest.TestCase):
                 'target_path': result_path,
             },
             target_path_list=[result_path],
-            dependent_task_list=[task_a, task_b])
+            dependent_task_list=[task_a, task_b],
+            task_name='task c')
         sum_task.join()
 
         result = pickle.load(open(result_path, 'rb'))
@@ -291,7 +327,8 @@ class TaskGraphTests(unittest.TestCase):
             func=_sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
-            dependent_task_list=[task_a, sum_task])
+            dependent_task_list=[task_a, sum_task],
+            task_name='task sum_2')
         sum_2_task.join()
         result2 = pickle.load(open(result_2_path, 'rb'))
         expected_result = [(value_a*2+value_b)]*list_len
@@ -301,13 +338,15 @@ class TaskGraphTests(unittest.TestCase):
             func=_sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
-            dependent_task_list=[task_a, sum_task])
+            dependent_task_list=[task_a, sum_task],
+            task_name='task sum_3')
         task_graph.close()
         sum_3_task.join()
         result3 = pickle.load(open(result_2_path, 'rb'))
         expected_result = [(value_a*2+value_b)]*list_len
-        self.assertEqual(result3, expected_result)
         task_graph.join()
+        task_graph = None
+        self.assertEqual(result3, expected_result)
 
         # we should have 4 completed values in the database, 5 total but one
         # was a duplicate
@@ -337,12 +376,7 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
             func=_div_by_zero,
-            args=(value_b, list_len),
-            kwargs={
-                'target_path': target_b_path,
-            },
-            dependent_task_list=[task_a],
-            target_path_list=[target_b_path])
+            dependent_task_list=[task_a])
         _ = task_graph.add_task(
             func=_sum_lists_from_disk,
             args=(target_a_path, target_b_path),
@@ -353,12 +387,8 @@ class TaskGraphTests(unittest.TestCase):
             dependent_task_list=[task_a, task_b])
         task_graph.close()
 
-        with self.assertRaises(TypeError) as cm:
+        with self.assertRaises(ZeroDivisionError) as cm:
             task_graph.join()
-
-        expected_message = '_div_by_zero()'
-        actual_message = str(cm.exception)
-        self.assertTrue(expected_message in actual_message, actual_message)
 
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
@@ -471,19 +501,22 @@ class TaskGraphTests(unittest.TestCase):
         os.mkdir(test_dir)
         with open(test_file, 'w') as f:
             f.write('\n')
+        nofile = os.path.join(self.workspace_dir, 'nofile')
         base_value = [
-            'foo', test_dir, test_file, 10, {'a': {'b': test_file}},
-            {'a': {'b': test_dir, 'foo': 9}}]
-        ignore_dir_result = list(_get_file_stats(base_value, [], True))
+            nofile, test_dir, test_file,
+            10, {'a': {'b': test_file}}, {'a': {'b': test_dir, 'foo': 9}}]
+        ignore_dir_result = list(_get_file_stats(
+            base_value, 'sizetimestamp', [], True))
         # should get two results if we ignore the directories because there's
         # only two files
         self.assertEqual(len(ignore_dir_result), 2)
-        dir_result = list(_get_file_stats(base_value, [], False))
+        dir_result = list(_get_file_stats(
+            base_value, 'sizetimestamp', [], False))
         # should get four results if we track directories because of two files
         # and two directories
         self.assertEqual(len(dir_result), 4)
 
-        result = list(_get_file_stats(u'foo', [], False))
+        result = list(_get_file_stats(nofile, 'sizetimestamp', [], False))
         self.assertEqual(result, [])
 
     def test_encapsulatedtaskop(self):
@@ -834,7 +867,239 @@ class TaskGraphTests(unittest.TestCase):
             'c:' + r'\\\\\\\\x\\\\\\\\'*2**10 + 'foo',
             'wfeji3223j8923j9' * 2**10]
         self.assertEqual(
-            list(_get_file_stats(base_value, [], True)), [])
+            list(_get_file_stats(base_value, 'sizetimestamp', [], True)), [])
+
+    def test_same_contents_duplicate_call(self):
+        """TaskGraph: test that same contents copy target path."""
+        base_file_path = os.path.join(self.workspace_dir, 'base.txt')
+        with open(base_file_path, 'w') as base_file:
+            base_file.write('xxx')
+        base2_file_path = os.path.join(self.workspace_dir, 'base2.txt')
+        shutil.copyfile(base_file_path, base2_file_path)
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_copy_file_once,
+            args=(base_file_path, target_path),
+            target_path_list=[target_path],
+            copy_duplicate_artifact=True,
+            hash_algorithm='md5',
+            task_name='first _copy_file_once')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        alt_target_path = os.path.join(self.workspace_dir, 'alt_testfile.txt')
+        task_graph.add_task(
+            func=_copy_file_once,
+            args=(base2_file_path, alt_target_path),
+            target_path_list=[alt_target_path],
+            copy_duplicate_artifact=True,
+            hash_algorithm='md5',
+            task_name='second _copy_file_once')
+
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            contents = target_file.read()
+        self.assertEqual(contents, 'xxx')
+
+        with open(alt_target_path, 'r') as alt_target_file:
+            alt_contents = alt_target_file.read()
+        self.assertEqual(contents, alt_contents)
+
+    def test_duplicate_call(self):
+        """TaskGraph: test that duplicate calls copy target path."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            copy_duplicate_artifact=True,
+            task_name='first _create_file_once')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        alt_target_path = os.path.join(self.workspace_dir, 'alt_testfile.txt')
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(alt_target_path, 'test'),
+            target_path_list=[alt_target_path],
+            copy_duplicate_artifact=True,
+            task_name='second _create_file_once')
+
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            contents = target_file.read()
+        self.assertEqual(contents, 'test')
+
+        with open(alt_target_path, 'r') as alt_target_file:
+            alt_contents = alt_target_file.read()
+        self.assertEqual(contents, alt_contents)
+
+    def test_duplicate_call_modify_timestamp(self):
+        """TaskGraph: test that duplicate call modified stamp recompute."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_create_file,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            copy_duplicate_artifact=True,
+            task_name='first _create_file')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        with open(target_path, 'w') as target_file:
+            target_file.write('test2')
+        with open(target_path, 'r') as target_file:
+            contents = target_file.read()
+        self.assertEqual(contents, 'test2')
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        task_graph.add_task(
+            func=_create_file,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            copy_duplicate_artifact=True,
+            task_name='second _create_file')
+
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_path, 'r') as target_file:
+            contents = target_file.read()
+        self.assertEqual(contents, 'test')
+
+
+    def test_different_target_path_list(self):
+        """TaskGraph: duplicate calls with different targets should fail."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        task_graph.add_task(
+            func=_create_list_on_disk,
+            args=('test', 1, target_path),
+            target_path_list=[target_path],
+            task_name='first _create_list_on_disk')
+
+        with self.assertRaises(RuntimeError):
+            # make the same call but with different target path list
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[target_path, 'test.txt'],
+                task_name='first _create_list_on_disk')
+
+        task_graph.close()
+        task_graph.join()
+
+    def test_terminated_taskgraph(self):
+        """TaskGraph: terminated task graph raises exception correctly."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
+        _ = task_graph.add_task(func=_div_by_zero)
+        with self.assertRaises(ZeroDivisionError):
+            task_graph.join()
+
+        with self.assertRaises(RuntimeError) as cm:
+            _ = task_graph.add_task(func=_div_by_zero)
+        expected_message = "add_task when Taskgraph is terminated"
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
+        task_graph.close()
+        # try closing twice just to mess with coverage
+        task_graph.close()
+
+    def test_type_list_error(self):
+        """TaskGraph: Task not passed to dependent task list."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        with self.assertRaises(ValueError) as cm:
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[target_path],
+                dependent_task_list=[target_path],
+                task_name='first _create_list_on_disk')
+        expected_message = (
+            "Objects passed to dependent task list that are not tasks")
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
+    def test_target_list_error(self):
+        """TaskGraph: Path not passed to target list."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        with self.assertRaises(ValueError) as cm:
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[1],
+                task_name='_create_list_on_disk')
+        expected_message = (
+            "Values passed to target_path_list are not strings")
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
+    def test_target_path_missing_file(self):
+        """TaskGraph: func runs, but missing target."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+        not_target_path = os.path.join(self.workspace_dir, 'not_target.txt')
+        with self.assertRaises(RuntimeError) as cm:
+            task_graph.add_task(
+                func=_create_list_on_disk,
+                args=('test', 1, target_path),
+                target_path_list=[not_target_path],
+                task_name='_create_list_on_disk')
+        expected_message = "Missing expected target path results"
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
+    def test_duplicate_but_different_target(self):
+        """TaskGraph: Two tasks that are identical but for target."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        base_path = os.path.join(self.workspace_dir, 'base.txt')
+        target_a_path = os.path.join(self.workspace_dir, 'testa.txt')
+        target_b_path = os.path.join(self.workspace_dir, 'testb.txt')
+        target_c_path = os.path.join(self.workspace_dir, 'testc.txt')
+        target_d_path = os.path.join(self.workspace_dir, 'testd.txt')
+
+        test_string = 'test string'
+        with open(base_path, 'w') as base_file:
+            base_file.write(test_string)
+
+        _ = task_graph.add_task(
+            func=_copy_two_files_once,
+            args=(base_path, target_a_path, target_b_path),
+            copy_duplicate_artifact=True,
+            hash_algorithm='md5',
+            target_path_list=[target_a_path, target_b_path])
+        # this task should copy b to c but not a to a.
+        _ = task_graph.add_task(
+            func=_copy_two_files_once,
+            args=(base_path, target_c_path, target_d_path),
+            copy_duplicate_artifact=True,
+            hash_algorithm='md5',
+            target_path_list=[target_c_path, target_d_path])
+        task_graph.close()
+        task_graph.join()
+
+        for path in (target_a_path, target_b_path, target_c_path):
+            with open(path, 'r') as target_file:
+                contents = target_file.read()
+            self.assertEqual(contents, test_string)
 
 
 def Fail(n_tries, result_path):
