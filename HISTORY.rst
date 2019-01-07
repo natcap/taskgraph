@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
+0.8.0 (2019-01-07)
 ------------------
 * Fixed a race condition that would sometimes cause an exception when multiple
   threads attempted to read or write to the completed Task Database.
