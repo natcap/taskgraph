@@ -347,16 +347,9 @@ class TaskGraph(object):
         while True:
             # this event blocks until the task graph has signaled it wants
             # the executors to read the state of the queue or a stop event
-            LOGGER.debug(
-                "getting ready to wait\ncompleted tasks: %s\nwaiting tasks: %s",
-                ','.join([x for x in self._completed_task_names]),
-                ','.join([x for x in self._dependent_task_map]))
             self._executor_ready_event.wait()
             # this lock synchronizes changes between the queue and
             # executor_ready_event
-            LOGGER.debug(
-                "checking for new tasks to execute waiting: %d",
-                self._task_waiting_count)
             if self._terminated:
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
@@ -978,10 +971,6 @@ class Task(object):
         return self._priority < other._priority
 
     def __repr__(self):
-        """Create raw representation of task."""
-        return self.task_name
-
-    def __str__(self):
         """Create a string representation of a Task."""
         return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
             {
