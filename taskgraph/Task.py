@@ -1006,14 +1006,15 @@ class Task(object):
         result_calculated = False
         if self._copy_duplicate_artifact:
             # try to see if we can copy old files
-            with sqlite3.connect(self._task_database_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT target_path_stats from taskgraph_data
-                    WHERE (task_reexecution_hash == ?)
-                    """, (self._task_reexecution_hash,))
-                database_result = cursor.fetchone()
+            with self._task_database_lock:
+                with sqlite3.connect(self._task_database_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        SELECT target_path_stats from taskgraph_data
+                        WHERE (task_reexecution_hash == ?)
+                        """, (self._task_reexecution_hash,))
+                    database_result = cursor.fetchone()
             if database_result:
                 result_target_path_stats = pickle.loads(database_result[0])
                 if (len(result_target_path_stats) ==
