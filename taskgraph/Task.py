@@ -1156,8 +1156,7 @@ class Task(object):
                 LOGGER.debug("is_precalculated full task info: %s", self)
                 self._precalculated = False
                 return False
-            if database_result:
-                result_target_path_stats = pickle.loads(database_result[0])
+            result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
             for path, hash_algorithm, hash_string in result_target_path_stats:
                 if path not in self._target_path_list:
@@ -1335,7 +1334,7 @@ def _filter_non_files(
             value = base_value[key]
             for filter_value in _filter_non_files(
                     value, keep_list, keep_directories):
-                yield filter_value
+                yield (value, filter_value)
     elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for filter_value in _filter_non_files(
