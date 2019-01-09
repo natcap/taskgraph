@@ -413,7 +413,7 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
 
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5

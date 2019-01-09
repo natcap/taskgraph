@@ -51,7 +51,7 @@ try:
     else:
         # On POSIX, use system niceness.
         # -20 is high priority, 0 is normal priority, 19 is low priority.
-        # 10 here is an abritrary selection that's probably nice enough.
+        # 10 here is an arbitrary selection that's probably nice enough.
         PROCESS_LOW_PRIORITY = 10
 except ImportError:
     HAS_PSUTIL = False
@@ -147,9 +147,14 @@ class TaskGraph(object):
         self._taskgraph_started_event = threading.Event()
 
         # use this to keep track of all the tasks added to the graph by their
-        # task ids. Used to determine if an identical task has been added
+        # task hashes. Used to determine if an identical task has been added
         # to the taskgraph during `add_task`
-        self._task_map = dict()
+        self._task_hash_map = dict()
+
+        # use this to keep track of all the tasks added to the graph by their
+        # task names. Used to map a unique task name to the task object it
+        # represents
+        self._task_name_map = dict()
 
         # used to remember if task_graph has been closed
         self._closed = False
@@ -195,12 +200,15 @@ class TaskGraph(object):
         # and can be executed immediately
         self._task_ready_priority_queue = queue.PriorityQueue()
 
-        # maps a list of tasks that need to be executed to a task
+        # maps a list of task names that need to be executed before the key
+        # task can
         self._task_dependent_map = collections.defaultdict(set)
-        # maps a list of tasks that are dependent to a task
+
+        # maps a list of task names that are dependent to a task
         self._dependent_task_map = collections.defaultdict(set)
+
         # tasks that complete are added to this set
-        self._completed_tasks = set()
+        self._completed_task_names = set()
 
         self._task_database_path = os.path.join(
             self._taskgraph_cache_dir_path, _TASKGRAPH_DATABASE_FILENAME)
@@ -316,7 +324,7 @@ class TaskGraph(object):
                     if timedout:
                         LOGGER.warning(
                             '_monitor_thread %s timed out', self._monitor_thread)
-                    for task in self._task_map.values():
+                    for task in self._task_hash_map.values():
                         # this is a shortcut to get the tasks to mark as joined
                         task.task_done_executing_event.set()
 
@@ -339,10 +347,16 @@ class TaskGraph(object):
         while True:
             # this event blocks until the task graph has signaled it wants
             # the executors to read the state of the queue or a stop event
+            LOGGER.debug(
+                "getting ready to wait\ncompleted tasks: %s\nwaiting tasks: %s",
+                ','.join([x for x in self._completed_task_names]),
+                ','.join([x for x in self._dependent_task_map]))
             self._executor_ready_event.wait()
             # this lock synchronizes changes between the queue and
             # executor_ready_event
-            LOGGER.debug("checking for new tasks to execute")
+            LOGGER.debug(
+                "checking for new tasks to execute waiting: %d",
+                self._task_waiting_count)
             if self._terminated:
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
@@ -402,26 +416,30 @@ class TaskGraph(object):
                     "task %s is complete, checking to see if any dependent "
                     "tasks can be executed now", task.task_name)
                 with self._taskgraph_lock:
-                    self._completed_tasks.add(task)
+                    self._completed_task_names.add(task.task_name)
                     self._active_task_list.remove(task_name_time_tuple)
-                    for waiting_task in self._task_dependent_map[task]:
+                    for waiting_task_name in (
+                            self._task_dependent_map[task.task_name]):
                         # remove `task` from the set of tasks that
                         # `waiting_task` was waiting on.
-                        self._dependent_task_map[waiting_task].remove(task)
+                        self._dependent_task_map[waiting_task_name].remove(
+                            task.task_name)
                         # if there aren't any left, we can push `waiting_task`
                         # to the work queue
-                        if not self._dependent_task_map[waiting_task]:
+                        if not self._dependent_task_map[waiting_task_name]:
                             # if we removed the last task we can put it to the
                             # work queue
                             LOGGER.debug(
                                 "Task %s is ready for processing, sending to "
                                 "task_ready_priority_queue",
-                                waiting_task.task_name)
-                            self._task_ready_priority_queue.put(waiting_task)
+                                waiting_task_name)
+                            del self._dependent_task_map[waiting_task_name]
+                            self._task_ready_priority_queue.put(
+                                self._task_name_map[waiting_task_name])
                             self._task_waiting_count += 1
                             # indicate to executors there is work to do
                             self._executor_ready_event.set()
-                    del self._task_dependent_map[task]
+                    del self._task_dependent_map[task.task_name]
                 LOGGER.debug("task %s done processing", task.task_name)
         LOGGER.debug("task executor shutting down")
 
@@ -536,7 +554,7 @@ class TaskGraph(object):
                         "Objects passed to dependent task list that are not "
                         "tasks: %s", dependent_task_list)
 
-                task_name = '%s (%d)' % (task_name, len(self._task_map))
+                task_name = '%s (%d)' % (task_name, len(self._task_hash_map))
                 new_task = Task(
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
@@ -545,17 +563,18 @@ class TaskGraph(object):
                     copy_duplicate_artifact, self._taskgraph_started_event,
                     self._task_database_path, self._task_database_lock)
 
+                self._task_name_map[new_task.task_name] = new_task
                 # it may be this task was already created in an earlier call,
                 # use that object in its place
-                if new_task in self._task_map:
-                    duplicate_task = self._task_map[new_task]
+                if new_task in self._task_hash_map:
+                    duplicate_task = self._task_hash_map[new_task]
                     new_task_target_set = set(new_task._target_path_list)
                     duplicate_task_target_set = set(
                         duplicate_task._target_path_list)
                     if new_task_target_set == duplicate_task_target_set:
                         LOGGER.warning(
                             "A duplicate task was submitted: %s original: %s",
-                            new_task, self._task_map[new_task])
+                            new_task, self._task_hash_map[new_task])
                         return duplicate_task
                     disjoint_target_set = (
                         new_task_target_set.symmetric_difference(
@@ -569,8 +588,9 @@ class TaskGraph(object):
                                 "args signature sans target paths, but a "
                                 "different target_path_list of the same "
                                 "length. To avoid recomputation, dynamically "
-                                "adding previous Task as a dependent task to "
-                                "this one.")
+                                "adding previous Task (%s) as a dependent task "
+                                "to this one (%s).", duplicate_task.task_name,
+                                task_name)
                             dependent_task_list = (
                                 dependent_task_list + [duplicate_task])
                     else:
@@ -581,7 +601,7 @@ class TaskGraph(object):
                             "unpredictably overwriting output so treating as "
                             "a runtime error: submitted task: %s, existing "
                             "task: %s" % (new_task, duplicate_task))
-                self._task_map[new_task] = new_task
+                self._task_hash_map[new_task] = new_task
                 if self._n_workers < 0:
                     # call directly if single threaded
                     new_task._call()
@@ -591,10 +611,13 @@ class TaskGraph(object):
                     LOGGER.debug(
                         "multithreaded: %s sending to new task queue.",
                         task_name)
-                    outstanding_dependent_task_list = [
-                        dep_task for dep_task in dependent_task_list
-                        if dep_task not in self._completed_tasks]
-                    if not outstanding_dependent_task_list:
+                    outstanding_dependent_task_name_list = [
+                        dep_task.task_name for dep_task in dependent_task_list
+                        if dep_task.task_name
+                        not in self._completed_task_names]
+                    if not outstanding_dependent_task_name_list:
+                        LOGGER.debug(
+                            "sending task %s right away", new_task.task_name)
                         self._task_ready_priority_queue.put(new_task)
                         self._task_waiting_count += 1
                         self._executor_ready_event.set()
@@ -602,11 +625,13 @@ class TaskGraph(object):
                         # there are unresolved tasks that the waiting
                         # process scheduler has not been notified of.
                         # Record dependencies.
-                        for dep_task in outstanding_dependent_task_list:
-                            # record tasks that are dependent on dep_task
-                            self._task_dependent_map[dep_task].add(new_task)
+                        for dep_task_name in outstanding_dependent_task_name_list:
+                            # record tasks that are dependent on dep_task_name
+                            self._task_dependent_map[dep_task_name].add(
+                                new_task.task_name)
                             # record tasks that new_task depends on
-                            self._dependent_task_map[new_task].add(dep_task)
+                            self._dependent_task_map[new_task.task_name].add(
+                                dep_task_name)
                 return new_task
 
             except Exception:
@@ -641,8 +666,8 @@ class TaskGraph(object):
                         task_name, time.time() - task_time)
                      for task_name, task_time in self._active_task_list])
 
-            total_tasks = len(self._task_map)
-            completed_tasks = len(self._completed_tasks)
+            total_tasks = len(self._task_hash_map)
+            completed_tasks = len(self._completed_task_names)
             percent_complete = 0.0
             if total_tasks > 0:
                 percent_complete = 100.0 * (
@@ -684,7 +709,7 @@ class TaskGraph(object):
         try:
             LOGGER.debug("attempting to join threads")
             timedout = False
-            for task in self._task_map.values():
+            for task in self._task_hash_map.values():
                 LOGGER.debug("attempting to join task %s", task.task_name)
                 timedout = not task.join(timeout)
                 LOGGER.debug("task %s was joined", task.task_name)
@@ -741,7 +766,7 @@ class TaskGraph(object):
         with self._taskgraph_lock:
             self._terminated = True
 
-            for task in self._task_map.values():
+            for task in self._task_hash_map.values():
                 LOGGER.debug("setting task done for %s", task.task_name)
                 task.task_done_executing_event.set()
 
@@ -951,6 +976,10 @@ class Task(object):
     def __lt__(self, other):
         """Less than based on priority."""
         return self._priority < other._priority
+
+    def __repr__(self):
+        """Create raw representation of task."""
+        return self.task_name
 
     def __str__(self):
         """Create a string representation of a Task."""
@@ -1188,6 +1217,7 @@ class Task(object):
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
         self._taskgraph_started_event.set()
+        LOGGER.debug('started taskgraph %s', self._taskgraph_started_event.isSet())
         LOGGER.debug(
             "joining %s done executing: %s", self.task_name,
             self.task_done_executing_event)
