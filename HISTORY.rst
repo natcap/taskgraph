@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
+0.8.1 (2018-01-09)
 ------------------
 * Fixed an issue that would cause a deadlock if two tasks were added that had
   the same function signature except different target paths.
