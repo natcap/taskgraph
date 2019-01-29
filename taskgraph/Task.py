@@ -289,7 +289,7 @@ class TaskGraph(object):
                 self._logging_queue.put(None)
                 timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
                 if timedout:
-                    LOGGER.warning(
+                    LOGGER.debug(
                         '_logging_monitor_thread %s timed out',
                         self._logging_monitor_thread)
 
@@ -301,7 +301,8 @@ class TaskGraph(object):
                 while True:
                     try:
                         x = self._logging_queue.get_nowait()
-                        LOGGER.error("the logging queue had this in it: %s", x)
+                        LOGGER.debug(
+                            "the logging queue had this in it: %s", x)
                     except queue.Empty:
                         break
 
@@ -312,7 +313,7 @@ class TaskGraph(object):
                     try:
                         timedout = not executor_thread.join(_MAX_TIMEOUT)
                         if timedout:
-                            LOGGER.warning(
+                            LOGGER.debug(
                                 'task executor thread timed out %s',
                                 executor_thread)
                     except Exception:
@@ -322,8 +323,9 @@ class TaskGraph(object):
                     LOGGER.debug("joining _monitor_thread.")
                     timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
                     if timedout:
-                        LOGGER.warning(
-                            '_monitor_thread %s timed out', self._monitor_thread)
+                        LOGGER.debug(
+                            '_monitor_thread %s timed out',
+                            self._monitor_thread)
                     for task in self._task_hash_map.values():
                         # this is a shortcut to get the tasks to mark as joined
                         task.task_done_executing_event.set()
@@ -332,7 +334,7 @@ class TaskGraph(object):
             while True:
                 try:
                     x = self._task_ready_priority_queue.get_nowait()
-                    LOGGER.error(
+                    LOGGER.debug(
                         "task_ready_priority_queue not empty contains: %s", x)
                 except queue.Empty:
                     break
@@ -581,9 +583,9 @@ class TaskGraph(object):
                                 "args signature sans target paths, but a "
                                 "different target_path_list of the same "
                                 "length. To avoid recomputation, dynamically "
-                                "adding previous Task (%s) as a dependent task "
-                                "to this one (%s).", duplicate_task.task_name,
-                                task_name)
+                                "adding previous Task (%s) as a dependent "
+                                "task to this one (%s).",
+                                duplicate_task.task_name, task_name)
                             dependent_task_list = (
                                 dependent_task_list + [duplicate_task])
                     else:
@@ -1150,7 +1152,7 @@ class Task(object):
                         """, (self._task_reexecution_hash,))
                     database_result = cursor.fetchone()
             if database_result is None:
-                LOGGER.info(
+                LOGGER.debug(
                     "not precalculated, Task hash does not "
                     "exist (%s)", self.task_name)
                 LOGGER.debug("is_precalculated full task info: %s", self)
@@ -1195,7 +1197,7 @@ class Task(object):
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 self._precalculated = False
                 return False
-            LOGGER.info("precalculated (%s)" % self)
+            LOGGER.debug("precalculated (%s)" % self)
             self._precalculated = True
             return True
         except EOFError:
@@ -1206,7 +1208,8 @@ class Task(object):
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
         self._taskgraph_started_event.set()
-        LOGGER.debug('started taskgraph %s', self._taskgraph_started_event.isSet())
+        LOGGER.debug(
+            'started taskgraph %s', self._taskgraph_started_event.isSet())
         LOGGER.debug(
             "joining %s done executing: %s", self.task_name,
             self.task_done_executing_event)
