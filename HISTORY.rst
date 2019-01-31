@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
+0.8.2 (2019-01-31)
 ------------------
 * Adjusted logging levels so most chatty information is lowered to debug and
   oddness in ``__del__`` shutdown are degraded from ``error`` to ``debug`` so
