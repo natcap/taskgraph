@@ -105,7 +105,6 @@ def _copy_two_files_once(base_path, target_a_path, target_b_path):
     shutil.copyfile(base_path, target_b_path)
 
 
-
 def _log_from_another_process(logger_name, log_message):
     """Write a log message to a given logger.
 
@@ -176,6 +175,46 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.join()
         result = pickle.load(open(target_path, 'rb'))
         self.assertEqual(result, [value]*list_len)
+
+    def test_task_hash_source_deleted(self):
+        """TaskGraph: test if old target deleted when hashing duplicate."""
+        target_a_path = os.path.join(self.workspace_dir, 'a.txt')
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        task_a = task_graph.add_task(
+            func=_create_file,
+            args=(target_a_path, 'test value'),
+            target_path_list=[target_a_path],
+            hash_algorithm='md5',
+            copy_duplicate_artifact=True)
+        task_a.join()
+        target_b_path = os.path.join(self.workspace_dir, 'b.txt')
+        _ = task_graph.add_task(
+            func=_create_file,
+            args=(target_b_path, 'test value'),
+            target_path_list=[target_b_path],
+            hash_algorithm='md5',
+            copy_duplicate_artifact=True)
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        os.remove(target_a_path)
+        os.remove(target_b_path)
+
+        target_c_path = os.path.join(self.workspace_dir, 'c.txt')
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        _ = task_graph.add_task(
+            func=_create_file,
+            args=(target_c_path, 'test value'),
+            target_path_list=[target_c_path],
+            hash_algorithm='md5',
+            copy_duplicate_artifact=True)
+        task_graph.close()
+        task_graph.join()
+
+        with open(target_c_path, 'r') as target_file:
+            result = target_file.read()
+        self.assertEqual(result, 'test value')
 
     def test_timeout_task(self):
         """TaskGraph: Test timeout functionality."""
