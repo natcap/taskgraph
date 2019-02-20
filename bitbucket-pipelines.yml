@@ -16,3 +16,11 @@ pipelines:
         script:
           - pip install tox
           - tox -e py36-base,py36-psutil
+    - step:
+        name: Tests on python3.7
+        image: python:3.7-stretch
+        caches:
+          - pip
+        script:
+          - pip install tox
+          - tox -e py37-base,py37-psutil
