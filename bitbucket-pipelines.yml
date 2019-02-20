@@ -1,7 +1,7 @@
 pipelines:
   default:
     - step:
-        name: Test on python2.7
+        name: Tests on python2.7
         image: python:2.7-stretch
         caches:
           - pip
@@ -9,7 +9,7 @@ pipelines:
           - pip install tox setuptools_scm pytest
           - tox -e py27-base,py27-psutil
     - step:
-        name: Test on python3.6
+        name: Tests on python3.6
         image: python:3.6-stretch
         caches:
           - pip
