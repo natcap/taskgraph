@@ -4,6 +4,12 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Fixed an issue that would cause TaskGraph to raise an IOError if an
+  ``add_task`` call was marked for ``copy_duplicate_artifact`` but the
+  base target file was missing.
+
 0.8.2 (2019-01-31)
 ------------------
 * Adjusted logging levels so most chatty information is lowered to debug and
