@@ -1,0 +1,4 @@
+# This file defines extra files needed for the source distribution.
+# Setup.py requires these two files to exist, so we add them here.
+
+include README.rst HISTORY.rst
