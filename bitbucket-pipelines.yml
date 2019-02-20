@@ -6,7 +6,7 @@ pipelines:
         caches:
           - pip
         script:
-          - pip install tox setuptools_scm pytest
+          - pip install tox
           - tox -e py27-base,py27-psutil
     - step:
         name: Tests on python3.6
@@ -14,5 +14,5 @@ pipelines:
         caches:
           - pip
         script:
-          - pip install tox setuptools_scm pytest
+          - pip install tox
           - tox -e py36-base,py36-psutil
