@@ -9,6 +9,9 @@ Unreleased Changes
 * Fixed an issue that would cause TaskGraph to raise an IOError if an
   ``add_task`` call was marked for ``copy_duplicate_artifact`` but the
   base target file was missing.
+* Fixed an issue that would prevent the source distribution from
+  installing.
+* Taskgraph is now tested against python versions 2.7, 3.6 and 3.7.
 
 0.8.2 (2019-01-31)
 ------------------
