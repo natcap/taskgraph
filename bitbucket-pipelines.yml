@@ -1,26 +1,40 @@
 pipelines:
   default:
-    - step:
-        name: Tests on python2.7
-        image: python:2.7-stretch
-        caches:
-          - pip
-        script:
-          - pip install tox
-          - tox -e py27-base,py27-psutil
-    - step:
-        name: Tests on python3.6
-        image: python:3.6-stretch
-        caches:
-          - pip
-        script:
-          - pip install tox
-          - tox -e py36-base,py36-psutil
-    - step:
-        name: Tests on python3.7
-        image: python:3.7-stretch
-        caches:
-          - pip
-        script:
-          - pip install tox
-          - tox -e py37-base,py37-psutil
+    - parallel:
+      - step:
+          name: Tests on python2.7
+          image: python:2.7-stretch
+          caches:
+            - pip
+          script:
+            - pip install tox
+            - tox -e py27-base,py27-psutil
+      - step:
+          name: Tests on python3.6
+          image: python:3.6-stretch
+          caches:
+            - pip
+          script:
+            - pip install tox
+            - tox -e py36-base,py36-psutil
+      - step:
+          name: Tests on python3.7
+          image: python:3.7-stretch
+          caches:
+            - pip
+          script:
+            - pip install tox
+            - tox -e py37-base,py37-psutil
+  pull-requests:
+    - default:
+      - parallel:
+        - step:
+            name: PEP8
+            image: python:3.6-stretch
+            script:
+              - pip install pycodestyle
+        - step:
+            name: PEP257
+            image: python:3.6-stretch
+            script:
+              - pip install pydocstyle
