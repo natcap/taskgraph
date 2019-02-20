@@ -31,10 +31,16 @@ pipelines:
         - step:
             name: PEP8
             image: python:3.6-stretch
+            caches:
+              - pip
             script:
               - pip install pycodestyle
+              - pycodestyle taskgraph
         - step:
             name: PEP257
             image: python:3.6-stretch
+            caches:
+              - pip
             script:
               - pip install pydocstyle
+              - pydocstyle taskgraph
