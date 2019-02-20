@@ -7,7 +7,7 @@ pipelines:
           - pip
         script:
           - pip install tox setuptools_scm pytest
-          - tox -e py27-{base,psutil}
+          - tox -e py27-base,py27-psutil
     - step:
         name: Test on python3.6
         image: python:3.6-stretch
@@ -15,4 +15,4 @@ pipelines:
           - pip
         script:
           - pip install tox setuptools_scm pytest
-          - tox -e py36-{base,psutil}
+          - tox -e py36-base,py36-psutil
