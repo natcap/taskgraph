@@ -606,11 +606,11 @@ class TaskGraph(object):
                     LOGGER.debug(
                         "multithreaded: %s sending to new task queue.",
                         task_name)
-                    outstanding_dependent_task_name_list = [
+                    outstanding_dep_task_name_list = [
                         dep_task.task_name for dep_task in dependent_task_list
                         if dep_task.task_name
                         not in self._completed_task_names]
-                    if not outstanding_dependent_task_name_list:
+                    if not outstanding_dep_task_name_list:
                         LOGGER.debug(
                             "sending task %s right away", new_task.task_name)
                         self._task_ready_priority_queue.put(new_task)
@@ -620,7 +620,7 @@ class TaskGraph(object):
                         # there are unresolved tasks that the waiting
                         # process scheduler has not been notified of.
                         # Record dependencies.
-                        for dep_task_name in outstanding_dependent_task_name_list:
+                        for dep_task_name in outstanding_dep_task_name_list:
                             # record tasks that are dependent on dep_task_name
                             self._task_dependent_map[dep_task_name].add(
                                 new_task.task_name)
@@ -930,7 +930,7 @@ class Task(object):
                 _ = pickle.dumps(scrubbed_value)
                 kwargs_clean[arg] = scrubbed_value
             except TypeError:
-                LOGGER.warning(
+                LOGGER.warn(
                     "could not pickle kw argument %s (%s). "
                     "Skipping argument which means it will not be considered "
                     "when calculating whether inputs have been changed "
@@ -1017,38 +1017,44 @@ class Task(object):
                         WHERE (task_reexecution_hash == ?)
                         """, (self._task_reexecution_hash,))
                     database_result = cursor.fetchone()
-            if database_result:
-                result_target_path_stats = pickle.loads(database_result[0])
-                if (len(result_target_path_stats) ==
-                        len(self._target_path_list)):
-                    if all([
-                        file_fingerprint == _hash_file(path, hash_algorithm)
-                        for path, hash_algorithm, file_fingerprint in (
-                            result_target_path_stats)]):
-                        LOGGER.debug(
-                            "copying stored artifacts to target path list. \n"
-                            "\tstored artifacts: %s\n\t"
-                            "target_path_list: %s\n",
-                            [x[0] for x in result_target_path_stats],
-                            self._target_path_list)
-                        for artifact_target, new_target in zip(
-                                result_target_path_stats,
-                                self._target_path_list):
-                            if artifact_target != new_target:
-                                shutil.copyfile(
-                                    artifact_target[0], new_target)
-                            else:
-                                # This is a bug if this ever happens, but so
-                                # bad if it does I want to stop and report a
-                                # helpful error message
-                                raise RuntimeError(
-                                    "duplicate copy artifact and target "
-                                    "path: %s, result_path_stats: %s, "
-                                    "target_path_list: %s" % (
-                                        artifact_target,
-                                        result_target_path_stats,
-                                        self._target_path_list))
-                        result_calculated = True
+            try:
+                if database_result:
+                    result_target_path_stats = pickle.loads(database_result[0])
+                    if (len(result_target_path_stats) ==
+                            len(self._target_path_list)):
+                        if all([
+                            file_fingerprint == _hash_file(
+                                path, hash_algorithm)
+                            for path, hash_algorithm, file_fingerprint in (
+                                result_target_path_stats)]):
+                            LOGGER.debug(
+                                "copying stored artifacts to target path "
+                                "list. \n\tstored artifacts: %s\n\t"
+                                "target_path_list: %s\n",
+                                [x[0] for x in result_target_path_stats],
+                                self._target_path_list)
+                            for artifact_target, new_target in zip(
+                                    result_target_path_stats,
+                                    self._target_path_list):
+                                if artifact_target != new_target:
+                                    shutil.copyfile(
+                                        artifact_target[0], new_target)
+                                else:
+                                    # This is a bug if this ever happens, and
+                                    # so bad if it does I want to stop and
+                                    # report a helpful error message
+                                    raise RuntimeError(
+                                        "duplicate copy artifact and target "
+                                        "path: %s, result_path_stats: %s, "
+                                        "target_path_list: %s" % (
+                                            artifact_target,
+                                            result_target_path_stats,
+                                            self._target_path_list))
+                            result_calculated = True
+            except IOError as e:
+                LOGGER.warn(
+                    "IOError encountered when hashing original source "
+                    "files.\n%s" % e)
         if not result_calculated:
             if self._worker_pool is not None:
                 result = self._worker_pool.apply_async(
