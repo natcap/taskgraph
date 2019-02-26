@@ -930,7 +930,7 @@ class Task(object):
                 _ = pickle.dumps(scrubbed_value)
                 kwargs_clean[arg] = scrubbed_value
             except TypeError:
-                LOGGER.warning(
+                LOGGER.warn(
                     "could not pickle kw argument %s (%s). "
                     "Skipping argument which means it will not be considered "
                     "when calculating whether inputs have been changed "

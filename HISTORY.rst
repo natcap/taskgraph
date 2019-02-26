@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
+0.8.3 (2019-02-26)
 ------------------
 * Fixed an issue that would cause TaskGraph to raise an IOError if an
   ``add_task`` call was marked for ``copy_duplicate_artifact`` but the
