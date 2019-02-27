@@ -20,15 +20,12 @@ class QueueHandler(logging.Handler):
         self.queue = queue
 
     def __del__(self):
-        """Ensure handler is closed as this terminates."""
+        """Ensure handler is closed as it gets deconstructed."""
         self.close()
 
     def enqueue(self, record):
         """
         Enqueue a record.
-        The base implementation uses put_nowait. You may want to override
-        this method if you want to use blocking, timeouts or custom queue
-        implementations.
         """
         self.queue.put(record)
 
