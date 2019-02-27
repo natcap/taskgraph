@@ -1,4 +1,5 @@
 """Tests for taskgraph."""
+import re
 import sqlite3
 import os
 import tempfile
@@ -809,6 +810,8 @@ class TaskGraphTests(unittest.TestCase):
         file_log_path = os.path.join(
             self.workspace_dir, 'test_multiprocessed_logging.log')
         handler = logging.FileHandler(file_log_path)
+        handler.setFormatter(
+            logging.Formatter(fmt=':%(processName)s:%(message)s:'))
         logger.addHandler(handler)
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
@@ -821,16 +824,11 @@ class TaskGraphTests(unittest.TestCase):
 
         with open(file_log_path) as log_file:
             message = log_file.read().rstrip()
-            self.assertEqual(message, log_message)
-        """
-        # There should be exactly one record in the queue, and it should be
-        # from a different process, but have the message we defined above.
-        self.assertEqual(len(handler.buffer), 1)
-        self.assertTrue(isinstance(handler.buffer[0], logging.LogRecord))
-        self.assertEqual(log_message, handler.buffer[0].message)
-        self.assertNotEqual(handler.buffer[0].processName,
-                            multiprocessing.current_process())
-        """
+        process_name, logged_message = re.match(
+            ':([^:]*):([^:]*):', message).groups()
+        self.assertEqual(logged_message, log_message)
+        self.assertNotEqual(
+            process_name, multiprocessing.current_process().name)
         task_graph = None
 
     def test_repeated_function(self):
