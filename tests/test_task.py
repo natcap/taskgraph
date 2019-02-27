@@ -806,17 +806,23 @@ class TaskGraphTests(unittest.TestCase):
         logger_name = 'foo.hello.world'
         log_message = 'This is coming from another process'
         logger = logging.getLogger(logger_name)
-        handler = logging.handlers.MemoryHandler(capacity=100)
+        file_log_path = os.path.join(
+            self.workspace_dir, 'test_multiprocessed_logging.log')
+        handler = logging.FileHandler(file_log_path)
         logger.addHandler(handler)
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        task_graph.add_task(_log_from_another_process,
-                            args=(logger_name,
-                                  log_message))
+        _ = task_graph.add_task(
+            func=_log_from_another_process,
+            args=(logger_name, log_message))
         task_graph.close()
         task_graph.join()
-        del task_graph
+        handler.flush()
 
+        with open(file_log_path) as log_file:
+            message = log_file.read().rstrip()
+            self.assertEqual(message, log_message)
+        """
         # There should be exactly one record in the queue, and it should be
         # from a different process, but have the message we defined above.
         self.assertEqual(len(handler.buffer), 1)
@@ -824,6 +830,8 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(log_message, handler.buffer[0].message)
         self.assertNotEqual(handler.buffer[0].processName,
                             multiprocessing.current_process())
+        """
+        task_graph = None
 
     def test_repeated_function(self):
         """TaskGraph: ensure no reruns if argument is a function."""

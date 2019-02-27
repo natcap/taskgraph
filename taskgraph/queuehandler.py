@@ -1,10 +1,11 @@
 """Copied from https://gist.github.com/vsajip/591589"""
 import logging
 
+
 class QueueHandler(logging.Handler):
     """
     This handler sends events to a queue. Typically, it would be used together
-    with a multiprocessing Queue to centralise logging to file in one process
+    with a multiprocessing Queue to centralize logging to file in one process
     (in a multi-process application), so as to avoid file write contention
     between processes.
     This code is new in Python 3.2, but this class can be copy pasted into
@@ -13,10 +14,14 @@ class QueueHandler(logging.Handler):
 
     def __init__(self, queue):
         """
-        Initialise an instance, using the passed queue.
+        Initialize an instance, using the passed queue.
         """
         logging.Handler.__init__(self)
         self.queue = queue
+
+    def __del__(self):
+        """Ensure handler is closed as this terminates."""
+        self.close()
 
     def enqueue(self, record):
         """
@@ -25,7 +30,7 @@ class QueueHandler(logging.Handler):
         this method if you want to use blocking, timeouts or custom queue
         implementations.
         """
-        self.queue.put_nowait(record)
+        self.queue.put(record)
 
     def prepare(self, record):
         """
