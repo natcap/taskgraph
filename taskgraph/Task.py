@@ -1052,7 +1052,7 @@ class Task(object):
                                             self._target_path_list))
                             result_calculated = True
             except IOError as e:
-                LOGGER.warn(
+                LOGGER.warning(
                     "IOError encountered when hashing original source "
                     "files.\n%s" % e)
         if not result_calculated:
