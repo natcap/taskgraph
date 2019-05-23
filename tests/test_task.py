@@ -231,25 +231,29 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_task_rel_vs_absolute(self):
         """TaskGraph: test that relative path equates to absolute."""
-        target_a_path = os.path.join(self.workspace_dir, 'a.txt')
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+
+        target_a_path = os.path.relpath(
+            os.path.join(self.workspace_dir, 'a.txt'))
         _ = task_graph.add_task(
-            func=_create_file,
-            args=(target_a_path, 'test value'),
-            target_path_list=[target_a_path],
-            hash_algorithm='md5',
-            copy_duplicate_artifact=True,
-            task_name='task a')
+           func=_create_file,
+           args=(target_a_path, 'test value'),
+           target_path_list=[target_a_path],
+           hash_algorithm='md5',
+           copy_duplicate_artifact=True,
+           task_name='task a')
+
         target_b_path = os.path.abspath(target_a_path)
         _ = task_graph.add_task(
-            func=_create_file,
-            args=(target_b_path, 'test value'),
-            target_path_list=[target_b_path],
-            hash_algorithm='md5',
-            copy_duplicate_artifact=True,
-            task_name='task b')
-        task_graph.close()
+           func=_create_file,
+           args=(target_b_path, 'test value'),
+           target_path_list=[target_b_path],
+           hash_algorithm='md5',
+           copy_duplicate_artifact=True,
+           task_name='task b')
+
         task_graph.join()
+        task_graph.close()
         del task_graph
 
         with open(target_a_path, 'r') as a_file:
