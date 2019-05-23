@@ -235,6 +235,8 @@ class TaskGraphTests(unittest.TestCase):
 
         target_a_path = os.path.relpath(
             os.path.join(self.workspace_dir, 'a.txt'))
+        target_b_path = os.path.abspath(target_a_path)
+
         _ = task_graph.add_task(
            func=_create_file,
            args=(target_a_path, 'test value'),
@@ -243,7 +245,6 @@ class TaskGraphTests(unittest.TestCase):
            copy_duplicate_artifact=True,
            task_name='task a')
 
-        target_b_path = os.path.abspath(target_a_path)
         _ = task_graph.add_task(
            func=_create_file,
            args=(target_b_path, 'test value'),
