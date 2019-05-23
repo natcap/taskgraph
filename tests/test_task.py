@@ -259,11 +259,11 @@ class TaskGraphTests(unittest.TestCase):
 
         with open(target_a_path, 'r') as a_file:
             m = hashlib.md5()
-            m.update(a_file.read())
+            m.update(a_file.read().encode('utf-8'))
             a_digest = m.digest()
         with open(target_b_path, 'r') as b_file:
             m = hashlib.md5()
-            m.update(b_file.read())
+            m.update(b_file.read().encode('utf-8'))
             b_digest = m.digest()
         self.assertEqual(a_digest, b_digest)
 
