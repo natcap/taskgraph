@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+0.8.4 (2019-05-23)
+------------------
+* Fixed an exception that occurred when two tasks were constructed that
+  targeted the same file but one path was relative and the other was absolute.
+
 0.8.3 (2019-02-26)
 ------------------
 * Fixed an issue that would cause TaskGraph to raise an IOError if an
