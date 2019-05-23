@@ -1,4 +1,5 @@
 """Tests for taskgraph."""
+import hashlib
 import re
 import sqlite3
 import os
@@ -13,6 +14,10 @@ import multiprocessing
 import mock
 
 import taskgraph
+
+LOGGER = logging.getLogger(__name__)
+
+N_TEARDOWN_RETRIES = 5
 
 # Python 3 relocated the reload function to imp.
 if 'reload' not in __builtins__:
@@ -134,7 +139,14 @@ class TaskGraphTests(unittest.TestCase):
 
     def tearDown(self):
         """Remove temporary directory."""
-        shutil.rmtree(self.workspace_dir)
+        attempts = 0
+        while attempts < N_TEARDOWN_RETRIES:
+            try:
+                shutil.rmtree(self.workspace_dir)
+                break
+            except:
+                LOGGER.exception('error when tearing down.')
+                attempts += 1
 
     def test_version_loaded(self):
         """TaskGraph: verify we can load the version."""
@@ -216,6 +228,44 @@ class TaskGraphTests(unittest.TestCase):
         with open(target_c_path, 'r') as target_file:
             result = target_file.read()
         self.assertEqual(result, 'test value')
+
+    def test_task_rel_vs_absolute(self):
+        """TaskGraph: test that relative path equates to absolute."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+
+        target_a_path = os.path.relpath(
+            os.path.join(self.workspace_dir, 'a.txt'))
+        target_b_path = os.path.abspath(target_a_path)
+
+        _ = task_graph.add_task(
+           func=_create_file,
+           args=(target_a_path, 'test value'),
+           target_path_list=[target_a_path],
+           hash_algorithm='md5',
+           copy_duplicate_artifact=True,
+           task_name='task a')
+
+        _ = task_graph.add_task(
+           func=_create_file,
+           args=(target_b_path, 'test value'),
+           target_path_list=[target_b_path],
+           hash_algorithm='md5',
+           copy_duplicate_artifact=True,
+           task_name='task b')
+
+        task_graph.join()
+        task_graph.close()
+        del task_graph
+
+        with open(target_a_path, 'r') as a_file:
+            m = hashlib.md5()
+            m.update(a_file.read())
+            a_digest = m.digest()
+        with open(target_b_path, 'r') as b_file:
+            m = hashlib.md5()
+            m.update(b_file.read())
+            b_digest = m.digest()
+        self.assertEqual(a_digest, b_digest)
 
     def test_timeout_task(self):
         """TaskGraph: Test timeout functionality."""
@@ -818,9 +868,12 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_log_from_another_process,
             args=(logger_name, log_message))
-        task_graph.close()
         task_graph.join()
+        task_graph.close()
         handler.flush()
+        del handler
+        task_graph._terminate()
+        del task_graph
 
         with open(file_log_path) as log_file:
             message = log_file.read().rstrip()
@@ -829,7 +882,6 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(logged_message, log_message)
         self.assertNotEqual(
             process_name, multiprocessing.current_process().name)
-        task_graph = None
 
     def test_repeated_function(self):
         """TaskGraph: ensure no reruns if argument is a function."""
@@ -1026,7 +1078,6 @@ class TaskGraphTests(unittest.TestCase):
         with open(target_path, 'r') as target_file:
             contents = target_file.read()
         self.assertEqual(contents, 'test')
-
 
     def test_different_target_path_list(self):
         """TaskGraph: duplicate calls with different targets should fail."""

@@ -853,17 +853,15 @@ class Task(object):
         # sort the target path list because the order doesn't matter for
         # a result, but it would cause a task to be reexecuted if the only
         # difference was a different order.
-        self._target_path_list = sorted(
-            [os.path.normpath(os.path.normcase(path))
-             for path in target_path_list])
+        self._target_path_list = sorted([
+            _normalize_path(path) for path in target_path_list])
         self.task_name = task_name
         self._func = func
         self._args = args
         self._kwargs = kwargs
         self._cache_dir = cache_dir
         self._ignore_path_list = [
-            os.path.normpath(os.path.normcase(path))
-            for path in ignore_path_list]
+            _normalize_path(path) for path in ignore_path_list]
         self._ignore_directories = ignore_directories
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
@@ -1019,7 +1017,8 @@ class Task(object):
                     database_result = cursor.fetchone()
             try:
                 if database_result:
-                    result_target_path_stats = pickle.loads(database_result[0])
+                    result_target_path_stats = pickle.loads(
+                        database_result[0])
                     if (len(result_target_path_stats) ==
                             len(self._target_path_list)):
                         if all([
@@ -1277,7 +1276,7 @@ def _get_file_stats(
     """
     if isinstance(base_value, _VALID_PATH_TYPES):
         try:
-            norm_path = os.path.normpath(os.path.normcase(base_value))
+            norm_path = _normalize_path(base_value)
             if norm_path not in ignore_list and (
                     not os.path.isdir(norm_path) or
                     not ignore_directories) and os.path.exists(norm_path):
@@ -1325,7 +1324,7 @@ def _filter_non_files(
     """
     if isinstance(base_value, _VALID_PATH_TYPES):
         try:
-            norm_path = os.path.normpath(os.path.normcase(base_value))
+            norm_path = _normalize_path(base_value)
             if (norm_path in keep_list or (
                     os.path.isdir(norm_path) and keep_directories) or
                     not os.path.isfile(norm_path)):
@@ -1402,10 +1401,9 @@ def _scrub_task_args(base_value, target_path_list):
             result_list.append(_scrub_task_args(value, target_path_list))
         return type(base_value)(result_list)
     elif isinstance(base_value, _VALID_PATH_TYPES):
-        normalized_path = os.path.normpath(os.path.normcase(base_value))
+        normalized_path = _normalize_path(base_value)
         if normalized_path in target_path_list:
-            return 'target_path_list[%d]' % target_path_list.index(
-                normalized_path)
+            return 'in_target_path_list'
         else:
             return normalized_path
     else:
@@ -1433,7 +1431,7 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
 
     """
     if hash_algorithm == 'sizetimestamp':
-        norm_path = os.path.normpath(os.path.normcase(file_path))
+        norm_path = _normalize_path(file_path)
         return '%d:%f' % (
             os.path.getsize(norm_path), os.path.getmtime(norm_path))
     hash_func = hashlib.new(hash_algorithm)
@@ -1443,3 +1441,15 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
             hash_func.update(binary_data)
             binary_data = f.read(buf_size)
     return hash_func.hexdigest()
+
+
+def _normalize_path(path):
+    """Convert `path` into normalized, normcase, absolute filepath."""
+    norm_path = os.path.normpath(os.path.normcase(path))
+    try:
+        return os.path.abspath(norm_path)
+    except TypeError:
+        # this occurs when encountering VERY long strings that might be
+        # interpreted as paths
+        LOGGER.warn("failed to relpath %s so returning norm_path instead")
+        return norm_path
