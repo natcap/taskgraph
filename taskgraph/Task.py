@@ -1451,5 +1451,6 @@ def _normalize_path(path):
     except TypeError:
         # this occurs when encountering VERY long strings that might be
         # interpreted as paths
-        LOGGER.warn("failed to relpath %s so returning norm_path instead")
+        LOGGER.warn(
+            "failed to abspath %s so returning normalized path instead")
         return norm_path
