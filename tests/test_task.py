@@ -253,8 +253,8 @@ class TaskGraphTests(unittest.TestCase):
            copy_duplicate_artifact=True,
            task_name='task b')
 
-        task_graph.join()
         task_graph.close()
+        task_graph.join()
         del task_graph
 
         with open(target_a_path, 'r') as a_file:
@@ -868,8 +868,8 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_log_from_another_process,
             args=(logger_name, log_message))
-        task_graph.join()
         task_graph.close()
+        task_graph.join()
         handler.flush()
         del handler
         task_graph._terminate()
