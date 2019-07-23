@@ -1125,7 +1125,8 @@ class Task(object):
         other_arguments = list(_filter_non_files(
             [self._reexecution_info['args_clean'],
              self._reexecution_info['kwargs_clean']],
-            self._target_path_list+self._ignore_path_list,
+            self._target_path_list,
+            self._ignore_path_list,
             self._ignore_directories))
 
         LOGGER.debug("file_stat_list: %s", file_stat_list)
@@ -1305,7 +1306,7 @@ def _get_file_stats(
 
 
 def _filter_non_files(
-        base_value, keep_list, keep_directories):
+        base_value, keep_list, ignore_list, keep_directories):
     """Remove any values that are files not in ignore list or directories.
 
     Parameters:
@@ -1314,6 +1315,7 @@ def _filter_non_files(
             contains filepaths in any nested structure.
         keep_list (list): any paths found in this list are not filtered.
             All paths in this list should be "os.path.norm"ed.
+        ignore_list (list): any paths found in this list are filtered.
         keep_directories (boolean): If True directories are not filtered
             out.
 
@@ -1325,7 +1327,7 @@ def _filter_non_files(
     if isinstance(base_value, _VALID_PATH_TYPES):
         try:
             norm_path = _normalize_path(base_value)
-            if (norm_path in keep_list or (
+            if norm_path not in ignore_list and (norm_path in keep_list or (
                     os.path.isdir(norm_path) and keep_directories) or
                     not os.path.isfile(norm_path)):
                 yield norm_path
@@ -1341,12 +1343,12 @@ def _filter_non_files(
         for key in base_value.keys():
             value = base_value[key]
             for filter_value in _filter_non_files(
-                    value, keep_list, keep_directories):
+                    value, keep_list, ignore_list, keep_directories):
                 yield (value, filter_value)
     elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for filter_value in _filter_non_files(
-                    value, keep_list, keep_directories):
+                    value, keep_list, ignore_list, keep_directories):
                 yield filter_value
     else:
         yield base_value
