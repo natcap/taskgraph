@@ -2,14 +2,6 @@ pipelines:
   default:
     - parallel:
       - step:
-          name: Tests on python2.7
-          image: python:2.7-stretch
-          caches:
-            - pip
-          script:
-            - pip install tox
-            - tox -e py27-base,py27-psutil
-      - step:
           name: Tests on python3.6
           image: python:3.6-stretch
           caches:

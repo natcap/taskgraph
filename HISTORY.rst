@@ -4,6 +4,12 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Dropped support for Python 2.7.
+* Fixed an issue where paths in ``ignore_paths`` were not getting ignored in
+  the case of ``copy_duplicate_artifact=True``.
+
 0.8.4 (2019-05-23)
 ------------------
 * Fixed an exception that occurred when two tasks were constructed that
