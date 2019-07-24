@@ -1451,12 +1451,13 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
 
 def _normalize_path(path):
     """Convert `path` into normalized, normcase, absolute filepath."""
-    norm_path = os.path.normpath(os.path.normcase(path))
+    norm_path = os.path.normpath(path)
     try:
-        return os.path.abspath(norm_path)
+        abs_path = os.path.abspath(norm_path)
     except TypeError:
         # this occurs when encountering VERY long strings that might be
         # interpreted as paths
         LOGGER.warn(
             "failed to abspath %s so returning normalized path instead")
-        return norm_path
+        abs_path = norm_path
+    return os.path.normcase(abs_path)
