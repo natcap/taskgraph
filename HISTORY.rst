@@ -9,6 +9,9 @@ Unreleased Changes
 * Dropped support for Python 2.7.
 * Fixed an issue where paths in ``ignore_paths`` were not getting ignored in
   the case of ``copy_duplicate_artifact=True``.
+* Fixed an issue where the "percent completed" in the logging monitor would
+  sometimes exceed 100%. This occurred when a duplicate task was added to
+  the TaskGraph object.
 
 0.8.4 (2019-05-23)
 ------------------

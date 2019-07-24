@@ -146,6 +146,10 @@ class TaskGraph(object):
 
         self._taskgraph_started_event = threading.Event()
 
+        # this variable is used to print accurate representation of how many
+        # tasks have been completed in the logging output.
+        self._added_task_count = 0
+
         # use this to keep track of all the tasks added to the graph by their
         # task hashes. Used to determine if an identical task has been added
         # to the taskgraph during `add_task`
@@ -526,6 +530,7 @@ class TaskGraph(object):
                     raise ValueError(
                         "The task graph is closed and cannot accept more "
                         "tasks.")
+                self._added_task_count += 1
                 if args is None:
                     args = []
                 if kwargs is None:
@@ -661,20 +666,19 @@ class TaskGraph(object):
                         task_name, time.time() - task_time)
                      for task_name, task_time in self._active_task_list])
 
-            total_tasks = len(self._task_hash_map)
             completed_tasks = len(self._completed_task_names)
             percent_complete = 0.0
-            if total_tasks > 0:
+            if self._added_task_count > 0:
                 percent_complete = 100.0 * (
-                    float(completed_tasks) / total_tasks)
+                    float(completed_tasks) / self._added_task_count)
 
             LOGGER.info(
                 "\n\ttaskgraph execution status: tasks added: %d \n"
                 "\ttasks complete: %d (%.1f%%) \n"
                 "\ttasks waiting for a free worker: %d (qsize: %d)\n"
-                "\ttasks executing (%d): graph is %s\n%s", total_tasks,
-                completed_tasks, percent_complete, self._task_waiting_count,
-                queue_length, active_task_count,
+                "\ttasks executing (%d): graph is %s\n%s",
+                self._added_task_count, completed_tasks, percent_complete,
+                self._task_waiting_count, queue_length, active_task_count,
                 'closed' if self._closed else 'open',
                 active_task_message)
 
