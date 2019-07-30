@@ -12,6 +12,8 @@ Unreleased Changes
 * Fixed an issue where the "percent completed" in the logging monitor would
   sometimes exceed 100%. This occurred when a duplicate task was added to
   the TaskGraph object.
+* Fixed an issue where a relative path set as a target path would always cause
+  TaskGraph to raise an exception after the task was complete.
 
 0.8.4 (2019-05-23)
 ------------------

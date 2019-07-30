@@ -1258,6 +1258,31 @@ class TaskGraphTests(unittest.TestCase):
         self.assertTrue(n_runs_a == 1)
         self.assertTrue(n_runs_b == 1)
 
+    def test_expected_path_list(self):
+        """TaskGraph: test expected path list matches actual path list."""
+        def _create_file(target_path, content):
+            with open(target_path, 'w') as target_file:
+                target_file.write(content)
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+        # note it is important this is a relative path that does not
+        # contain the drive letter on Windows.
+        absolute_target_file_path = os.path.join(
+            self.workspace_dir, 'a.txt')
+        relative_path = os.path.relpath(absolute_target_file_path)
+
+        _ = task_graph.add_task(
+           func=_create_file,
+           args=(relative_path, 'test value'),
+           target_path_list=[relative_path],
+           task_name='create file')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertTrue('Ran without crashing!')
+
 
 def Fail(n_tries, result_path):
     """Create a function that fails after `n_tries`."""
