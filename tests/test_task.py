@@ -21,6 +21,11 @@ LOGGER = logging.getLogger(__name__)
 N_TEARDOWN_RETRIES = 5
 
 
+def _noop_function(**kwargs):
+    """Does nothing except allow kwargs to be passed."""
+    pass
+
+
 def _long_running_function(delay):
     """Wait for `delay` seconds."""
     time.sleep(delay)
@@ -1257,6 +1262,55 @@ class TaskGraphTests(unittest.TestCase):
 
         self.assertTrue(n_runs_a == 1)
         self.assertTrue(n_runs_b == 1)
+
+    def test_expected_path_list(self):
+        """TaskGraph: test expected path list matches actual path list."""
+        def _create_file(target_path, content):
+            with open(target_path, 'w') as target_file:
+                target_file.write(content)
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+        # note it is important this is a relative path that does not
+        # contain the drive letter on Windows.
+        absolute_target_file_path = os.path.join(
+            self.workspace_dir, 'a.txt')
+        relative_path = os.path.relpath(absolute_target_file_path)
+
+        _ = task_graph.add_task(
+           func=_create_file,
+           args=(relative_path, 'test value'),
+           target_path_list=[relative_path],
+           task_name='create file')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertTrue('Ran without crashing!')
+
+    def test_kwargs_hashed(self):
+        """TaskGraph: ensure kwargs are considered in determining id hash."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+
+        task_a = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'content': ['this value: a']},
+            task_name='noop a')
+
+        task_b = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'content': ['this value b']},
+            task_name='noop b')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertNotEqual(
+            task_a._task_id_hash, task_b._task_id_hash,
+            "task ids should be different since the kwargs are different")
 
 
 def Fail(n_tries, result_path):

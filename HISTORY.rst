@@ -12,6 +12,8 @@ Unreleased Changes
 * Fixed an issue where the "percent completed" in the logging monitor would
   sometimes exceed 100%. This occurred when a duplicate task was added to
   the TaskGraph object.
+* Fixed an issue where kwargs that were unhashable were not considered when
+  determining if a Task should be re-run.
 
 0.8.4 (2019-05-23)
 ------------------
