@@ -14,6 +14,8 @@ Unreleased Changes
   the TaskGraph object.
 * Fixed an issue where a relative path set as a target path would always cause
   TaskGraph to raise an exception after the task was complete.
+* Fixed an issue where kwargs that were unhashable were not considered when
+  determining if a Task should be re-run.
 
 0.8.4 (2019-05-23)
 ------------------

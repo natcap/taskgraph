@@ -930,13 +930,13 @@ class Task(object):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
-                kwargs_clean[arg] = scrubbed_value
+                kwargs_clean[key] = scrubbed_value
             except TypeError:
                 LOGGER.warning(
-                    "could not pickle kw argument %s (%s). "
+                    "could not pickle kw argument %s (%s) scrubbed to %s. "
                     "Skipping argument which means it will not be considered "
                     "when calculating whether inputs have been changed "
-                    "on a successive run.", key, arg)
+                    "on a successive run.", key, arg, scrubbed_value)
 
         self._reexecution_info = {
             'func_name': self._func.__name__,

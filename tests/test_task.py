@@ -21,6 +21,11 @@ LOGGER = logging.getLogger(__name__)
 N_TEARDOWN_RETRIES = 5
 
 
+def _noop_function(**kwargs):
+    """Does nothing except allow kwargs to be passed."""
+    pass
+
+
 def _long_running_function(delay):
     """Wait for `delay` seconds."""
     time.sleep(delay)
@@ -1282,6 +1287,30 @@ class TaskGraphTests(unittest.TestCase):
         del task_graph
 
         self.assertTrue('Ran without crashing!')
+
+    def test_kwargs_hashed(self):
+        """TaskGraph: ensure kwargs are considered in determining id hash."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+
+        task_a = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'content': ['this value: a']},
+            task_name='noop a')
+
+        task_b = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'content': ['this value b']},
+            task_name='noop b')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertNotEqual(
+            task_a._task_id_hash, task_b._task_id_hash,
+            "task ids should be different since the kwargs are different")
 
 
 def Fail(n_tries, result_path):
