@@ -1438,8 +1438,9 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = _normalize_path(file_path)
-        return '%d:%f' % (
-            os.path.getsize(norm_path), os.path.getmtime(norm_path))
+        return '%d:%f:%s' % (
+            os.path.getsize(norm_path), os.path.getmtime(norm_path),
+            norm_path)
     hash_func = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:
         binary_data = f.read(buf_size)
