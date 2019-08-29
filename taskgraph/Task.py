@@ -1179,17 +1179,22 @@ class Task(object):
                         'Path not found: %s' % path)
                     continue
                 if hash_algorithm == 'sizetimestamp':
-                    size, modified_time = [
-                        float(x) for x in hash_string.split(':')]
+                    size, modified_time, actual_path = [
+                        x for x in hash_string.split('::')]
+                    if actual_path != path:
+                        mismatched_target_file_list.append(
+                            "Path names don't match\n"
+                            "cached: (%s)\nactual (%s)" % (path, actual_path))
                     target_modified_time = os.path.getmtime(path)
-                    if not math.isclose(modified_time, target_modified_time):
+                    if not math.isclose(
+                            float(modified_time), target_modified_time):
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
                                 modified_time, target_modified_time))
                         continue
                     target_size = os.path.getsize(path)
-                    if size != target_size:
+                    if float(size) != target_size:
                         mismatched_target_file_list.append(
                             "File sizes don't match "
                             "cached: (%s) actual: (%s)" % (
@@ -1438,7 +1443,7 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = _normalize_path(file_path)
-        return '%d:%f:%s' % (
+        return '%d::%f::%s' % (
             os.path.getsize(norm_path), os.path.getmtime(norm_path),
             norm_path)
     hash_func = hashlib.new(hash_algorithm)
