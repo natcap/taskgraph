@@ -1191,7 +1191,7 @@ class Task(object):
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
-                                modified_time, target_modified_time))
+                                float(modified_time), target_modified_time))
                         continue
                     target_size = os.path.getsize(path)
                     if float(size) != target_size:
