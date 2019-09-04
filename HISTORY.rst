@@ -16,6 +16,8 @@ Unreleased Changes
   TaskGraph to raise an exception after the task was complete.
 * Fixed an issue where kwargs that were unhashable were not considered when
   determining if a Task should be re-run.
+* Fixed an issue where files with almost identical modified times and sizes
+  would hash equal in cases even when the filenames were different.
 
 0.8.4 (2019-05-23)
 ------------------
