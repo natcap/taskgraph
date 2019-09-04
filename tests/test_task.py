@@ -1312,6 +1312,41 @@ class TaskGraphTests(unittest.TestCase):
             task_a._task_id_hash, task_b._task_id_hash,
             "task ids should be different since the kwargs are different")
 
+    def test_same_timestamp_and_value(self):
+        """TaskGraph: ensure identical files but filename are noticed."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+
+        file_a_path = os.path.join(self.workspace_dir, 'file_a.txt')
+        file_b_path = os.path.join(self.workspace_dir, 'file_b.txt')
+
+        with open(file_a_path, 'w') as file_a:
+            file_a.write('a')
+        with open(file_b_path, 'w') as file_b:
+            file_b.write('a')
+
+        os.utime(file_a_path, (0, 0))
+        os.utime(file_b_path, (0, 0))
+
+        task_a = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'path': file_a_path},
+            task_name='noop a')
+
+        task_b = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'path': file_b_path},
+            task_name='noop b')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertNotEqual(
+            task_a._task_id_hash, task_b._task_id_hash,
+            "task ids should be different since the filenames are different")
+
 
 def Fail(n_tries, result_path):
     """Create a function that fails after `n_tries`."""
