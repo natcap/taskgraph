@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
+0.8.5 (2019-09-11)
 ------------------
 * Dropped support for Python 2.7.
 * Fixed an issue where paths in ``ignore_paths`` were not getting ignored in
