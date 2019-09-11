@@ -146,6 +146,10 @@ class TaskGraph(object):
 
         self._taskgraph_started_event = threading.Event()
 
+        # this variable is used to print accurate representation of how many
+        # tasks have been completed in the logging output.
+        self._added_task_count = 0
+
         # use this to keep track of all the tasks added to the graph by their
         # task hashes. Used to determine if an identical task has been added
         # to the taskgraph during `add_task`
@@ -526,6 +530,7 @@ class TaskGraph(object):
                     raise ValueError(
                         "The task graph is closed and cannot accept more "
                         "tasks.")
+                self._added_task_count += 1
                 if args is None:
                     args = []
                 if kwargs is None:
@@ -661,20 +666,19 @@ class TaskGraph(object):
                         task_name, time.time() - task_time)
                      for task_name, task_time in self._active_task_list])
 
-            total_tasks = len(self._task_hash_map)
             completed_tasks = len(self._completed_task_names)
             percent_complete = 0.0
-            if total_tasks > 0:
+            if self._added_task_count > 0:
                 percent_complete = 100.0 * (
-                    float(completed_tasks) / total_tasks)
+                    float(completed_tasks) / self._added_task_count)
 
             LOGGER.info(
                 "\n\ttaskgraph execution status: tasks added: %d \n"
                 "\ttasks complete: %d (%.1f%%) \n"
                 "\ttasks waiting for a free worker: %d (qsize: %d)\n"
-                "\ttasks executing (%d): graph is %s\n%s", total_tasks,
-                completed_tasks, percent_complete, self._task_waiting_count,
-                queue_length, active_task_count,
+                "\ttasks executing (%d): graph is %s\n%s",
+                self._added_task_count, completed_tasks, percent_complete,
+                self._task_waiting_count, queue_length, active_task_count,
                 'closed' if self._closed else 'open',
                 active_task_message)
 
@@ -926,13 +930,13 @@ class Task(object):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
-                kwargs_clean[arg] = scrubbed_value
+                kwargs_clean[key] = scrubbed_value
             except TypeError:
                 LOGGER.warning(
-                    "could not pickle kw argument %s (%s). "
+                    "could not pickle kw argument %s (%s) scrubbed to %s. "
                     "Skipping argument which means it will not be considered "
                     "when calculating whether inputs have been changed "
-                    "on a successive run.", key, arg)
+                    "on a successive run.", key, arg, scrubbed_value)
 
         self._reexecution_info = {
             'func_name': self._func.__name__,
@@ -1125,7 +1129,8 @@ class Task(object):
         other_arguments = list(_filter_non_files(
             [self._reexecution_info['args_clean'],
              self._reexecution_info['kwargs_clean']],
-            self._target_path_list+self._ignore_path_list,
+            self._target_path_list,
+            self._ignore_path_list,
             self._ignore_directories))
 
         LOGGER.debug("file_stat_list: %s", file_stat_list)
@@ -1174,17 +1179,22 @@ class Task(object):
                         'Path not found: %s' % path)
                     continue
                 if hash_algorithm == 'sizetimestamp':
-                    size, modified_time = [
-                        float(x) for x in hash_string.split(':')]
+                    size, modified_time, actual_path = [
+                        x for x in hash_string.split('::')]
+                    if actual_path != path:
+                        mismatched_target_file_list.append(
+                            "Path names don't match\n"
+                            "cached: (%s)\nactual (%s)" % (path, actual_path))
                     target_modified_time = os.path.getmtime(path)
-                    if not math.isclose(modified_time, target_modified_time):
+                    if not math.isclose(
+                            float(modified_time), target_modified_time):
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
-                                modified_time, target_modified_time))
+                                float(modified_time), target_modified_time))
                         continue
                     target_size = os.path.getsize(path)
-                    if size != target_size:
+                    if float(size) != target_size:
                         mismatched_target_file_list.append(
                             "File sizes don't match "
                             "cached: (%s) actual: (%s)" % (
@@ -1305,7 +1315,7 @@ def _get_file_stats(
 
 
 def _filter_non_files(
-        base_value, keep_list, keep_directories):
+        base_value, keep_list, ignore_list, keep_directories):
     """Remove any values that are files not in ignore list or directories.
 
     Parameters:
@@ -1314,6 +1324,7 @@ def _filter_non_files(
             contains filepaths in any nested structure.
         keep_list (list): any paths found in this list are not filtered.
             All paths in this list should be "os.path.norm"ed.
+        ignore_list (list): any paths found in this list are filtered.
         keep_directories (boolean): If True directories are not filtered
             out.
 
@@ -1325,7 +1336,7 @@ def _filter_non_files(
     if isinstance(base_value, _VALID_PATH_TYPES):
         try:
             norm_path = _normalize_path(base_value)
-            if (norm_path in keep_list or (
+            if norm_path not in ignore_list and (norm_path in keep_list or (
                     os.path.isdir(norm_path) and keep_directories) or
                     not os.path.isfile(norm_path)):
                 yield norm_path
@@ -1341,12 +1352,12 @@ def _filter_non_files(
         for key in base_value.keys():
             value = base_value[key]
             for filter_value in _filter_non_files(
-                    value, keep_list, keep_directories):
+                    value, keep_list, ignore_list, keep_directories):
                 yield (value, filter_value)
     elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for filter_value in _filter_non_files(
-                    value, keep_list, keep_directories):
+                    value, keep_list, ignore_list, keep_directories):
                 yield filter_value
     else:
         yield base_value
@@ -1432,8 +1443,9 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = _normalize_path(file_path)
-        return '%d:%f' % (
-            os.path.getsize(norm_path), os.path.getmtime(norm_path))
+        return '%d::%f::%s' % (
+            os.path.getsize(norm_path), os.path.getmtime(norm_path),
+            norm_path)
     hash_func = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:
         binary_data = f.read(buf_size)
@@ -1445,12 +1457,13 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
 
 def _normalize_path(path):
     """Convert `path` into normalized, normcase, absolute filepath."""
-    norm_path = os.path.normpath(os.path.normcase(path))
+    norm_path = os.path.normpath(path)
     try:
-        return os.path.abspath(norm_path)
+        abs_path = os.path.abspath(norm_path)
     except TypeError:
         # this occurs when encountering VERY long strings that might be
         # interpreted as paths
         LOGGER.warn(
             "failed to abspath %s so returning normalized path instead")
-        return norm_path
+        abs_path = norm_path
+    return os.path.normcase(abs_path)

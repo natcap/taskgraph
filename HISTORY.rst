@@ -4,6 +4,21 @@
 TaskGraph Release History
 =========================
 
+0.8.5 (2019-09-11)
+------------------
+* Dropped support for Python 2.7.
+* Fixed an issue where paths in ``ignore_paths`` were not getting ignored in
+  the case of ``copy_duplicate_artifact=True``.
+* Fixed an issue where the "percent completed" in the logging monitor would
+  sometimes exceed 100%. This occurred when a duplicate task was added to
+  the TaskGraph object.
+* Fixed an issue where a relative path set as a target path would always cause
+  TaskGraph to raise an exception after the task was complete.
+* Fixed an issue where kwargs that were unhashable were not considered when
+  determining if a Task should be re-run.
+* Fixed an issue where files with almost identical modified times and sizes
+  would hash equal in cases even when the filenames were different.
+
 0.8.4 (2019-05-23)
 ------------------
 * Fixed an exception that occurred when two tasks were constructed that

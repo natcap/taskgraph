@@ -12,6 +12,7 @@ import logging
 import logging.handlers
 import multiprocessing
 import mock
+import importlib
 
 import taskgraph
 
@@ -19,9 +20,10 @@ LOGGER = logging.getLogger(__name__)
 
 N_TEARDOWN_RETRIES = 5
 
-# Python 3 relocated the reload function to imp.
-if 'reload' not in __builtins__:
-    from imp import reload
+
+def _noop_function(**kwargs):
+    """Does nothing except allow kwargs to be passed."""
+    pass
 
 
 def _long_running_function(delay):
@@ -167,7 +169,7 @@ class TaskGraphTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 # RuntimeError is a side effect of `import taskgraph`, so we
                 # reload it to retrigger the metadata load.
-                taskgraph = reload(taskgraph)
+                taskgraph = importlib.reload(taskgraph)
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
@@ -1196,6 +1198,154 @@ class TaskGraphTests(unittest.TestCase):
             with open(path, 'r') as target_file:
                 contents = target_file.read()
             self.assertEqual(contents, test_string)
+
+    def test_modifying_functions_with_copy(self):
+        """TaskGraph: test with copy artifacts and ignore inputs."""
+        n_runs_a = 0
+        n_runs_b = 0
+
+        a_path = os.path.join(self.workspace_dir, 'a.txt')
+        b_path = os.path.join(self.workspace_dir, 'b.txt')
+        volatile_path = os.path.join(self.workspace_dir, 'volatile.txt')
+        d_path = os.path.join(self.workspace_dir, 'd.txt')
+
+        b_path_suffix = os.path.join(self.workspace_dir, 'b_suffix.txt')
+        volatile_path_suffix = os.path.join(self.workspace_dir, 'volatile_suffix.txt')
+        d_path_suffix = os.path.join(self.workspace_dir, 'd_suffix.txt')
+
+        with open(a_path, 'w') as a_file:
+            a_file.write('a file')
+
+        def run_a_batch(a_path, b_path, volatile_path, d_path):
+            def _a(a_path, target_path):
+                nonlocal n_runs_a
+                n_runs_a += 1
+                if not os.path.exists(a_path):
+                    raise RuntimeError("a_path doesn't exist")
+                with open(target_path, 'w') as target_file:
+                    target_file.write('_a result')
+
+            def _b(b_path, volatile_path, target_path):
+                nonlocal n_runs_b
+                n_runs_b += 1
+                if not os.path.exists(a_path):
+                    raise RuntimeError("a_path path doesn't exist")
+                with open(volatile_path, 'w') as volitile_file:
+                    volitile_file.write('_b volatile')
+                with open(target_path, 'w') as target_file:
+                    target_file.write('_b result')
+
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+            task_a = task_graph.add_task(
+                func=_a,
+                args=(a_path, b_path),
+                target_path_list=[b_path],
+                hash_algorithm='md5',
+                copy_duplicate_artifact=True,
+                task_name='_a task')
+            _ = task_graph.add_task(
+                func=_b,
+                args=(b_path, volatile_path, d_path),
+                target_path_list=[d_path],
+                ignore_path_list=[volatile_path],
+                hash_algorithm='md5',
+                copy_duplicate_artifact=True,
+                dependent_task_list=[task_a],
+                task_name='_b task')
+            task_graph.join()
+            task_graph.close()
+            del task_graph
+
+        run_a_batch(a_path, b_path, volatile_path, d_path)
+        run_a_batch(a_path, b_path, volatile_path, d_path)
+        run_a_batch(a_path, b_path_suffix, volatile_path_suffix, d_path_suffix)
+
+        self.assertTrue(n_runs_a == 1)
+        self.assertTrue(n_runs_b == 1)
+
+    def test_expected_path_list(self):
+        """TaskGraph: test expected path list matches actual path list."""
+        def _create_file(target_path, content):
+            with open(target_path, 'w') as target_file:
+                target_file.write(content)
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+        # note it is important this is a relative path that does not
+        # contain the drive letter on Windows.
+        absolute_target_file_path = os.path.join(
+            self.workspace_dir, 'a.txt')
+        relative_path = os.path.relpath(absolute_target_file_path)
+
+        _ = task_graph.add_task(
+           func=_create_file,
+           args=(relative_path, 'test value'),
+           target_path_list=[relative_path],
+           task_name='create file')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertTrue('Ran without crashing!')
+
+    def test_kwargs_hashed(self):
+        """TaskGraph: ensure kwargs are considered in determining id hash."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+
+        task_a = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'content': ['this value: a']},
+            task_name='noop a')
+
+        task_b = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'content': ['this value b']},
+            task_name='noop b')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertNotEqual(
+            task_a._task_id_hash, task_b._task_id_hash,
+            "task ids should be different since the kwargs are different")
+
+    def test_same_timestamp_and_value(self):
+        """TaskGraph: ensure identical files but filename are noticed."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+
+        file_a_path = os.path.join(self.workspace_dir, 'file_a.txt')
+        file_b_path = os.path.join(self.workspace_dir, 'file_b.txt')
+
+        with open(file_a_path, 'w') as file_a:
+            file_a.write('a')
+        with open(file_b_path, 'w') as file_b:
+            file_b.write('a')
+
+        os.utime(file_a_path, (0, 0))
+        os.utime(file_b_path, (0, 0))
+
+        task_a = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'path': file_a_path},
+            task_name='noop a')
+
+        task_b = task_graph.add_task(
+            func=_noop_function,
+            kwargs={
+                'path': file_b_path},
+            task_name='noop b')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        self.assertNotEqual(
+            task_a._task_id_hash, task_b._task_id_hash,
+            "task ids should be different since the filenames are different")
 
 
 def Fail(n_tries, result_path):
