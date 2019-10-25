@@ -1,19 +1,19 @@
 """Tests for taskgraph."""
 import hashlib
-import re
-import sqlite3
-import os
-import tempfile
-import shutil
-import time
-import unittest
-import pickle
+import importlib
 import logging
 import logging.handlers
 import multiprocessing
-import mock
-import importlib
+import os
+import pickle
+import re
+import shutil
+import sqlite3
+import tempfile
+import time
+import unittest
 
+import mock
 import taskgraph
 
 LOGGER = logging.getLogger(__name__)
