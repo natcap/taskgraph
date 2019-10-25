@@ -14,7 +14,7 @@ setup(
     long_description=LONG_DESCRIPTION,
     maintainer='Rich Sharp',
     maintainer_email='richpsharp@gmail.com',
-    url='https://bitbucket.org/natcap/taskgraph',
+    url='https://github.com/natcap/taskgraph',
     packages=['taskgraph'],
     license='BSD',
     keywords='parallel multiprocessing distributed computing',
