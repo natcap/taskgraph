@@ -329,8 +329,8 @@ class TaskGraph(object):
                 except queue.Empty:
                     break
             LOGGER.debug('taskgraph terminated')
-        except:
-            pass
+        except Exception:
+            LOGGER.exception('exception occured during __del__')
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""

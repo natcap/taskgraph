@@ -63,5 +63,5 @@ class QueueHandler(logging.Handler):
             self.enqueue(self.prepare(record))
         except (KeyboardInterrupt, SystemExit):
             raise
-        except:
+        except Exception:
             self.handleError(record)
