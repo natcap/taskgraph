@@ -1,39 +1,25 @@
 """Task graph framework."""
-from __future__ import absolute_import
-
-import shutil
-import time
-import pprint
+import abc
 import collections
 import hashlib
-import pickle
-import os
+import inspect
 import logging
+import math
 import multiprocessing
 import multiprocessing.pool
-import threading
+import os
+import pathlib
+import pickle
+import pprint
+import queue
+import shutil
 import sqlite3
-import math
-try:
-    import Queue as queue
-    # In python 2 basestring is superclass of str and unicode.
-    _VALID_PATH_TYPES = (basestring,)
-
-    def _isclose(a, b, rel_tol=1e-9, abs_tol=0.0):
-        """Define isclose function for Python 2.7, >3.6 has math.isclose."""
-        return abs(a-b) < max(rel_tol * max(abs(a), abs(b)), abs_tol)
-    math.isclose = _isclose
-except ImportError:
-    # Python3 renamed queue as queue
-    import queue
-    import pathlib
-    # pathlib only exists in Python3
-    _VALID_PATH_TYPES = (str, pathlib.Path)
-import inspect
-import abc
+import threading
+import time
 
 from . import queuehandler
 
+_VALID_PATH_TYPES = (str, pathlib.Path)
 # Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
 # usage that is no longer clearly documented in python 3 (if it's even present
 # at all ... __metaclass__ has been removed from the python data model docs)
@@ -343,8 +329,8 @@ class TaskGraph(object):
                 except queue.Empty:
                     break
             LOGGER.debug('taskgraph terminated')
-        except:
-            pass
+        except Exception:
+            LOGGER.exception('exception occured during __del__')
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
