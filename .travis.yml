@@ -21,7 +21,7 @@ matrix:
           env: EXTRAPKGS=psutil
 
 install:
-    - pip install setuptools_scm pytest pytest-cov $EXTRAPKGS
+    - pip install . setuptools_scm pytest pytest-cov $EXTRAPKGS
 
 script:
     - pytest --cov=taskgraph --cov-report=term
