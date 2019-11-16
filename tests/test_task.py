@@ -12,6 +12,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 import taskgraph
 
