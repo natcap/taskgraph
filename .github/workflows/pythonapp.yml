@@ -14,10 +14,6 @@ jobs:
       matrix:
         python-version: [3.6, 3.7, 3.8]
         os: [ubuntu-16.04, windows-latest, macos-latest]
-      env:
-          # Force python to write temp files to the actions home directory.
-          TMPDIR: ${{ HOME }}
-
 
     steps:
     - uses: actions/checkout@v1
@@ -40,6 +36,9 @@ jobs:
       run: |
         python setup.py install
     - name: Test with pytest
+      env:
+          # Force python to write temp files to the actions home directory.
+          TMPDIR: ${{ HOME }}
       run: |
         pip install pytest
         pytest
