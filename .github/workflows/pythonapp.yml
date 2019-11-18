@@ -38,7 +38,7 @@ jobs:
     - name: Test with pytest
       env:
           # Force python to write temp files to the actions home directory.
-          TMPDIR: ${{ HOME }}
+          TMPDIR: $HOME
       run: |
         pip install pytest
         pytest
