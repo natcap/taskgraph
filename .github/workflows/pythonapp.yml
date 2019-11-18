@@ -10,10 +10,14 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
-      max-parallel: 4
+      max-parallel: 2
       matrix:
         python-version: [3.6, 3.7, 3.8]
         os: [ubuntu-16.04, windows-latest, macos-latest]
+      env:
+          # Force python to write temp files to the actions home directory.
+          TMPDIR: ${{ HOME }}
+
 
     steps:
     - uses: actions/checkout@v1
