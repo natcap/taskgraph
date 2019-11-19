@@ -7,13 +7,14 @@ on:
         branches:
             - "**"
 jobs:
-  test:
+  Test:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
       matrix:
         python-version: [3.6, 3.7]
         os: [ubuntu-16.04, windows-latest, macos-latest]
+        # Run with and without psutil installed.
         env:
             - EXTRAPKGS: psutil
             - EXTRAPKGS:
