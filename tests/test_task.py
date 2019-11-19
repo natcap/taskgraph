@@ -237,7 +237,7 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
 
         target_a_path = os.path.relpath(
-            os.path.join(self.workspace_dir, 'a.txt'))
+            os.path.join(self.workspace_dir, 'a.txt'), start=self.workspace_dir)
         target_b_path = os.path.abspath(target_a_path)
 
         _ = task_graph.add_task(
@@ -1275,7 +1275,8 @@ class TaskGraphTests(unittest.TestCase):
         # contain the drive letter on Windows.
         absolute_target_file_path = os.path.join(
             self.workspace_dir, 'a.txt')
-        relative_path = os.path.relpath(absolute_target_file_path)
+        relative_path = os.path.relpath(absolute_target_file_path,
+                                        start=self.workspace_dir)
 
         _ = task_graph.add_task(
            func=_create_file,
