@@ -12,8 +12,8 @@ import sqlite3
 import tempfile
 import time
 import unittest
+import unittest.mock
 
-import mock
 import taskgraph
 
 LOGGER = logging.getLogger(__name__)
@@ -164,7 +164,7 @@ class TaskGraphTests(unittest.TestCase):
         from pkg_resources import DistributionNotFound
         import taskgraph
 
-        with mock.patch('taskgraph.pkg_resources.get_distribution',
+        with unittest.mock.patch('taskgraph.pkg_resources.get_distribution',
                         side_effect=DistributionNotFound('taskgraph')):
             with self.assertRaises(RuntimeError):
                 # RuntimeError is a side effect of `import taskgraph`, so we

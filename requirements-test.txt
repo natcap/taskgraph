@@ -1,2 +1,0 @@
-# only needed for running test suite
-mock
