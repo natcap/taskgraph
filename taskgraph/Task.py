@@ -4,6 +4,7 @@ import collections
 import hashlib
 import inspect
 import logging
+import logging.handlers
 import math
 import multiprocessing
 import multiprocessing.pool
@@ -17,7 +18,6 @@ import sqlite3
 import threading
 import time
 
-from . import queuehandler
 
 _VALID_PATH_TYPES = (str, pathlib.Path)
 # Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
@@ -93,7 +93,7 @@ def _initialize_logging_to_queue(logging_queue):
         root_logger.removeHandler(handler)
 
     root_logger.setLevel(logging.NOTSET)
-    handler = queuehandler.QueueHandler(logging_queue)
+    handler = logging.handlers.QueueHandler(logging_queue)
     root_logger.addHandler(handler)
 
 
