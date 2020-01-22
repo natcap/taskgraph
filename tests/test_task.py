@@ -1,18 +1,18 @@
 """Tests for taskgraph."""
 import hashlib
-import re
-import sqlite3
-import os
-import tempfile
-import shutil
-import time
-import unittest
-import pickle
+import importlib
 import logging
 import logging.handlers
 import multiprocessing
-import mock
-import importlib
+import os
+import pickle
+import re
+import shutil
+import sqlite3
+import tempfile
+import time
+import unittest
+import unittest.mock
 
 import taskgraph
 
@@ -146,7 +146,7 @@ class TaskGraphTests(unittest.TestCase):
             try:
                 shutil.rmtree(self.workspace_dir)
                 break
-            except:
+            except Exception:
                 LOGGER.exception('error when tearing down.')
                 attempts += 1
 
@@ -164,8 +164,9 @@ class TaskGraphTests(unittest.TestCase):
         from pkg_resources import DistributionNotFound
         import taskgraph
 
-        with mock.patch('taskgraph.pkg_resources.get_distribution',
-                        side_effect=DistributionNotFound('taskgraph')):
+        with unittest.mock.patch(
+                'taskgraph.pkg_resources.get_distribution',
+                side_effect=DistributionNotFound('taskgraph')):
             with self.assertRaises(RuntimeError):
                 # RuntimeError is a side effect of `import taskgraph`, so we
                 # reload it to retrigger the metadata load.
@@ -236,7 +237,7 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
 
         target_a_path = os.path.relpath(
-            os.path.join(self.workspace_dir, 'a.txt'))
+            os.path.join(self.workspace_dir, 'a.txt'), start=self.workspace_dir)
         target_b_path = os.path.abspath(target_a_path)
 
         _ = task_graph.add_task(
@@ -457,7 +458,6 @@ class TaskGraphTests(unittest.TestCase):
         target_b_path = os.path.join(self.workspace_dir, 'b.dat')
         result_path = os.path.join(self.workspace_dir, 'result.dat')
         value_a = 5
-        value_b = 10
         list_len = 10
         task_a = task_graph.add_task(
             func=_create_list_on_disk,
@@ -479,7 +479,7 @@ class TaskGraphTests(unittest.TestCase):
             dependent_task_list=[task_a, task_b])
         task_graph.close()
 
-        with self.assertRaises(ZeroDivisionError) as cm:
+        with self.assertRaises(ZeroDivisionError):
             task_graph.join()
 
     def test_broken_task(self):
@@ -1210,7 +1210,8 @@ class TaskGraphTests(unittest.TestCase):
         d_path = os.path.join(self.workspace_dir, 'd.txt')
 
         b_path_suffix = os.path.join(self.workspace_dir, 'b_suffix.txt')
-        volatile_path_suffix = os.path.join(self.workspace_dir, 'volatile_suffix.txt')
+        volatile_path_suffix = os.path.join(
+            self.workspace_dir, 'volatile_suffix.txt')
         d_path_suffix = os.path.join(self.workspace_dir, 'd_suffix.txt')
 
         with open(a_path, 'w') as a_file:
@@ -1274,7 +1275,8 @@ class TaskGraphTests(unittest.TestCase):
         # contain the drive letter on Windows.
         absolute_target_file_path = os.path.join(
             self.workspace_dir, 'a.txt')
-        relative_path = os.path.relpath(absolute_target_file_path)
+        relative_path = os.path.relpath(absolute_target_file_path,
+                                        start=self.workspace_dir)
 
         _ = task_graph.add_task(
            func=_create_file,

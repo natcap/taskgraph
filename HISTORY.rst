@@ -4,6 +4,10 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Updating primary repo url to Github.
+
 0.8.5 (2019-09-11)
 ------------------
 * Dropped support for Python 2.7.
