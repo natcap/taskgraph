@@ -52,29 +52,21 @@ _MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
 # https://stackoverflow.com/a/8963618/42897
 class NoDaemonProcess(multiprocessing.Process):
     """Make 'daemon' attribute always return False."""
-    """
-    def _get_daemon(self):
-        return False
-
-    def _set_daemon(self, value):
-        pass
-
-    """
     @property
     def daemon(self):
         return False
     @daemon.setter
     def daemon(self, value):
         pass
-    #daemon = property(_get_daemon, _set_daemon)
+
 
 class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
     Process = NoDaemonProcess
 
+
 class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
-    #Process = NoDaemonProcess
     def __init__(self, *args, **kwargs):
         kwargs['context'] = NoDaemonContext()
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
