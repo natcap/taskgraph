@@ -61,6 +61,13 @@ class NoDaemonProcess(multiprocessing.Process):
         pass
 
 
+# From https://stackoverflow.com/a/8963618/42897
+# "As the current implementation of multiprocessing [3.7+] has been extensively 
+# refactored to be based on contexts, we need to provide a NoDaemonContext
+# class that has our NoDaemonProcess as attribute. [NonDaemonicPool] will then 
+# use that context instead of the default one." 
+# "spawn" is chosen as default since that is the default and only context 
+# option for Windows and is the default option for Mac OS as well since 3.8.
 class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
     Process = NoDaemonProcess
 
@@ -68,6 +75,7 @@ class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
 class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
+    # Inovking super to set the context of Pool class explicitly
     def __init__(self, *args, **kwargs):
         kwargs['context'] = NoDaemonContext()
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
