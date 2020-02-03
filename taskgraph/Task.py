@@ -52,19 +52,33 @@ _MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
 # https://stackoverflow.com/a/8963618/42897
 class NoDaemonProcess(multiprocessing.Process):
     """Make 'daemon' attribute always return False."""
-
-    def _get_daemon(self):
+    @property
+    def daemon(self):
         return False
 
-    def _set_daemon(self, value):
+    @daemon.setter
+    def daemon(self, value):
         pass
-    daemon = property(_get_daemon, _set_daemon)
+
+
+# From https://stackoverflow.com/a/8963618/42897
+# "As the current implementation of multiprocessing [3.7+] has been extensively 
+# refactored to be based on contexts, we need to provide a NoDaemonContext
+# class that has our NoDaemonProcess as attribute. [NonDaemonicPool] will then 
+# use that context instead of the default one." 
+# "spawn" is chosen as default since that is the default and only context 
+# option for Windows and is the default option for Mac OS as well since 3.8.
+class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
+    Process = NoDaemonProcess
 
 
 class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
-    Process = NoDaemonProcess
+    # Inovking super to set the context of Pool class explicitly
+    def __init__(self, *args, **kwargs):
+        kwargs['context'] = NoDaemonContext()
+        super(NonDaemonicPool, self).__init__(*args, **kwargs)
 
 
 def _initialize_logging_to_queue(logging_queue):

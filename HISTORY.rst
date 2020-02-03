@@ -7,6 +7,7 @@ TaskGraph Release History
 Unreleased Changes
 ------------------
 * Updating primary repo url to Github.
+* Adding support for Python 3.8.
 
 0.8.5 (2019-09-11)
 ------------------
