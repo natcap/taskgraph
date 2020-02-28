@@ -20,12 +20,6 @@ import time
 
 
 _VALID_PATH_TYPES = (str, pathlib.Path)
-# Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
-# usage that is no longer clearly documented in python 3 (if it's even present
-# at all ... __metaclass__ has been removed from the python data model docs)
-# Taken from https://stackoverflow.com/a/38668373/299084
-ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
-
 _TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
 
 try:
@@ -62,11 +56,11 @@ class NoDaemonProcess(multiprocessing.Process):
 
 
 # From https://stackoverflow.com/a/8963618/42897
-# "As the current implementation of multiprocessing [3.7+] has been extensively 
+# "As the current implementation of multiprocessing [3.7+] has been extensively
 # refactored to be based on contexts, we need to provide a NoDaemonContext
-# class that has our NoDaemonProcess as attribute. [NonDaemonicPool] will then 
-# use that context instead of the default one." 
-# "spawn" is chosen as default since that is the default and only context 
+# class that has our NoDaemonProcess as attribute. [NonDaemonicPool] will then
+# use that context instead of the default one."
+# "spawn" is chosen as default since that is the default and only context
 # option for Windows and is the default option for Mac OS as well since 3.8.
 class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
     Process = NoDaemonProcess

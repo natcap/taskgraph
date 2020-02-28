@@ -1,6 +1,5 @@
 """Tests for taskgraph."""
 import hashlib
-import importlib
 import logging
 import logging.handlers
 import multiprocessing
@@ -12,8 +11,8 @@ import sqlite3
 import tempfile
 import time
 import unittest
-import unittest.mock
 
+import retrying
 import taskgraph
 
 LOGGER = logging.getLogger(__name__)
@@ -139,16 +138,16 @@ class TaskGraphTests(unittest.TestCase):
         # the rest result
         self.workspace_dir = tempfile.mkdtemp()
 
+    @retrying.retry(
+        stop_max_attempt_number=N_TEARDOWN_RETRIES,
+        wait_exponential_multiplier=250, wait_exponential_max=3000)
     def tearDown(self):
         """Remove temporary directory."""
-        attempts = 0
-        while attempts < N_TEARDOWN_RETRIES:
-            try:
-                shutil.rmtree(self.workspace_dir)
-                break
-            except Exception:
-                LOGGER.exception('error when tearing down.')
-                attempts += 1
+        try:
+            shutil.rmtree(self.workspace_dir)
+        except Exception:
+            LOGGER.exception('error when tearing down.')
+            raise
 
     def test_version_loaded(self):
         """TaskGraph: verify we can load the version."""
@@ -158,19 +157,6 @@ class TaskGraphTests(unittest.TestCase):
             self.assertTrue(len(taskgraph.__version__) > 0)
         except Exception:
             self.fail('Could not load the taskgraph version as expected.')
-
-    def test_version_not_loaded(self):
-        """TaskGraph: verify exception when not installed."""
-        from pkg_resources import DistributionNotFound
-        import taskgraph
-
-        with unittest.mock.patch(
-                'taskgraph.pkg_resources.get_distribution',
-                side_effect=DistributionNotFound('taskgraph')):
-            with self.assertRaises(RuntimeError):
-                # RuntimeError is a side effect of `import taskgraph`, so we
-                # reload it to retrigger the metadata load.
-                taskgraph = importlib.reload(taskgraph)
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
