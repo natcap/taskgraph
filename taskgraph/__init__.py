@@ -1,6 +1,5 @@
-"""taskgraph module."""
-from .Task import (
-    TaskGraph, Task, EncapsulatedTaskOp, _TASKGRAPH_DATABASE_FILENAME)
+"""TaskGraph init module."""
+from .Task import TaskGraph
+from .Task import Task
 
-__all__ = [
-    'TaskGraph', 'Task', 'EncapsulatedTaskOp', '_TASKGRAPH_DATABASE_FILENAME']
+__all__ = ['TaskGraph', 'Task']

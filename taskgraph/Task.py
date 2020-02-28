@@ -1228,35 +1228,6 @@ class Task(object):
         return timed_out
 
 
-class EncapsulatedTaskOp(ABC):
-    """Used as a superclass for Task operations that need closures.
-
-    This class will automatically hash the subclass's __call__ method source
-    as well as the arguments to its __init__ function to calculate the
-    Task's unique hash.
-
-    """
-
-    def __init__(self, *args, **kwargs):
-        """Attempt to get the source code of __call__."""
-        args_as_str = str([args, kwargs]).encode('utf-8')
-        try:
-            # hash the args plus source code of __call__
-            id_hash = hashlib.sha1(args_as_str + inspect.getsource(
-                self.__class__.__call__).encode('utf-8')).hexdigest()
-        except IOError:
-            # this will fail if the code is compiled, that's okay just do
-            # the args
-            id_hash = hashlib.sha1(args_as_str)
-        # prefix the classname
-        self.__name__ = '%s_%s' % (self.__class__.__name__, id_hash)
-
-    @abc.abstractmethod
-    def __call__(self, *args, **kwargs):
-        """Empty method meant to be overridden by inheritor."""
-        pass
-
-
 def _get_file_stats(
         base_value, hash_algorithm, ignore_list, ignore_directories):
     """Return fingerprints of any filepaths in `base_value`.

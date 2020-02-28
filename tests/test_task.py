@@ -597,56 +597,6 @@ class TaskGraphTests(unittest.TestCase):
         result = list(_get_file_stats(nofile, 'sizetimestamp', [], False))
         self.assertEqual(result, [])
 
-    def test_encapsulatedtaskop(self):
-        """TaskGraph: Test abstract closure task class."""
-        from taskgraph.Task import EncapsulatedTaskOp
-
-        class TestAbstract(EncapsulatedTaskOp):
-            def __init__(self):
-                pass
-
-        # __call__ is abstract so TypeError since it's not implemented
-        with self.assertRaises(TypeError):
-            _ = TestAbstract()
-
-        class TestA(EncapsulatedTaskOp):
-            def __call__(self, x):
-                return x
-
-        class TestB(EncapsulatedTaskOp):
-            def __call__(self, x):
-                return x
-
-        # TestA and TestB should be different because of different class names
-        a = TestA()
-        b = TestB()
-        # results of calls should be the same
-        self.assertEqual(a.__call__(5), b.__call__(5))
-        self.assertNotEqual(a.__name__, b.__name__)
-
-        # two instances with same args should be the same
-        self.assertEqual(TestA().__name__, TestA().__name__)
-
-        # redefine TestA so we get a different hashed __name__
-        class TestA(EncapsulatedTaskOp):
-            def __call__(self, x):
-                return x*x
-
-        new_a = TestA()
-        self.assertNotEqual(a.__name__, new_a.__name__)
-
-        # change internal class constructor to get different hashes
-        class TestA(EncapsulatedTaskOp):
-            def __init__(self, q):
-                super(TestA, self).__init__(q)
-                self.q = q
-
-            def __call__(self, x):
-                return x*x
-
-        init_new_a = TestA(1)
-        self.assertNotEqual(new_a.__name__, init_new_a.__name__)
-
     def test_repeat_targetless_runs(self):
         """TaskGraph: ensure that repeated runs with no targets reexecute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)

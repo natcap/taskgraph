@@ -8,6 +8,9 @@ Unreleased Changes
 ------------------
 * Updating primary repo url to Github.
 * Adding support for Python 3.8.
+* Removing the ``EncapsulatedOp`` abstract class. In practice the development
+  loop that encouraged the use of ``EncapsulatedOp`` is flawed and can lead to
+  design errors.
 
 0.8.5 (2019-09-11)
 ------------------
