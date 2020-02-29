@@ -211,6 +211,7 @@ class TaskGraph(object):
 
         self._task_database_path = os.path.join(
             self._taskgraph_cache_dir_path, _TASKGRAPH_DATABASE_FILENAME)
+
         sql_create_projects_table = (
             """
             CREATE TABLE IF NOT EXISTS taskgraph_data (
@@ -222,9 +223,9 @@ class TaskGraph(object):
             ON taskgraph_data (task_reexecution_hash);
             """)
 
-        with sqlite3.connect(self._task_database_path) as conn:
-            cursor = conn.cursor()
-            cursor.executescript(sql_create_projects_table)
+        _execute_sqlite(
+            sql_create_projects_table, self._task_database_path, mode='modify',
+            execute='script')
 
         # no need to set up schedulers if n_workers is single threaded
         self._n_workers = n_workers
@@ -1435,7 +1436,7 @@ def _normalize_path(path):
     return os.path.normcase(abs_path)
 
 
-retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=5000)
+@retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=5000)
 def _execute_sqlite(
         sqlite_command, database_path, argument_list=None,
         mode='read_only', execute='one', fetch=None):
@@ -1445,7 +1446,7 @@ def _execute_sqlite(
         sqlite_command (str): a well formatted SQLite command.
         database_path (str): path to the SQLite database to operate on.
         mode (str): must be either 'read_only' or 'modify'.
-        execute (str): must be either 'one', 'many'.
+        execute (str): must be either 'one', 'many', or 'script'.
         fetch (str): if not `None` can be either 'all' or an integer size.
             If not None the result of a fetch will be returned by this
             function.
@@ -1469,6 +1470,8 @@ def _execute_sqlite(
             cursor = connection.execute(sqlite_command, argument_list)
         elif execute == 'many':
             cursor = connection.executemany(sqlite_command, argument_list)
+        elif execute == 'script':
+            cursor = connection.executescript(sqlite_command)
         else:
             raise ValueError('Unknown execute mode: %s' % execute)
 
