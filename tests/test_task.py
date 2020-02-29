@@ -18,6 +18,7 @@ import taskgraph
 LOGGER = logging.getLogger(__name__)
 
 N_TEARDOWN_RETRIES = 5
+MAX_TRY_WAIT_MS = 500
 
 
 def _noop_function(**kwargs):
@@ -140,7 +141,7 @@ class TaskGraphTests(unittest.TestCase):
 
     @retrying.retry(
         stop_max_attempt_number=N_TEARDOWN_RETRIES,
-        wait_exponential_multiplier=250, wait_exponential_max=3000)
+        wait_exponential_multiplier=250, wait_exponential_max=MAX_TRY_WAIT_MS)
     def tearDown(self):
         """Remove temporary directory."""
         try:

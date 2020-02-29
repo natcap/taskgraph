@@ -18,6 +18,7 @@ import sqlite3
 import threading
 import time
 
+import retrying
 
 _VALID_PATH_TYPES = (str, pathlib.Path)
 _TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
@@ -1432,3 +1433,66 @@ def _normalize_path(path):
             "failed to abspath %s so returning normalized path instead")
         abs_path = norm_path
     return os.path.normcase(abs_path)
+
+
+retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=5000)
+def _execute_sqlite(
+        sqlite_command, database_path, argument_list=None,
+        mode='read_only', execute='one', fetch=None):
+    """Execute SQLite command and attempt retries on a failure.
+
+    Parameters:
+        sqlite_command (str): a well formatted SQLite command.
+        database_path (str): path to the SQLite database to operate on.
+        mode (str): must be either 'read_only' or 'modify'.
+        execute (str): must be either 'one', 'many'.
+        fetch (str): if not `None` can be either 'all' or an integer size.
+            If not None the result of a fetch will be returned by this
+            function.
+
+    Returns:
+        result of fetch if `fetch` is not None.
+
+    """
+    cursor = None
+    connection = None
+    try:
+        if mode == 'read_only':
+            ro_uri = 'file://%s?mode=ro' % os.path.abspath(database_path)
+            connection = sqlite3.connect(ro_uri, uri=True)
+        elif mode == 'modify':
+            connection = sqlite3.connect(database_path)
+        else:
+            raise ValueError('Unknown mode: %s' % mode)
+
+        if execute == 'one':
+            cursor = connection.execute(sqlite_command, argument_list)
+        elif execute == 'many':
+            cursor = connection.executemany(sqlite_command, argument_list)
+        else:
+            raise ValueError('Unknown execute mode: %s' % execute)
+
+        result = None
+        if fetch == 'all':
+            result = list(cursor.fetchall())
+        elif isinstance(fetch, int):
+            result = list(cursor.fetchmany(fetch))
+        elif fetch is not None:
+            raise ValueError('Unknown fetch mode: %s' % fetch)
+
+        cursor.close()
+        cursor = None
+        connection.commit()
+        connection.close()
+        connection = None
+        return result
+    except Exception:
+        LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
+        if cursor is not None:
+            cursor.close()
+            cursor = None
+        if connection is not None:
+            connection.commit()
+            connection.close()
+            connection = None
+        raise
