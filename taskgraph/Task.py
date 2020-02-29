@@ -1006,15 +1006,14 @@ class Task(object):
         result_calculated = False
         if self._copy_duplicate_artifact:
             # try to see if we can copy old files
-            with self._task_database_lock:
-                with sqlite3.connect(self._task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """
-                        SELECT target_path_stats from taskgraph_data
-                        WHERE (task_reexecution_hash == ?)
-                        """, (self._task_reexecution_hash,))
-                    database_result = cursor.fetchone()
+            database_result = _execute_sqlite(
+                """
+                SELECT target_path_stats from taskgraph_data
+                WHERE (task_reexecution_hash == ?)
+                """,
+                self._task_database_path, mode='read_only',
+                argument_list=(self._task_reexecution_hash,),
+                execute='script', fetch='one')
             try:
                 if database_result:
                     result_target_path_stats = pickle.loads(
@@ -1085,15 +1084,12 @@ class Task(object):
         # transient between taskgraph executions and we should expect to
         # run it again.
         if self._target_path_list:
-            with self._task_database_lock:
-                with sqlite3.connect(self._task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO taskgraph_data VALUES
-                           (?, ?)""", (
-                            self._task_reexecution_hash, pickle.dumps(
-                                result_target_path_stats)))
-                    conn.commit()
+            _execute_sqlite(
+                "INSERT OR REPLACE INTO taskgraph_data VALUES (?, ?)",
+                self._task_database_path, mode='modify',
+                argument_list=(
+                    self._task_reexecution_hash,
+                    pickle.dumps(result_target_path_stats)))
         self._precalculated = True
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
@@ -1148,15 +1144,11 @@ class Task(object):
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
         try:
-            with self._task_database_lock:
-                with sqlite3.connect(self._task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """
-                            SELECT target_path_stats from taskgraph_data
-                            WHERE (task_reexecution_hash == ?)
-                        """, (self._task_reexecution_hash,))
-                    database_result = cursor.fetchone()
+            database_result = _execute_sqlite(
+                """SELECT target_path_stats from taskgraph_data
+                    WHERE (task_reexecution_hash == ?)""",
+                self._task_database_path, mode='read_only',
+                argument_list=(self._task_reexecution_hash,), fetch='one')
             if database_result is None:
                 LOGGER.debug(
                     "not precalculated, Task hash does not "
@@ -1439,14 +1431,14 @@ def _normalize_path(path):
 @retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=5000)
 def _execute_sqlite(
         sqlite_command, database_path, argument_list=None,
-        mode='read_only', execute='one', fetch=None):
+        mode='read_only', execute='execute', fetch=None):
     """Execute SQLite command and attempt retries on a failure.
 
     Parameters:
         sqlite_command (str): a well formatted SQLite command.
         database_path (str): path to the SQLite database to operate on.
         mode (str): must be either 'read_only' or 'modify'.
-        execute (str): must be either 'one', 'many', or 'script'.
+        execute (str): must be either 'execute', 'many', or 'script'.
         fetch (str): if not `None` can be either 'all' or an integer size.
             If not None the result of a fetch will be returned by this
             function.
@@ -1466,7 +1458,7 @@ def _execute_sqlite(
         else:
             raise ValueError('Unknown mode: %s' % mode)
 
-        if execute == 'one':
+        if execute == 'execute':
             cursor = connection.execute(sqlite_command, argument_list)
         elif execute == 'many':
             cursor = connection.executemany(sqlite_command, argument_list)
