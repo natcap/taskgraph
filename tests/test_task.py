@@ -478,18 +478,6 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
 
-    def test_n_retries(self):
-        """TaskGraph: Test a task will attempt to retry after exception."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        result_file_path = os.path.join(self.workspace_dir, 'result.txt')
-
-        fail_task = task_graph.add_task(
-            func=Fail(5, result_file_path),
-            task_name='fail 5 times', n_retries=5)
-        fail_task.join()
-        task_graph.close()
-        self.assertTrue(os.path.exists(result_file_path))
-
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
@@ -793,29 +781,30 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_multiprocessed_logging(self):
         """TaskGraph: ensure tasks can log from multiple processes."""
-        logger_name = 'foo.hello.world'
+        logger_name = 'test.task.queuelogger'
         log_message = 'This is coming from another process'
         logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.DEBUG)
         file_log_path = os.path.join(
             self.workspace_dir, 'test_multiprocessed_logging.log')
-        handler = logging.FileHandler(file_log_path)
-        handler.setFormatter(
+        file_handler = logging.FileHandler(file_log_path)
+        file_handler.setFormatter(
             logging.Formatter(fmt=':%(processName)s:%(message)s:'))
-        logger.addHandler(handler)
+        logger.addHandler(file_handler)
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        _ = task_graph.add_task(
+        log_task = task_graph.add_task(
             func=_log_from_another_process,
             args=(logger_name, log_message))
+        log_task.join()
+        file_handler.flush()
         task_graph.close()
         task_graph.join()
-        handler.flush()
-        del handler
-        task_graph._terminate()
-        del task_graph
+        file_handler.close()
 
-        with open(file_log_path) as log_file:
+        with open(file_log_path, 'r') as log_file:
             message = log_file.read().rstrip()
+        print(message)
         process_name, logged_message = re.match(
             ':([^:]*):([^:]*):', message).groups()
         self.assertEqual(logged_message, log_message)
