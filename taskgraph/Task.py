@@ -354,7 +354,7 @@ class TaskGraph(object):
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
                     threading.currentThread())
-                return
+                break
             task = None
             try:
                 task = self._task_ready_priority_queue.get_nowait()
@@ -372,7 +372,7 @@ class TaskGraph(object):
                         "no tasks are pending and taskgraph closed, normally "
                         "terminating executor %s." %
                         threading.currentThread())
-                    return
+                    break
                 else:
                     self._executor_ready_event.clear()
             if task is None:
@@ -387,7 +387,7 @@ class TaskGraph(object):
                     'A taskgraph _task_executor failed on Task '
                     '%s. Terminating taskgraph.', task.task_name)
                 self._terminate()
-                return
+                break
 
             LOGGER.debug(
                 "task %s is complete, checking to see if any dependent "
@@ -1066,9 +1066,6 @@ class Task(object):
         # in args and kwargs but ignores anything specifically targeted or
         # an expected result. This will allow a task to change its hash in
         # case a different version of a file was passed in.
-        if self._precalculated is not None:
-            return self._precalculated
-
         # these are the stats of the files that exist that aren't ignored
         file_stat_list = list(_get_file_stats(
             [self._args, self._kwargs],
@@ -1114,7 +1111,6 @@ class Task(object):
                 LOGGER.debug("is_precalculated full task info: %s", self)
                 self._precalculated = False
                 return False
-            LOGGER.debug('reexecution database result: %s', pickle.loads(database_result[0]))
             result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
             for path, hash_algorithm, hash_string in result_target_path_stats:
