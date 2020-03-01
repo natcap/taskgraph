@@ -184,9 +184,6 @@ class TaskGraph(object):
         # this lock is used to synchronize the following objects
         self._taskgraph_lock = threading.RLock()
 
-        # this is used to guard multiple connections to the same database
-        self._task_database_lock = threading.Lock()
-
         # this might hold the threads to execute tasks if n_workers >= 0
         self._task_executor_thread_list = []
 
@@ -537,7 +534,7 @@ class TaskGraph(object):
                     self._worker_pool, self._taskgraph_cache_dir_path,
                     priority, hash_algorithm, copy_duplicate_artifact,
                     self._taskgraph_started_event,
-                    self._task_database_path, self._task_database_lock)
+                    self._task_database_path)
 
                 self._task_name_map[new_task.task_name] = new_task
                 # it may be this task was already created in an earlier call,
@@ -760,7 +757,7 @@ class Task(object):
             ignore_path_list, ignore_directories,
             worker_pool, cache_dir, priority, hash_algorithm,
             copy_duplicate_artifact, taskgraph_started_event,
-            task_database_path, task_database_lock):
+            task_database_path):
         """Make a Task.
 
         Parameters:
@@ -810,8 +807,6 @@ class Task(object):
                 table and the target_path_stats stores the base/target stats
                 for the target files created by the call and listed in
                 `target_path_list`.
-            task_database_lock (threading.Lock): used to lock the task
-                database before a .connect.
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -840,7 +835,6 @@ class Task(object):
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
-        self._task_database_lock = task_database_lock
         self.exception_object = None
 
         # This flag is used to avoid repeated calls to "is_precalculated"
