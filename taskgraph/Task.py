@@ -829,9 +829,6 @@ class Task(object):
         self._copy_duplicate_artifact = copy_duplicate_artifact
         self.exception_object = None
 
-        # This flag is used to avoid repeated calls to "is_precalculated"
-        self._precalculated = None
-
         # invert the priority since sorting goes smallest to largest and we
         # want more positive priority values to be executed first.
         self._priority = -priority
@@ -1048,7 +1045,6 @@ class Task(object):
                 argument_list=(
                     self._task_reexecution_hash,
                     pickle.dumps(result_target_path_stats)))
-        self._precalculated = True
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
 
@@ -1109,7 +1105,6 @@ class Task(object):
                     "not precalculated, Task hash does not "
                     "exist (%s)", self.task_name)
                 LOGGER.debug("is_precalculated full task info: %s", self)
-                self._precalculated = False
                 return False
             result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
@@ -1153,14 +1148,11 @@ class Task(object):
                     "not precalculated (%s), Task hash exists, "
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
-                self._precalculated = False
                 return False
             LOGGER.debug("precalculated (%s)" % self)
-            self._precalculated = True
             return True
         except EOFError:
             LOGGER.exception("not precalculated %s, EOFError", self.task_name)
-            self._precalculated = False
             return False
 
     def join(self, timeout=None):
@@ -1393,8 +1385,8 @@ def _execute_sqlite(
         sqlite_command (str): a well formatted SQLite command.
         database_path (str): path to the SQLite database to operate on.
         mode (str): must be either 'read_only' or 'modify'.
-        execute (str): must be either 'execute', 'many', or 'script'.
-        fetch (str): if not `None` can be either 'all' or an integer size.
+        execute (str): must be either 'execute' or 'script'.
+        fetch (str): if not `None` can be either 'all' or 'one'.
             If not None the result of a fetch will be returned by this
             function.
 
@@ -1420,8 +1412,6 @@ def _execute_sqlite(
 
         if execute == 'execute':
             cursor = connection.execute(sqlite_command, argument_list)
-        elif execute == 'many':
-            cursor = connection.executemany(sqlite_command, argument_list)
         elif execute == 'script':
             cursor = connection.executescript(sqlite_command)
         else:
@@ -1433,25 +1423,19 @@ def _execute_sqlite(
             payload = (cursor.fetchall())
         elif fetch == 'one':
             payload = (cursor.fetchone())
-        elif isinstance(fetch, int):
-            payload = (cursor.fetchmany(fetch))
         elif fetch is not None:
             raise ValueError('Unknown fetch mode: %s' % fetch)
         if payload is not None:
             result = list(payload)
         cursor.close()
-        cursor = None
         connection.commit()
         connection.close()
-        connection = None
         return result
     except Exception:
         LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
         if cursor is not None:
             cursor.close()
-            cursor = None
         if connection is not None:
             connection.commit()
             connection.close()
-            connection = None
         raise
