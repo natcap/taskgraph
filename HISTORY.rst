@@ -11,6 +11,9 @@ Unreleased Changes
 * Removing the ``EncapsulatedOp`` abstract class. In practice the development
   loop that encouraged the use of ``EncapsulatedOp`` is flawed and can lead to
   design errors.
+* Removing unnecessary internal locks which will improve runtime performance of
+  processing many small Tasks.
+* Refactor to support separate TaskGraph objects that use the same database.
 
 0.8.5 (2019-09-11)
 ------------------
