@@ -802,11 +802,18 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.join()
         file_handler.close()
 
-        with open(file_log_path, 'r') as log_file:
-            message = log_file.read().rstrip()
-        print(message)
-        process_name, logged_message = re.match(
-            ':([^:]*):([^:]*):', message).groups()
+        @retrying.retry(wait_exponential_multiplier=100,
+                        wait_exponential_max=1000,
+                        stop_max_attempt_number=5)
+        def get_name_and_message():
+            with open(file_log_path, 'r') as log_file:
+                message = log_file.read().rstrip()
+            print(message)
+            process_name, logged_message = re.match(
+                ':([^:]*):([^:]*):', message).groups()
+            return process_name, logged_message
+
+        process_name, logged_message = get_name_and_message()
         self.assertEqual(logged_message, log_message)
         self.assertNotEqual(
             process_name, multiprocessing.current_process().name)
