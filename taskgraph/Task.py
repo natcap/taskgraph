@@ -1443,7 +1443,6 @@ def _execute_sqlite(
                     database_path)))
             connection = sqlite3.connect(ro_uri, uri=True)
         elif mode == 'modify':
-            LOGGER.debug('modify')
             connection = sqlite3.connect(database_path)
         else:
             raise ValueError('Unknown mode: %s' % mode)

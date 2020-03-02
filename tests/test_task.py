@@ -21,8 +21,11 @@ N_TEARDOWN_RETRIES = 5
 MAX_TRY_WAIT_MS = 500
 
 
-def _return_value(value):
-    """Returns the value passed to it."""
+def _return_value_once(value):
+    """Returns the value passed to it only once."""
+    if hasattr(_return_value_once, 'executed'):
+        raise RuntimeError("this function was called twice")
+    _return_value_once.executed = True
     return value
 
 
@@ -591,8 +594,8 @@ class TaskGraphTests(unittest.TestCase):
         result = list(_get_file_stats(nofile, 'sizetimestamp', [], False))
         self.assertEqual(result, [])
 
-    def test_repeat_targetless_runs(self):
-        """TaskGraph: ensure that repeated runs with no targets reexecute."""
+    def test_transient_runs(self):
+        """TaskGraph: ensure that transent tasks reexecute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
@@ -600,6 +603,7 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value, list_len),
+            transient_run=True,
             kwargs={
                 'target_path': target_path,
             })
@@ -1289,16 +1293,49 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_return_value(self):
         """TaskGraph: test that `.get` behavior works as expected."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
-        expected_value = 'a good value'
-        value_task = task_graph.add_task(
-            func=_return_value,
-            args=(expected_value,))
-        value_task.join()
-        value = value_task.get()
-        self.assertEqual(value, expected_value)
-        task_graph.close()
-        task_graph.join()
+        n_iterations = 3
+        for iteration_id in range(n_iterations):
+            transient_run = iteration_id == n_iterations-1
+            LOGGER.debug(iteration_id)
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
+            expected_value = 'a good value'
+            value_task = task_graph.add_task(
+                func=_return_value_once,
+                transient_run=transient_run,
+                args=(expected_value,))
+            value_task.join()
+            value = value_task.get()
+            self.assertEqual(value, expected_value)
+            task_graph.close()
+            task_graph.join()
+            task_graph = None
+
+        # reset run
+        del _return_value_once.executed
+        for iteration_id in range(n_iterations):
+            LOGGER.debug(iteration_id)
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
+            expected_value = 'transient run'
+            if iteration_id == 0:
+                value_task = task_graph.add_task(
+                    func=_return_value_once,
+                    transient_run=True,
+                    args=(expected_value,))
+                value_task.join()
+                value = value_task.get()
+                self.assertEqual(value, expected_value)
+            else:
+                with self.assertRaises(RuntimeError):
+                    value_task = task_graph.add_task(
+                        func=_return_value_once,
+                        transient_run=True,
+                        args=(expected_value,))
+                    value_task.join()
+                    value = value_task.get()
+
+            task_graph.close()
+            task_graph.join()
+            task_graph = None
 
 
 def Fail(n_tries, result_path):
