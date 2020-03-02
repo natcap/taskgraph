@@ -214,6 +214,7 @@ class TaskGraph(object):
             CREATE TABLE IF NOT EXISTS taskgraph_data (
                 task_reexecution_hash TEXT NOT NULL,
                 target_path_stats BLOB NOT NULL,
+                result BLOB NOT NULL,
                 PRIMARY KEY (task_reexecution_hash)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS task_reexecution_hash_index
@@ -469,7 +470,7 @@ class TaskGraph(object):
                 `hash_algorithm` is 'sizetimestamp' the task will require the
                 same base path files to determine equality. If it is a
                 `hashlib` algorithm only file contents will be considered.
-            copy_duplicate_artifact (bool): if true and the Tasks'
+            copy_duplicate_artifact (bool): if True and the Tasks'
                 argument signature matches a previous Tasks without direct
                 comparison of the target path files in the arguments other
                 than their positions in the target path list, the target
@@ -792,13 +793,15 @@ class Task(object):
             taskgraph_started_event (Event): can be used to start the main
                 TaskGraph if it has not yet started in case a Task is joined.
             task_database_path (str): path to an SQLITE database that has
-                table named "taskgraph_data" with the two fields:
+                table named "taskgraph_data" with the three fields:
                     task_hash TEXT NOT NULL,
                     target_path_stats BLOB NOT NULL
+                    result BLOB NOT NULL
                 If a call is successful its hash is inserted/updated in the
-                table and the target_path_stats stores the base/target stats
+                table, the target_path_stats stores the base/target stats
                 for the target files created by the call and listed in
-                `target_path_list`.
+                `target_path_list`, and the result of `func` is stored in
+                "result".
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -963,7 +966,7 @@ class Task(object):
             self.task_done_executing_event.set()
             return
         LOGGER.debug("not precalculated %s", self.task_name)
-        result_calculated = False
+        artifact_copied = False
         if self._copy_duplicate_artifact:
             # try to see if we can copy old files
             database_result = _execute_sqlite(
@@ -976,9 +979,10 @@ class Task(object):
                 execute='execute', fetch='one')
             try:
                 if database_result:
-                    result_target_path_stats = pickle.loads(
-                        database_result[0])
-                    LOGGER.debug('duplicate artifact db results: %s', result_target_path_stats)
+                    result_target_path_stats = pickle.loads(database_result[0])
+                    LOGGER.debug(
+                        'duplicate artifact db results: %s',
+                        result_target_path_stats)
                     if (len(result_target_path_stats) ==
                             len(self._target_path_list)):
                         if all([
@@ -1009,12 +1013,12 @@ class Task(object):
                                             artifact_target,
                                             result_target_path_stats,
                                             self._target_path_list))
-                            result_calculated = True
+                            artifact_copied = True
             except IOError as e:
                 LOGGER.warning(
                     "IOError encountered when hashing original source "
                     "files.\n%s" % e)
-        if not result_calculated:
+        if not artifact_copied:
             if self._worker_pool is not None:
                 result = self._worker_pool.apply_async(
                     func=self._func, args=self._args, kwds=self._kwargs)
@@ -1047,11 +1051,12 @@ class Task(object):
         # run it again.
         if self._target_path_list:
             _execute_sqlite(
-                "INSERT OR REPLACE INTO taskgraph_data VALUES (?, ?)",
+                "INSERT OR REPLACE INTO taskgraph_data VALUES (?, ?, ?)",
                 self._task_database_path, mode='modify',
                 argument_list=(
                     self._task_reexecution_hash,
-                    pickle.dumps(result_target_path_stats)))
+                    pickle.dumps(result_target_path_stats),
+                    pickle.dumps(self._result)))
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
 
