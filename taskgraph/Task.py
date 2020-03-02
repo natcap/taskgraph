@@ -1,5 +1,4 @@
 """Task graph framework."""
-import abc
 import collections
 import hashlib
 import inspect
@@ -1422,6 +1421,8 @@ def _execute_sqlite(
     Parameters:
         sqlite_command (str): a well formatted SQLite command.
         database_path (str): path to the SQLite database to operate on.
+        argument_list (list): `execute == 'execute` then this list is passed to
+            the internal sqlite3 `execute` call.
         mode (str): must be either 'read_only' or 'modify'.
         execute (str): must be either 'execute' or 'script'.
         fetch (str): if not `None` can be either 'all' or 'one'.

@@ -22,6 +22,8 @@ Unreleased Changes
   There is a new parameter ``transient_run`` that if set True will cause a
   Task to reexecute on a future TaskGraph object even if a previous generation
   successfuly executed it with the same parameters.
+* Removed the ``n_retries`` parameter from ``add_task``. Users are recommended
+  to handle retries within functions themselves.
 
 0.8.5 (2019-09-11)
 ------------------
