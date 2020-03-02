@@ -14,6 +14,14 @@ Unreleased Changes
 * Removing unnecessary internal locks which will improve runtime performance of
   processing many small Tasks.
 * Refactor to support separate TaskGraph objects that use the same database.
+* ``Task``s can now return the result of the ``func`` call after it is
+  executed. This value is cached in the TaskGraph database for future avoided
+  re-execution and can be retrieved with a call to ``get`` on the Task object
+  once the call is complete. As part of this change the previous behavior of
+  transient runs if a target path list was empty has now been made explicit.
+  There is a new parameter ``transient_run`` that if set True will cause a
+  Task to reexecute on a future TaskGraph object even if a previous generation
+  successfuly executed it with the same parameters.
 
 0.8.5 (2019-09-11)
 ------------------
