@@ -21,6 +21,11 @@ N_TEARDOWN_RETRIES = 5
 MAX_TRY_WAIT_MS = 500
 
 
+def _return_value(value):
+    """Returns the value passed to it."""
+    return value
+
+
 def _noop_function(**kwargs):
     """Does nothing except allow kwargs to be passed."""
     pass
@@ -1281,6 +1286,19 @@ class TaskGraphTests(unittest.TestCase):
         self.assertNotEqual(
             task_a._task_id_hash, task_b._task_id_hash,
             "task ids should be different since the filenames are different")
+
+    def test_return_value(self):
+        """TaskGraph: test that `.get` behavior works as expected."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+        expected_value = 'a good value'
+        value_task = task_graph.add_task(
+            func=_return_value,
+            args=(expected_value,))
+        value_task.join()
+        value = value_task.get()
+        self.assertEqual(value, expected_value)
+        task_graph.close()
+        task_graph.join()
 
 
 def Fail(n_tries, result_path):

@@ -424,7 +424,8 @@ class TaskGraph(object):
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
             dependent_task_list=None, ignore_directories=True, priority=0,
-            hash_algorithm='sizetimestamp', copy_duplicate_artifact=False):
+            hash_algorithm='sizetimestamp', copy_duplicate_artifact=False,
+            transient_run=False):
         """Add a task to the task graph.
 
         Parameters:
@@ -476,6 +477,12 @@ class TaskGraph(object):
                 than their positions in the target path list, the target
                 artifacts from a previously successful Task execution will
                 be copied to the new one.
+            transient_run (bool): if True a call with an identical execution
+                hash will be reexecuted on a subsequent instantiation of a
+                future TaskGraph object. If a duplicate task is submitted
+                to the same object it will not be re-run in any scenario.
+                Otherwise if False, subsequent tasks with an identical
+                execution hash will be skipped.
 
         Returns:
             Task which was just added to the graph or an existing Task that
@@ -527,7 +534,7 @@ class TaskGraph(object):
                 task_name = '%s (%d)' % (task_name, len(self._task_hash_map))
                 new_task = Task(
                     task_name, func, args, kwargs, target_path_list,
-                    ignore_path_list, ignore_directories,
+                    ignore_path_list, ignore_directories, transient_run,
                     self._worker_pool, self._taskgraph_cache_dir_path,
                     priority, hash_algorithm, copy_duplicate_artifact,
                     self._taskgraph_started_event,
@@ -747,7 +754,7 @@ class Task(object):
 
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
-            ignore_path_list, ignore_directories,
+            ignore_path_list, ignore_directories, transient_run,
             worker_pool, cache_dir, priority, hash_algorithm,
             copy_duplicate_artifact, taskgraph_started_event,
             task_database_path):
@@ -769,6 +776,12 @@ class Task(object):
             ignore_directories (bool): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
+            transient_run (bool): if True a call with an identical execution
+                hash will be reexecuted on a subsequent instantiation of a
+                future TaskGraph object. If a duplicate task is submitted
+                to the same object it will not be re-run in any scenario.
+                Otherwise if False, subsequent tasks with an identical
+                execution hash will be skipped.
             worker_pool (multiprocessing.Pool): if not None, is a
                 multiprocessing pool that can be used for `_call` execution.
             cache_dir (string): path to a directory to both write and expect
@@ -825,6 +838,7 @@ class Task(object):
         self._ignore_path_list = [
             _normalize_path(path) for path in ignore_path_list]
         self._ignore_directories = ignore_directories
+        self._transient_run = transient_run
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
         self._task_database_path = task_database_path
@@ -1049,7 +1063,7 @@ class Task(object):
         # target file. Otherwise we infer the result of this call is
         # transient between taskgraph executions and we should expect to
         # run it again.
-        if self._target_path_list:
+        if not self._transient_run:
             _execute_sqlite(
                 "INSERT OR REPLACE INTO taskgraph_data VALUES (?, ?, ?)",
                 self._task_database_path, mode='modify',
