@@ -838,6 +838,10 @@ class Task(object):
         # a _call and there are no more attempts at reexecution.
         self.task_done_executing_event = threading.Event()
 
+        # These are used to store and later access the result of the call.
+        self._result_ready = False
+        self._result = None
+
         # Calculate a hash based only on argument inputs.
         try:
             if not hasattr(Task, 'func_source_map'):
@@ -936,7 +940,9 @@ class Task(object):
                 "task_id_hash": self._task_id_hash,
                 "task_reexecution_hash": self._task_reexecution_hash,
                 "exception_object": self.exception_object,
-                "self._reexecution_info": self._reexecution_info
+                "self._reexecution_info": self._reexecution_info,
+                "self._result_ready": self._result_ready,
+                "self._result": self._result,
             })
 
     def _call(self):
@@ -1015,10 +1021,11 @@ class Task(object):
                 # the following blocks and raises an exception if result
                 # raised an exception
                 LOGGER.debug("apply_async for task %s", self.task_name)
-                result.get()
+                self._result = result.get()
             else:
                 LOGGER.debug("direct _func for task %s", self.task_name)
-                self._func(*self._args, **self._kwargs)
+                self._result = self._func(*self._args, **self._kwargs)
+            self._result_ready = True
 
         # check that the target paths exist and record stats for later
         result_target_path_stats = list(
@@ -1050,6 +1057,9 @@ class Task(object):
 
     def is_precalculated(self):
         """Return true if _call need not be invoked.
+
+        If the task has been precalculated it will fetch the return result from
+        the previous run if possible.
 
         Returns:
             True if the Task's target paths exist in the same state as the
@@ -1096,7 +1106,7 @@ class Task(object):
             reexecution_string.encode('utf-8')).hexdigest()
         try:
             database_result = _execute_sqlite(
-                """SELECT target_path_stats from taskgraph_data
+                """SELECT target_path_stats, result from taskgraph_data
                     WHERE (task_reexecution_hash == ?)""",
                 self._task_database_path, mode='read_only',
                 argument_list=(self._task_reexecution_hash,), fetch='one')
@@ -1149,6 +1159,8 @@ class Task(object):
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
+            self._result = pickle.loads(database_result[1])
+            self._result_ready = True
             LOGGER.debug("precalculated (%s)" % self)
             return True
         except EOFError:
@@ -1167,6 +1179,13 @@ class Task(object):
         if self.exception_object:
             raise self.exception_object
         return timed_out
+
+    def get(self):
+        """Return the result of the `func` once it is ready."""
+        if self._result_ready:
+            return self._result
+        else:
+            raise ValueError('result is not ready')
 
 
 def _get_file_stats(
