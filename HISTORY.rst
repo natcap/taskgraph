@@ -14,6 +14,8 @@ Unreleased Changes
 * Removing unnecessary internal locks which will improve runtime performance of
   processing many small Tasks.
 * Refactor to support separate TaskGraph objects that use the same database.
+* Removed the ``n_retries`` parameter from ``add_task``. Users are recommended
+  to handle retries within functions themselves.
 
 0.8.5 (2019-09-11)
 ------------------
