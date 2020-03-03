@@ -228,13 +228,15 @@ class TaskGraph(object):
         # start concurrent reporting of taskgraph if reporting interval is set
         self._reporting_interval = reporting_interval
         if reporting_interval is not None:
-            self._monitor_thread = threading.Thread(
+            self._execution_monitor_wait_event = threading.Event()
+            self._execution_monitor_thread = threading.Thread(
                 target=self._execution_monitor,
+                args=(self._execution_monitor_wait_event,),
                 name='_execution_monitor')
             # make it a daemon so we don't have to figure out how to
             # close it when execution complete
-            self._monitor_thread.daemon = True
-            self._monitor_thread.start()
+            self._execution_monitor_thread.daemon = True
+            self._execution_monitor_thread.start()
 
         # launch executor threads
         for thread_id in range(max(1, n_workers)):
@@ -276,6 +278,7 @@ class TaskGraph(object):
         try:
             # it's possible the global state is not well defined, so just in
             # case we'll wrap it all up in a try/except
+            self._terminated = True
             if self._n_workers > 0:
                 LOGGER.debug("shutting down workers")
                 self._worker_pool.terminate()
@@ -305,7 +308,8 @@ class TaskGraph(object):
                 self._executor_ready_event.set()
                 for executor_thread in self._task_executor_thread_list:
                     try:
-                        timedout = not executor_thread.join(_MAX_TIMEOUT)
+                        executor_thread.join(_MAX_TIMEOUT)
+                        timedout = executor_thread.is_alive()
                         if timedout:
                             LOGGER.debug(
                                 'task executor thread timed out %s',
@@ -315,11 +319,15 @@ class TaskGraph(object):
                             "Exception when joining %s", executor_thread)
                 if self._reporting_interval is not None:
                     LOGGER.debug("joining _monitor_thread.")
-                    timedout = not self._monitor_thread.join(_MAX_TIMEOUT)
+                    if self._logging_queue:
+                        self._logging_queue.put(None)
+                    self._execution_monitor_wait_event.set()
+                    self._execution_monitor_thread.join(_MAX_TIMEOUT)
+                    timedout = self._execution_monitor_thread.is_alive()
                     if timedout:
                         LOGGER.debug(
                             '_monitor_thread %s timed out',
-                            self._monitor_thread)
+                            self._execution_monitor_thread)
                     for task in self._task_hash_map.values():
                         # this is a shortcut to get the tasks to mark as joined
                         task.task_done_executing_event.set()
@@ -419,8 +427,9 @@ class TaskGraph(object):
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
             hash_target_files=True, dependent_task_list=None,
-            ignore_directories=True, priority=0, hash_algorithm='sizetimestamp',
-            copy_duplicate_artifact=False, transient_run=False):
+            ignore_directories=True, priority=0,
+            hash_algorithm='sizetimestamp', copy_duplicate_artifact=False,
+            transient_run=False):
         """Add a task to the task graph.
 
         Parameters:
@@ -626,10 +635,22 @@ class TaskGraph(object):
                 break
             logger = logging.getLogger(record.name)
             logger.handle(record)
+        with open('done.txt', 'w') as donefile:
+            donefile('.done.')
         LOGGER.debug('_handle_logs_from_processes shutting down')
 
-    def _execution_monitor(self):
-        """Log state of taskgraph every `self._reporting_interval` seconds."""
+    def _execution_monitor(self, monitor_wait_event):
+        """Log state of taskgraph every `self._reporting_interval` seconds.
+
+        Parameters:
+            monitor_wait_event (threading.Event): used to sleep the monitor
+                for `self._reporting_interval` seconds, or to wake up to
+                terminate for shutdown.
+
+        Returns:
+            None.
+
+        """
         start_time = time.time()
         while True:
             if self._terminated:
@@ -657,8 +678,8 @@ class TaskGraph(object):
                 'closed' if self._closed else 'open',
                 active_task_message)
 
-            time.sleep(
-                self._reporting_interval - (
+            monitor_wait_event.wait(
+                timeout=self._reporting_interval - (
                     (time.time() - start_time)) % self._reporting_interval)
         LOGGER.debug("_execution monitor shutting down")
 
@@ -704,7 +725,9 @@ class TaskGraph(object):
                     self._logging_monitor_thread.join(timeout)
                 if self._reporting_interval is not None:
                     LOGGER.debug("joining _monitor_thread.")
-                    self._monitor_thread.join(timeout)
+                    # wake up the execution monitor
+                    self._execution_monitor_wait_event.set()
+                    self._execution_monitor_thread.join(timeout)
                 for executor_task in self._task_executor_thread_list:
                     executor_task.join(timeout)
             LOGGER.debug('taskgraph terminated')

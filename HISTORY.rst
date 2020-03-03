@@ -24,6 +24,14 @@ Unreleased Changes
   successfuly executed it with the same parameters.
 * Removed the ``n_retries`` parameter from ``add_task``. Users are recommended
   to handle retries within functions themselves.
+* Added a ``hash_target_files`` flag to ``add_task`` that when set to False,
+  causes TaskGraph to only note the existance of target files after execution
+  or as part of an evaluation to determine if the Task was precalculated.
+  This is useful for operations that initalize a file but subsequent runs of
+  the program modify it such as a new database or a downloaded file.
+* Fixed an issue on the monitor execution thread that caused shutdown of a
+  TaskGraph object to be delayed up to the amount of delay in the monitor
+  reporting update.
 
 0.8.5 (2019-09-11)
 ------------------
