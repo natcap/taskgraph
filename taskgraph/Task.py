@@ -1,5 +1,4 @@
 """Task graph framework."""
-import abc
 import collections
 import hashlib
 import inspect
@@ -18,14 +17,9 @@ import sqlite3
 import threading
 import time
 
+import retrying
 
 _VALID_PATH_TYPES = (str, pathlib.Path)
-# Superclass for ABCs, compatible with python 2.7+ that replaces __metaclass__
-# usage that is no longer clearly documented in python 3 (if it's even present
-# at all ... __metaclass__ has been removed from the python data model docs)
-# Taken from https://stackoverflow.com/a/38668373/299084
-ABC = abc.ABCMeta('ABC', (object,), {'__slots__': ()})
-
 _TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
 
 try:
@@ -62,11 +56,11 @@ class NoDaemonProcess(multiprocessing.Process):
 
 
 # From https://stackoverflow.com/a/8963618/42897
-# "As the current implementation of multiprocessing [3.7+] has been extensively 
+# "As the current implementation of multiprocessing [3.7+] has been extensively
 # refactored to be based on contexts, we need to provide a NoDaemonContext
-# class that has our NoDaemonProcess as attribute. [NonDaemonicPool] will then 
-# use that context instead of the default one." 
-# "spawn" is chosen as default since that is the default and only context 
+# class that has our NoDaemonProcess as attribute. [NonDaemonicPool] will then
+# use that context instead of the default one."
+# "spawn" is chosen as default since that is the default and only context
 # option for Windows and is the default option for Mac OS as well since 3.8.
 class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
     Process = NoDaemonProcess
@@ -189,9 +183,6 @@ class TaskGraph(object):
         # this lock is used to synchronize the following objects
         self._taskgraph_lock = threading.RLock()
 
-        # this is used to guard multiple connections to the same database
-        self._task_database_lock = threading.Lock()
-
         # this might hold the threads to execute tasks if n_workers >= 0
         self._task_executor_thread_list = []
 
@@ -216,6 +207,7 @@ class TaskGraph(object):
 
         self._task_database_path = os.path.join(
             self._taskgraph_cache_dir_path, _TASKGRAPH_DATABASE_FILENAME)
+
         sql_create_projects_table = (
             """
             CREATE TABLE IF NOT EXISTS taskgraph_data (
@@ -227,9 +219,9 @@ class TaskGraph(object):
             ON taskgraph_data (task_reexecution_hash);
             """)
 
-        with sqlite3.connect(self._task_database_path) as conn:
-            cursor = conn.cursor()
-            cursor.executescript(sql_create_projects_table)
+        _execute_sqlite(
+            sql_create_projects_table, self._task_database_path, mode='modify',
+            execute='script')
 
         # no need to set up schedulers if n_workers is single threaded
         self._n_workers = n_workers
@@ -267,6 +259,7 @@ class TaskGraph(object):
             self._logging_monitor_thread = threading.Thread(
                 target=self._handle_logs_from_processes,
                 args=(self._logging_queue,))
+
             self._logging_monitor_thread.daemon = True
             self._logging_monitor_thread.start()
             if HAS_PSUTIL:
@@ -362,7 +355,6 @@ class TaskGraph(object):
                     threading.currentThread())
                 break
             task = None
-            self._taskgraph_lock.acquire()
             try:
                 task = self._task_ready_priority_queue.get_nowait()
                 self._task_waiting_count -= 1
@@ -372,7 +364,6 @@ class TaskGraph(object):
                 # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
                 if self._closed and not self._task_dependent_map:
-                    self._taskgraph_lock.release()
                     # the task graph is signaling executors to stop,
                     # since the self._task_dependent_map is empty the
                     # executor can terminate.
@@ -383,71 +374,55 @@ class TaskGraph(object):
                     break
                 else:
                     self._executor_ready_event.clear()
-            self._taskgraph_lock.release()
-            if task:
-                try:
-                    task._call()
-                    task.task_done_executing_event.set()
-                except Exception as e:
-                    # An error occurred on a call, terminate the taskgraph
-                    if task.n_retries == 0:
-                        task.exception_object = e
-                        LOGGER.exception(
-                            'A taskgraph _task_executor failed on Task '
-                            '%s. Terminating taskgraph.', task.task_name)
-                        self._terminate()
-                        break
-                    else:
-                        LOGGER.warning(
-                            'A taskgraph _task_executor failed on Task '
-                            '%s attempting no more than %d retries. original '
-                            'exception %s',
-                            task.task_name, task.n_retries, repr(e))
-                        task.n_retries -= 1
-                        with self._taskgraph_lock:
-                            self._active_task_list.remove(task_name_time_tuple)
-                            self._task_ready_priority_queue.put(task)
-                            self._task_waiting_count += 1
-                            self._executor_ready_event.set()
-                        continue
+            if task is None:
+                continue
+            try:
+                task._call()
+                task.task_done_executing_event.set()
+            except Exception as e:
+                # An error occurred on a call, terminate the taskgraph
+                task.exception_object = e
+                LOGGER.exception(
+                    'A taskgraph _task_executor failed on Task '
+                    '%s. Terminating taskgraph.', task.task_name)
+                self._terminate()
+                break
 
-                LOGGER.debug(
-                    "task %s is complete, checking to see if any dependent "
-                    "tasks can be executed now", task.task_name)
-                with self._taskgraph_lock:
-                    self._completed_task_names.add(task.task_name)
-                    self._active_task_list.remove(task_name_time_tuple)
-                    for waiting_task_name in (
-                            self._task_dependent_map[task.task_name]):
-                        # remove `task` from the set of tasks that
-                        # `waiting_task` was waiting on.
-                        self._dependent_task_map[waiting_task_name].remove(
-                            task.task_name)
-                        # if there aren't any left, we can push `waiting_task`
-                        # to the work queue
-                        if not self._dependent_task_map[waiting_task_name]:
-                            # if we removed the last task we can put it to the
-                            # work queue
-                            LOGGER.debug(
-                                "Task %s is ready for processing, sending to "
-                                "task_ready_priority_queue",
-                                waiting_task_name)
-                            del self._dependent_task_map[waiting_task_name]
-                            self._task_ready_priority_queue.put(
-                                self._task_name_map[waiting_task_name])
-                            self._task_waiting_count += 1
-                            # indicate to executors there is work to do
-                            self._executor_ready_event.set()
-                    del self._task_dependent_map[task.task_name]
-                LOGGER.debug("task %s done processing", task.task_name)
+            LOGGER.debug(
+                "task %s is complete, checking to see if any dependent "
+                "tasks can be executed now", task.task_name)
+            self._completed_task_names.add(task.task_name)
+            self._active_task_list.remove(task_name_time_tuple)
+            for waiting_task_name in (
+                    self._task_dependent_map[task.task_name]):
+                # remove `task` from the set of tasks that
+                # `waiting_task` was waiting on.
+                self._dependent_task_map[waiting_task_name].remove(
+                    task.task_name)
+                # if there aren't any left, we can push `waiting_task`
+                # to the work queue
+                if not self._dependent_task_map[waiting_task_name]:
+                    # if we removed the last task we can put it to the
+                    # work queue
+                    LOGGER.debug(
+                        "Task %s is ready for processing, sending to "
+                        "task_ready_priority_queue",
+                        waiting_task_name)
+                    del self._dependent_task_map[waiting_task_name]
+                    self._task_ready_priority_queue.put(
+                        self._task_name_map[waiting_task_name])
+                    self._task_waiting_count += 1
+                    # indicate to executors there is work to do
+                    self._executor_ready_event.set()
+            del self._task_dependent_map[task.task_name]
+            LOGGER.debug("task %s done processing", task.task_name)
         LOGGER.debug("task executor shutting down")
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
             dependent_task_list=None, ignore_directories=True, priority=0,
-            n_retries=0, hash_algorithm='sizetimestamp',
-            copy_duplicate_artifact=False):
+            hash_algorithm='sizetimestamp', copy_duplicate_artifact=False):
         """Add a task to the task graph.
 
         Parameters:
@@ -482,13 +457,6 @@ class TaskGraph(object):
                 work queue in order of decreasing priority value
                 (priority 10 is higher than priority 1). This value can be
                 positive, negative, and/or floating point.
-            n_retries (int): if > 0, this task will attempt to reexecute up to
-                `n_retries` times if an exception occurs during execution of
-                the task. The process to attempt reexecution involves
-                re-inserting the task on the "work ready" queue which will be
-                processed by the taskgraph scheduler. This means the task may
-                attempt to reexecute immediately, or after some other tasks
-                are cleared.
             hash_algorithm (string): either a hash function id that
                 exists in hashlib.algorithms_available or 'sizetimestamp'.
                 Any paths to actual files in the arguments will be digested
@@ -559,9 +527,9 @@ class TaskGraph(object):
                     task_name, func, args, kwargs, target_path_list,
                     ignore_path_list, ignore_directories,
                     self._worker_pool, self._taskgraph_cache_dir_path,
-                    priority, n_retries, hash_algorithm,
-                    copy_duplicate_artifact, self._taskgraph_started_event,
-                    self._task_database_path, self._task_database_lock)
+                    priority, hash_algorithm, copy_duplicate_artifact,
+                    self._taskgraph_started_event,
+                    self._task_database_path)
 
                 self._task_name_map[new_task.task_name] = new_task
                 # it may be this task was already created in an earlier call,
@@ -658,13 +626,12 @@ class TaskGraph(object):
         while True:
             if self._terminated:
                 break
-            with self._taskgraph_lock:
-                active_task_count = len(self._active_task_list)
-                queue_length = self._task_ready_priority_queue.qsize()
-                active_task_message = '\n'.join(
-                    ['\t%s: executing for %.2fs' % (
-                        task_name, time.time() - task_time)
-                     for task_name, task_time in self._active_task_list])
+            active_task_count = len(self._active_task_list)
+            queue_length = self._task_ready_priority_queue.qsize()
+            active_task_message = '\n'.join(
+                ['\t%s: executing for %.2fs' % (
+                    task_name, time.time() - task_time)
+                 for task_name, task_time in self._active_task_list])
 
             completed_tasks = len(self._completed_task_names)
             percent_complete = 0.0
@@ -719,12 +686,11 @@ class TaskGraph(object):
                         "task %s timed out in graph join", task.task_name)
                     return False
             if self._closed and self._n_workers >= 0:
-                with self._taskgraph_lock:
-                    # we only have a task_manager if running in threaded mode
-                    # wake executors so they can process that the taskgraph is
-                    # closed and can shut down if there is no pending work
-                    self._executor_ready_event.set()
-                    self._terminated = True
+                # we only have a task_manager if running in threaded mode
+                # wake executors so they can process that the taskgraph is
+                # closed and can shut down if there is no pending work
+                self._executor_ready_event.set()
+                self._terminated = True
                 if self._logging_queue:
                     self._logging_queue.put(None)
                     self._logging_monitor_thread.join(timeout)
@@ -752,8 +718,7 @@ class TaskGraph(object):
         LOGGER.debug("Closing taskgraph.")
         if self._closed:
             return
-        with self._taskgraph_lock:
-            self._closed = True
+        self._closed = True
         LOGGER.debug("taskgraph closed")
 
     def _terminate(self):
@@ -762,15 +727,14 @@ class TaskGraph(object):
             "Invoking terminate. already terminated? %s", self._terminated)
         if self._terminated:
             return
-        with self._taskgraph_lock:
-            self._terminated = True
+        self._terminated = True
 
-            for task in self._task_hash_map.values():
-                LOGGER.debug("setting task done for %s", task.task_name)
-                task.task_done_executing_event.set()
+        for task in self._task_hash_map.values():
+            LOGGER.debug("setting task done for %s", task.task_name)
+            task.task_done_executing_event.set()
 
-            if self._worker_pool:
-                self._worker_pool.terminate()
+        if self._worker_pool:
+            self._worker_pool.terminate()
 
         self._taskgraph_started_event.set()
         self._executor_ready_event.set()
@@ -782,9 +746,9 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, ignore_directories,
-            worker_pool, cache_dir, priority, n_retries, hash_algorithm,
+            worker_pool, cache_dir, priority, hash_algorithm,
             copy_duplicate_artifact, taskgraph_started_event,
-            task_database_path, task_database_lock):
+            task_database_path):
         """Make a Task.
 
         Parameters:
@@ -812,14 +776,6 @@ class Task(object):
                 met and are ready for scheduling. Tasks are inserted into the
                 work queue in order of decreasing priority. This value can be
                 positive, negative, and/or floating point.
-            n_retries (int): if > 0, this task will attempt to reexecute up to
-                `n_retries` times if an exception occurs during execution of
-                the task. The process to attempt reexecution involves
-                re-inserting the task on the "work ready" queue which will be
-                processed by the taskgraph scheduler. This means the task may
-                attempt to reexecute immediately, or after some othre tasks
-                are cleared. If <= 0, the task will fail on the first
-                unhandled exception the Task encounters.
             hash_algorithm (string): either a hash function id that
                 exists in hashlib.algorithms_available or 'sizetimestamp'.
                 Any paths to actual files in the arguments will be digested
@@ -842,8 +798,6 @@ class Task(object):
                 table and the target_path_stats stores the base/target stats
                 for the target files created by the call and listed in
                 `target_path_list`.
-            task_database_lock (threading.Lock): used to lock the task
-                database before a .connect.
 
         """
         # it is a common error to accidentally pass a non string as to the
@@ -869,15 +823,10 @@ class Task(object):
         self._ignore_directories = ignore_directories
         self._worker_pool = worker_pool
         self._taskgraph_started_event = taskgraph_started_event
-        self.n_retries = n_retries
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
-        self._task_database_lock = task_database_lock
         self.exception_object = None
-
-        # This flag is used to avoid repeated calls to "is_precalculated"
-        self._precalculated = None
 
         # invert the priority since sorting goes smallest to largest and we
         # want more positive priority values to be executed first.
@@ -1010,19 +959,19 @@ class Task(object):
         result_calculated = False
         if self._copy_duplicate_artifact:
             # try to see if we can copy old files
-            with self._task_database_lock:
-                with sqlite3.connect(self._task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """
-                        SELECT target_path_stats from taskgraph_data
-                        WHERE (task_reexecution_hash == ?)
-                        """, (self._task_reexecution_hash,))
-                    database_result = cursor.fetchone()
+            database_result = _execute_sqlite(
+                """
+                SELECT target_path_stats from taskgraph_data
+                WHERE (task_reexecution_hash == ?)
+                """,
+                self._task_database_path, mode='read_only',
+                argument_list=(self._task_reexecution_hash,),
+                execute='execute', fetch='one')
             try:
                 if database_result:
                     result_target_path_stats = pickle.loads(
                         database_result[0])
+                    LOGGER.debug('duplicate artifact db results: %s', result_target_path_stats)
                     if (len(result_target_path_stats) ==
                             len(self._target_path_list)):
                         if all([
@@ -1089,16 +1038,12 @@ class Task(object):
         # transient between taskgraph executions and we should expect to
         # run it again.
         if self._target_path_list:
-            with self._task_database_lock:
-                with sqlite3.connect(self._task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """INSERT OR REPLACE INTO taskgraph_data VALUES
-                           (?, ?)""", (
-                            self._task_reexecution_hash, pickle.dumps(
-                                result_target_path_stats)))
-                    conn.commit()
-        self._precalculated = True
+            _execute_sqlite(
+                "INSERT OR REPLACE INTO taskgraph_data VALUES (?, ?)",
+                self._task_database_path, mode='modify',
+                argument_list=(
+                    self._task_reexecution_hash,
+                    pickle.dumps(result_target_path_stats)))
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
 
@@ -1116,9 +1061,6 @@ class Task(object):
         # in args and kwargs but ignores anything specifically targeted or
         # an expected result. This will allow a task to change its hash in
         # case a different version of a file was passed in.
-        if self._precalculated is not None:
-            return self._precalculated
-
         # these are the stats of the files that exist that aren't ignored
         file_stat_list = list(_get_file_stats(
             [self._args, self._kwargs],
@@ -1152,21 +1094,16 @@ class Task(object):
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
         try:
-            with self._task_database_lock:
-                with sqlite3.connect(self._task_database_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        """
-                            SELECT target_path_stats from taskgraph_data
-                            WHERE (task_reexecution_hash == ?)
-                        """, (self._task_reexecution_hash,))
-                    database_result = cursor.fetchone()
+            database_result = _execute_sqlite(
+                """SELECT target_path_stats from taskgraph_data
+                    WHERE (task_reexecution_hash == ?)""",
+                self._task_database_path, mode='read_only',
+                argument_list=(self._task_reexecution_hash,), fetch='one')
             if database_result is None:
                 LOGGER.debug(
                     "not precalculated, Task hash does not "
                     "exist (%s)", self.task_name)
                 LOGGER.debug("is_precalculated full task info: %s", self)
-                self._precalculated = False
                 return False
             result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
@@ -1210,14 +1147,11 @@ class Task(object):
                     "not precalculated (%s), Task hash exists, "
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
-                self._precalculated = False
                 return False
             LOGGER.debug("precalculated (%s)" % self)
-            self._precalculated = True
             return True
         except EOFError:
             LOGGER.exception("not precalculated %s, EOFError", self.task_name)
-            self._precalculated = False
             return False
 
     def join(self, timeout=None):
@@ -1232,35 +1166,6 @@ class Task(object):
         if self.exception_object:
             raise self.exception_object
         return timed_out
-
-
-class EncapsulatedTaskOp(ABC):
-    """Used as a superclass for Task operations that need closures.
-
-    This class will automatically hash the subclass's __call__ method source
-    as well as the arguments to its __init__ function to calculate the
-    Task's unique hash.
-
-    """
-
-    def __init__(self, *args, **kwargs):
-        """Attempt to get the source code of __call__."""
-        args_as_str = str([args, kwargs]).encode('utf-8')
-        try:
-            # hash the args plus source code of __call__
-            id_hash = hashlib.sha1(args_as_str + inspect.getsource(
-                self.__class__.__call__).encode('utf-8')).hexdigest()
-        except IOError:
-            # this will fail if the code is compiled, that's okay just do
-            # the args
-            id_hash = hashlib.sha1(args_as_str)
-        # prefix the classname
-        self.__name__ = '%s_%s' % (self.__class__.__name__, id_hash)
-
-    @abc.abstractmethod
-    def __call__(self, *args, **kwargs):
-        """Empty method meant to be overridden by inheritor."""
-        pass
 
 
 def _get_file_stats(
@@ -1467,3 +1372,71 @@ def _normalize_path(path):
             "failed to abspath %s so returning normalized path instead")
         abs_path = norm_path
     return os.path.normcase(abs_path)
+
+
+@retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=5000)
+def _execute_sqlite(
+        sqlite_command, database_path, argument_list=None,
+        mode='read_only', execute='execute', fetch=None):
+    """Execute SQLite command and attempt retries on a failure.
+
+    Parameters:
+        sqlite_command (str): a well formatted SQLite command.
+        database_path (str): path to the SQLite database to operate on.
+        argument_list (list): `execute == 'execute` then this list is passed to
+            the internal sqlite3 `execute` call.
+        mode (str): must be either 'read_only' or 'modify'.
+        execute (str): must be either 'execute' or 'script'.
+        fetch (str): if not `None` can be either 'all' or 'one'.
+            If not None the result of a fetch will be returned by this
+            function.
+
+    Returns:
+        result of fetch if `fetch` is not None.
+
+    """
+    cursor = None
+    connection = None
+    try:
+        if mode == 'read_only':
+            ro_uri = r'%s?mode=ro' % pathlib.Path(
+                os.path.abspath(database_path)).as_uri()
+            LOGGER.debug(
+                '%s exists: %s', ro_uri, os.path.exists(os.path.abspath(
+                    database_path)))
+            connection = sqlite3.connect(ro_uri, uri=True)
+        elif mode == 'modify':
+            LOGGER.debug('modify')
+            connection = sqlite3.connect(database_path)
+        else:
+            raise ValueError('Unknown mode: %s' % mode)
+
+        if execute == 'execute':
+            cursor = connection.execute(sqlite_command, argument_list)
+        elif execute == 'script':
+            cursor = connection.executescript(sqlite_command)
+        else:
+            raise ValueError('Unknown execute mode: %s' % execute)
+
+        result = None
+        payload = None
+        if fetch == 'all':
+            payload = (cursor.fetchall())
+        elif fetch == 'one':
+            payload = (cursor.fetchone())
+        elif fetch is not None:
+            raise ValueError('Unknown fetch mode: %s' % fetch)
+        if payload is not None:
+            result = list(payload)
+        cursor.close()
+        connection.commit()
+        connection.close()
+        return result
+    except Exception:
+        LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
+        if cursor is not None:
+            cursor.close()
+        if connection is not None:
+            connection.commit()
+            connection.close()
+        raise

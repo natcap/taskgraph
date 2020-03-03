@@ -1,6 +1,5 @@
 """Tests for taskgraph."""
 import hashlib
-import importlib
 import logging
 import logging.handlers
 import multiprocessing
@@ -12,13 +11,14 @@ import sqlite3
 import tempfile
 import time
 import unittest
-import unittest.mock
 
+import retrying
 import taskgraph
 
 LOGGER = logging.getLogger(__name__)
 
 N_TEARDOWN_RETRIES = 5
+MAX_TRY_WAIT_MS = 500
 
 
 def _noop_function(**kwargs):
@@ -139,16 +139,16 @@ class TaskGraphTests(unittest.TestCase):
         # the rest result
         self.workspace_dir = tempfile.mkdtemp()
 
+    @retrying.retry(
+        stop_max_attempt_number=N_TEARDOWN_RETRIES,
+        wait_exponential_multiplier=250, wait_exponential_max=MAX_TRY_WAIT_MS)
     def tearDown(self):
         """Remove temporary directory."""
-        attempts = 0
-        while attempts < N_TEARDOWN_RETRIES:
-            try:
-                shutil.rmtree(self.workspace_dir)
-                break
-            except Exception:
-                LOGGER.exception('error when tearing down.')
-                attempts += 1
+        try:
+            shutil.rmtree(self.workspace_dir)
+        except Exception:
+            LOGGER.exception('error when tearing down.')
+            raise
 
     def test_version_loaded(self):
         """TaskGraph: verify we can load the version."""
@@ -158,19 +158,6 @@ class TaskGraphTests(unittest.TestCase):
             self.assertTrue(len(taskgraph.__version__) > 0)
         except Exception:
             self.fail('Could not load the taskgraph version as expected.')
-
-    def test_version_not_loaded(self):
-        """TaskGraph: verify exception when not installed."""
-        from pkg_resources import DistributionNotFound
-        import taskgraph
-
-        with unittest.mock.patch(
-                'taskgraph.pkg_resources.get_distribution',
-                side_effect=DistributionNotFound('taskgraph')):
-            with self.assertRaises(RuntimeError):
-                # RuntimeError is a side effect of `import taskgraph`, so we
-                # reload it to retrigger the metadata load.
-                taskgraph = importlib.reload(taskgraph)
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
@@ -491,18 +478,6 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
 
-    def test_n_retries(self):
-        """TaskGraph: Test a task will attempt to retry after exception."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        result_file_path = os.path.join(self.workspace_dir, 'result.txt')
-
-        fail_task = task_graph.add_task(
-            func=Fail(5, result_file_path),
-            task_name='fail 5 times', n_retries=5)
-        fail_task.join()
-        task_graph.close()
-        self.assertTrue(os.path.exists(result_file_path))
-
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
@@ -610,56 +585,6 @@ class TaskGraphTests(unittest.TestCase):
 
         result = list(_get_file_stats(nofile, 'sizetimestamp', [], False))
         self.assertEqual(result, [])
-
-    def test_encapsulatedtaskop(self):
-        """TaskGraph: Test abstract closure task class."""
-        from taskgraph.Task import EncapsulatedTaskOp
-
-        class TestAbstract(EncapsulatedTaskOp):
-            def __init__(self):
-                pass
-
-        # __call__ is abstract so TypeError since it's not implemented
-        with self.assertRaises(TypeError):
-            _ = TestAbstract()
-
-        class TestA(EncapsulatedTaskOp):
-            def __call__(self, x):
-                return x
-
-        class TestB(EncapsulatedTaskOp):
-            def __call__(self, x):
-                return x
-
-        # TestA and TestB should be different because of different class names
-        a = TestA()
-        b = TestB()
-        # results of calls should be the same
-        self.assertEqual(a.__call__(5), b.__call__(5))
-        self.assertNotEqual(a.__name__, b.__name__)
-
-        # two instances with same args should be the same
-        self.assertEqual(TestA().__name__, TestA().__name__)
-
-        # redefine TestA so we get a different hashed __name__
-        class TestA(EncapsulatedTaskOp):
-            def __call__(self, x):
-                return x*x
-
-        new_a = TestA()
-        self.assertNotEqual(a.__name__, new_a.__name__)
-
-        # change internal class constructor to get different hashes
-        class TestA(EncapsulatedTaskOp):
-            def __init__(self, q):
-                super(TestA, self).__init__(q)
-                self.q = q
-
-            def __call__(self, x):
-                return x*x
-
-        init_new_a = TestA(1)
-        self.assertNotEqual(new_a.__name__, init_new_a.__name__)
 
     def test_repeat_targetless_runs(self):
         """TaskGraph: ensure that repeated runs with no targets reexecute."""
@@ -856,31 +781,39 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_multiprocessed_logging(self):
         """TaskGraph: ensure tasks can log from multiple processes."""
-        logger_name = 'foo.hello.world'
+        logger_name = 'test.task.queuelogger'
         log_message = 'This is coming from another process'
         logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.DEBUG)
         file_log_path = os.path.join(
             self.workspace_dir, 'test_multiprocessed_logging.log')
-        handler = logging.FileHandler(file_log_path)
-        handler.setFormatter(
+        file_handler = logging.FileHandler(file_log_path)
+        file_handler.setFormatter(
             logging.Formatter(fmt=':%(processName)s:%(message)s:'))
-        logger.addHandler(handler)
+        logger.addHandler(file_handler)
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        _ = task_graph.add_task(
+        log_task = task_graph.add_task(
             func=_log_from_another_process,
             args=(logger_name, log_message))
+        log_task.join()
+        file_handler.flush()
         task_graph.close()
         task_graph.join()
-        handler.flush()
-        del handler
-        task_graph._terminate()
-        del task_graph
+        file_handler.close()
 
-        with open(file_log_path) as log_file:
-            message = log_file.read().rstrip()
-        process_name, logged_message = re.match(
-            ':([^:]*):([^:]*):', message).groups()
+        @retrying.retry(wait_exponential_multiplier=100,
+                        wait_exponential_max=1000,
+                        stop_max_attempt_number=5)
+        def get_name_and_message():
+            with open(file_log_path, 'r') as log_file:
+                message = log_file.read().rstrip()
+            print(message)
+            process_name, logged_message = re.match(
+                ':([^:]*):([^:]*):', message).groups()
+            return process_name, logged_message
+
+        process_name, logged_message = get_name_and_message()
         self.assertEqual(logged_message, log_message)
         self.assertNotEqual(
             process_name, multiprocessing.current_process().name)

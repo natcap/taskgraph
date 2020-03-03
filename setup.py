@@ -1,6 +1,11 @@
 """taskgraph setup.py."""
 from setuptools import setup
 
+
+_REQUIREMENTS = [
+    x for x in open('requirements.txt').read().split('\n')
+    if not x.startswith('#') and len(x) > 0]
+
 LONG_DESCRIPTION = '%s\n\n%s' % (
     open('README.rst').read(),
     open('HISTORY.rst').read())
@@ -18,6 +23,7 @@ setup(
     packages=['taskgraph'],
     license='BSD',
     keywords='parallel multiprocessing distributed computing',
+    install_requires=_REQUIREMENTS,
     extras_require={
         'niced_processes': ['psutil'],
         },
