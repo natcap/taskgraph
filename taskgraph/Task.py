@@ -418,9 +418,9 @@ class TaskGraph(object):
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
             target_path_list=None, ignore_path_list=None,
-            dependent_task_list=None, ignore_directories=True, priority=0,
-            hash_algorithm='sizetimestamp', copy_duplicate_artifact=False,
-            transient_run=False):
+            hash_target_files=True, dependent_task_list=None,
+            ignore_directories=True, priority=0, hash_algorithm='sizetimestamp',
+            copy_duplicate_artifact=False, transient_run=False):
         """Add a task to the task graph.
 
         Parameters:
@@ -444,6 +444,11 @@ class TaskGraph(object):
             ignore_path_list (list): list of file paths that could be in
                 args/kwargs that should be ignored when considering timestamp
                 hashes.
+            hash_target_files (bool): If True, the hash value of the target
+                files will be recorded to determine if a future run of this
+                function is precalculated. If False, this function only notes
+                the existence of the target files before determining if
+                a function call is precalculated.
             dependent_task_list (list): list of `Task`s that this task must
                 `join` before executing.
             ignore_directories (boolean): if the existence/timestamp of any
@@ -528,10 +533,10 @@ class TaskGraph(object):
             task_name = '%s (%d)' % (task_name, len(self._task_hash_map))
             new_task = Task(
                 task_name, func, args, kwargs, target_path_list,
-                ignore_path_list, ignore_directories, transient_run,
-                self._worker_pool, self._taskgraph_cache_dir_path,
-                priority, hash_algorithm, copy_duplicate_artifact,
-                self._taskgraph_started_event,
+                ignore_path_list, hash_target_files, ignore_directories,
+                transient_run, self._worker_pool,
+                self._taskgraph_cache_dir_path, priority, hash_algorithm,
+                copy_duplicate_artifact, self._taskgraph_started_event,
                 self._task_database_path)
 
             self._task_name_map[new_task.task_name] = new_task
@@ -748,8 +753,8 @@ class Task(object):
 
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
-            ignore_path_list, ignore_directories, transient_run,
-            worker_pool, cache_dir, priority, hash_algorithm,
+            ignore_path_list, hash_target_files, ignore_directories,
+            transient_run, worker_pool, cache_dir, priority, hash_algorithm,
             copy_duplicate_artifact, taskgraph_started_event,
             task_database_path):
         """Make a Task.
@@ -767,6 +772,11 @@ class Task(object):
             ignore_path_list (list): list of file paths that could be in
                 args/kwargs that should be ignored when considering timestamp
                 hashes.
+            hash_target_files (bool): If True, the hash value of the target
+                files will be recorded to determine if a future run of this
+                function is precalculated. If False, this function only notes
+                the existence of the target files before determining if
+                a function call is precalculated.
             ignore_directories (bool): if the existence/timestamp of any
                 directories discovered in args or kwargs is used as part
                 of the work token hash.
@@ -831,6 +841,7 @@ class Task(object):
         self._cache_dir = cache_dir
         self._ignore_path_list = [
             _normalize_path(path) for path in ignore_path_list]
+        self._hash_target_files = hash_target_files
         self._ignore_directories = ignore_directories
         self._transient_run = transient_run
         self._worker_pool = worker_pool
@@ -1139,6 +1150,10 @@ class Task(object):
                     mismatched_target_file_list.append(
                         'Path not found: %s' % path)
                     continue
+                elif hash_algorithm == 'exists':
+                    # this is the case where hash_algorithm == 'exists' but
+                    # we already know the file exists so we do nothing
+                    continue
                 if hash_algorithm == 'sizetimestamp':
                     size, modified_time, actual_path = [
                         x for x in hash_string.split('::')]
@@ -1202,13 +1217,26 @@ class Task(object):
 
 
 def _get_file_stats(
-        base_value, hash_algorithm, ignore_list, ignore_directories):
+        base_value, hash_algorithm, ignore_list,
+        ignore_directories):
     """Return fingerprints of any filepaths in `base_value`.
 
     Parameters:
         base_value: any python value. Any file paths in `base_value`
             should be "os.path.norm"ed before this function is called.
             contains filepaths in any nested structure.
+        hash_algorithm (string): either a hash function id that
+            exists in hashlib.algorithms_available, 'exists', or
+            'sizetimestamp'. Any paths to actual files in the arguments will be
+            digested with this algorithm. If value is 'sizetimestamp' the
+            digest will only use the normed path, size, and timestamp of any
+            files found in the arguments. This value is used when
+            determining whether a task is precalculated or its target
+            files can be copied to an equivalent task. Note if
+            `hash_algorithm` is 'sizetimestamp' the task will require the
+            same base path files to determine equality. If it is a
+            `hashlib` algorithm only file contents will be considered. If this
+            value is 'exists' the value of the hash will be 'exists'.
         ignore_list (list): any paths found in this list are not included
             as part of the file stats. All paths in this list should be
             "os.path.norm"ed.
@@ -1228,9 +1256,12 @@ def _get_file_stats(
             if norm_path not in ignore_list and (
                     not os.path.isdir(norm_path) or
                     not ignore_directories) and os.path.exists(norm_path):
-                yield (
-                    norm_path, hash_algorithm,
-                    _hash_file(norm_path, hash_algorithm))
+                if hash_algorithm == 'exists':
+                    yield (norm_path, 'exists', 'exists')
+                else:
+                    yield (
+                        norm_path, hash_algorithm,
+                        _hash_file(norm_path, hash_algorithm))
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.
