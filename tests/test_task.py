@@ -1346,7 +1346,6 @@ class TaskGraphTests(unittest.TestCase):
                 func=_return_value_once,
                 transient_run=transient_run,
                 args=(expected_value,))
-            value_task.join()
             value = value_task.get()
             self.assertEqual(value, expected_value)
             task_graph.close()
@@ -1364,7 +1363,6 @@ class TaskGraphTests(unittest.TestCase):
                     func=_return_value_once,
                     transient_run=True,
                     args=(expected_value,))
-                value_task.join()
                 value = value_task.get()
                 self.assertEqual(value, expected_value)
             else:
@@ -1373,7 +1371,6 @@ class TaskGraphTests(unittest.TestCase):
                         func=_return_value_once,
                         transient_run=True,
                         args=(expected_value,))
-                    value_task.join()
                     value = value_task.get()
 
             task_graph.close()

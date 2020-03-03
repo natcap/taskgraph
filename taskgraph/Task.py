@@ -884,7 +884,6 @@ class Task(object):
         self.task_done_executing_event = threading.Event()
 
         # These are used to store and later access the result of the call.
-        self._result_ready = False
         self._result = None
 
         # Calculate a hash based only on argument inputs.
@@ -986,7 +985,6 @@ class Task(object):
                 "task_reexecution_hash": self._task_reexecution_hash,
                 "exception_object": self.exception_object,
                 "self._reexecution_info": self._reexecution_info,
-                "self._result_ready": self._result_ready,
                 "self._result": self._result,
             })
 
@@ -1071,7 +1069,6 @@ class Task(object):
             else:
                 LOGGER.debug("direct _func for task %s", self.task_name)
                 self._result = self._func(*self._args, **self._kwargs)
-            self._result_ready = True
 
         # check that the target paths exist and record stats for later
         if not self._hash_target_files:
@@ -1219,7 +1216,6 @@ class Task(object):
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
             self._result = pickle.loads(database_result[1])
-            self._result_ready = True
             LOGGER.debug("precalculated (%s)" % self)
             return True
         except EOFError:
@@ -1234,17 +1230,32 @@ class Task(object):
         LOGGER.debug(
             "joining %s done executing: %s", self.task_name,
             self.task_done_executing_event)
-        timed_out = self.task_done_executing_event.wait(timeout)
+        successful_wait = self.task_done_executing_event.wait(timeout)
         if self.exception_object:
             raise self.exception_object
-        return timed_out
+        return successful_wait
 
-    def get(self):
-        """Return the result of the `func` once it is ready."""
-        if self._result_ready:
-            return self._result
-        else:
-            raise ValueError('result is not ready')
+    def get(self, timeout=None):
+        """Return the result of the `func` once it is ready.
+
+        If `timeout` is None, this call blocks until the task is complete
+        determined by a call to `.join()`. Otherwise will wait up to `timeout`
+        seconds before raising a `RuntimeError` if exceeded.
+
+        Parameters:
+            timeout (float): if not None this parameter is a floating point
+                number specifying a timeout for the operation in seconds.
+
+        Returns:
+            value of the result
+        Raises:
+            RuntimeError when `timeout` exceeded.
+
+        """
+        timeout = not self.join(timeout)
+        if timeout:
+            raise RuntimeError('call to get timed out')
+        return self._result
 
 
 def _get_file_stats(
