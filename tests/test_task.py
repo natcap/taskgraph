@@ -1024,6 +1024,12 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph.close()
         task_graph.join()
+        del task_graph
+
+        with open(target_path, 'r') as result_file:
+            result_contents = result_file.read()
+        self.assertEqual('testupdated', result_contents)
+
 
     def test_duplicate_call_modify_timestamp(self):
         """TaskGraph: test that duplicate call modified stamp recompute."""
