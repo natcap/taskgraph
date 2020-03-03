@@ -957,6 +957,10 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: test that duplicate calls copy target path."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+
+        if hasattr(_create_file_once, 'executed'):
+            del _create_file_once.executed
+
         task_graph.add_task(
             func=_create_file_once,
             args=(target_path, 'test'),
@@ -987,6 +991,39 @@ class TaskGraphTests(unittest.TestCase):
         with open(alt_target_path, 'r') as alt_target_file:
             alt_contents = alt_target_file.read()
         self.assertEqual(contents, alt_contents)
+
+    def test_duplicate_call_changed_target(self):
+        """TaskGraph: test that duplicate calls copy target path."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+
+        if hasattr(_create_file_once, 'executed'):
+            del _create_file_once.executed
+
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            hash_target_files=False,
+            task_name='first _create_file_once')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        with open(target_path, 'a') as target_file:
+            target_file.write('updated')
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            hash_target_files=False,
+            task_name='first _create_file_once')
+
+        task_graph.close()
+        task_graph.join()
 
     def test_duplicate_call_modify_timestamp(self):
         """TaskGraph: test that duplicate call modified stamp recompute."""

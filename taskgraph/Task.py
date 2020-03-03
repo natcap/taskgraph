@@ -1051,9 +1051,13 @@ class Task(object):
             self._result_ready = True
 
         # check that the target paths exist and record stats for later
+        if not self._hash_target_files:
+            target_hash_algorithm = 'exists'
+        else:
+            target_hash_algorithm = self._hash_algorithm
         result_target_path_stats = list(
             _get_file_stats(
-                self._target_path_list, self._hash_algorithm, [], False))
+                self._target_path_list, target_hash_algorithm, [], False))
         result_target_path_set = set(
             [x[0] for x in result_target_path_stats])
         target_path_set = set(self._target_path_list)
@@ -1097,9 +1101,13 @@ class Task(object):
         # an expected result. This will allow a task to change its hash in
         # case a different version of a file was passed in.
         # these are the stats of the files that exist that aren't ignored
+        if not self._hash_target_files:
+            target_hash_algorithm = 'exists'
+        else:
+            target_hash_algorithm = self._hash_algorithm
         file_stat_list = list(_get_file_stats(
             [self._args, self._kwargs],
-            self._hash_algorithm,
+            target_hash_algorithm,
             self._target_path_list+self._ignore_path_list,
             self._ignore_directories))
 
