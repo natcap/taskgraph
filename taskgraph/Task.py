@@ -69,7 +69,7 @@ class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
 class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
-    # Inovking super to set the context of Pool class explicitly
+    # Invoking super to set the context of Pool class explicitly
     def __init__(self, *args, **kwargs):
         kwargs['context'] = NoDaemonContext()
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
@@ -178,10 +178,6 @@ class TaskGraph(object):
         # keeps track of how many tasks have all their dependencies satisfied
         # and are waiting for a worker
         self._task_waiting_count = 0
-
-        # Synchronization objects:
-        # this lock is used to synchronize the following objects
-        self._taskgraph_lock = threading.RLock()
 
         # this might hold the threads to execute tasks if n_workers >= 0
         self._task_executor_thread_list = []
@@ -338,7 +334,7 @@ class TaskGraph(object):
                     break
             LOGGER.debug('taskgraph terminated')
         except Exception:
-            LOGGER.exception('exception occured during __del__')
+            LOGGER.exception('exception occurred during __del__')
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -497,126 +493,125 @@ class TaskGraph(object):
                 reached a terminate state.
 
         """
-        with self._taskgraph_lock:
-            try:
-                if self._terminated:
-                    raise RuntimeError(
-                        "add_task when Taskgraph is terminated.")
-                if self._closed:
-                    raise ValueError(
-                        "The task graph is closed and cannot accept more "
-                        "tasks.")
-                self._added_task_count += 1
-                if args is None:
-                    args = []
-                if kwargs is None:
-                    kwargs = {}
-                if task_name is None:
-                    task_name = 'UNNAMED TASK'
-                if dependent_task_list is None:
-                    dependent_task_list = []
-                if target_path_list is None:
-                    target_path_list = []
-                if ignore_path_list is None:
-                    ignore_path_list = []
-                if func is None:
-                    def func(): return None
+        try:
+            if self._terminated:
+                raise RuntimeError(
+                    "add_task when Taskgraph is terminated.")
+            if self._closed:
+                raise ValueError(
+                    "The task graph is closed and cannot accept more "
+                    "tasks.")
+            self._added_task_count += 1
+            if args is None:
+                args = []
+            if kwargs is None:
+                kwargs = {}
+            if task_name is None:
+                task_name = 'UNNAMED TASK'
+            if dependent_task_list is None:
+                dependent_task_list = []
+            if target_path_list is None:
+                target_path_list = []
+            if ignore_path_list is None:
+                ignore_path_list = []
+            if func is None:
+                def func(): return None
 
-                # this is a pretty common error to accidentally not pass a
-                # Task to the dependent task list.
-                if any(not isinstance(task, Task)
-                       for task in dependent_task_list):
-                    raise ValueError(
-                        "Objects passed to dependent task list that are not "
-                        "tasks: %s", dependent_task_list)
+            # this is a pretty common error to accidentally not pass a
+            # Task to the dependent task list.
+            if any(not isinstance(task, Task)
+                   for task in dependent_task_list):
+                raise ValueError(
+                    "Objects passed to dependent task list that are not "
+                    "tasks: %s", dependent_task_list)
 
-                task_name = '%s (%d)' % (task_name, len(self._task_hash_map))
-                new_task = Task(
-                    task_name, func, args, kwargs, target_path_list,
-                    ignore_path_list, ignore_directories, transient_run,
-                    self._worker_pool, self._taskgraph_cache_dir_path,
-                    priority, hash_algorithm, copy_duplicate_artifact,
-                    self._taskgraph_started_event,
-                    self._task_database_path)
+            task_name = '%s (%d)' % (task_name, len(self._task_hash_map))
+            new_task = Task(
+                task_name, func, args, kwargs, target_path_list,
+                ignore_path_list, ignore_directories, transient_run,
+                self._worker_pool, self._taskgraph_cache_dir_path,
+                priority, hash_algorithm, copy_duplicate_artifact,
+                self._taskgraph_started_event,
+                self._task_database_path)
 
-                self._task_name_map[new_task.task_name] = new_task
-                # it may be this task was already created in an earlier call,
-                # use that object in its place
-                if new_task in self._task_hash_map:
-                    duplicate_task = self._task_hash_map[new_task]
-                    new_task_target_set = set(new_task._target_path_list)
-                    duplicate_task_target_set = set(
-                        duplicate_task._target_path_list)
-                    if new_task_target_set == duplicate_task_target_set:
-                        LOGGER.warning(
-                            "A duplicate task was submitted: %s original: %s",
-                            new_task, self._task_hash_map[new_task])
-                        return duplicate_task
-                    disjoint_target_set = (
-                        new_task_target_set.symmetric_difference(
-                            duplicate_task_target_set))
-                    if len(disjoint_target_set) == (
-                            len(new_task_target_set) +
-                            len(duplicate_task_target_set)):
-                        if duplicate_task not in dependent_task_list:
-                            LOGGER.info(
-                                "A task was created that had an identical "
-                                "args signature sans target paths, but a "
-                                "different target_path_list of the same "
-                                "length. To avoid recomputation, dynamically "
-                                "adding previous Task (%s) as a dependent "
-                                "task to this one (%s).",
-                                duplicate_task.task_name, task_name)
-                            dependent_task_list = (
-                                dependent_task_list + [duplicate_task])
-                    else:
-                        raise RuntimeError(
-                            "A task was created that has the same arguments "
-                            "as another task, but only partially different "
-                            "expected target paths. This runs the risk of "
-                            "unpredictably overwriting output so treating as "
-                            "a runtime error: submitted task: %s, existing "
-                            "task: %s" % (new_task, duplicate_task))
-                self._task_hash_map[new_task] = new_task
-                if self._n_workers < 0:
-                    # call directly if single threaded
-                    new_task._call()
+            self._task_name_map[new_task.task_name] = new_task
+            # it may be this task was already created in an earlier call,
+            # use that object in its place
+            if new_task in self._task_hash_map:
+                duplicate_task = self._task_hash_map[new_task]
+                new_task_target_set = set(new_task._target_path_list)
+                duplicate_task_target_set = set(
+                    duplicate_task._target_path_list)
+                if new_task_target_set == duplicate_task_target_set:
+                    LOGGER.warning(
+                        "A duplicate task was submitted: %s original: %s",
+                        new_task, self._task_hash_map[new_task])
+                    return duplicate_task
+                disjoint_target_set = (
+                    new_task_target_set.symmetric_difference(
+                        duplicate_task_target_set))
+                if len(disjoint_target_set) == (
+                        len(new_task_target_set) +
+                        len(duplicate_task_target_set)):
+                    if duplicate_task not in dependent_task_list:
+                        LOGGER.info(
+                            "A task was created that had an identical "
+                            "args signature sans target paths, but a "
+                            "different target_path_list of the same "
+                            "length. To avoid recomputation, dynamically "
+                            "adding previous Task (%s) as a dependent "
+                            "task to this one (%s).",
+                            duplicate_task.task_name, task_name)
+                        dependent_task_list = (
+                            dependent_task_list + [duplicate_task])
                 else:
-                    # determine if task is ready or is dependent on other
-                    # tasks
+                    raise RuntimeError(
+                        "A task was created that has the same arguments "
+                        "as another task, but only partially different "
+                        "expected target paths. This runs the risk of "
+                        "unpredictably overwriting output so treating as "
+                        "a runtime error: submitted task: %s, existing "
+                        "task: %s" % (new_task, duplicate_task))
+            self._task_hash_map[new_task] = new_task
+            if self._n_workers < 0:
+                # call directly if single threaded
+                new_task._call()
+            else:
+                # determine if task is ready or is dependent on other
+                # tasks
+                LOGGER.debug(
+                    "multithreaded: %s sending to new task queue.",
+                    task_name)
+                outstanding_dep_task_name_list = [
+                    dep_task.task_name for dep_task in dependent_task_list
+                    if dep_task.task_name
+                    not in self._completed_task_names]
+                if not outstanding_dep_task_name_list:
                     LOGGER.debug(
-                        "multithreaded: %s sending to new task queue.",
-                        task_name)
-                    outstanding_dep_task_name_list = [
-                        dep_task.task_name for dep_task in dependent_task_list
-                        if dep_task.task_name
-                        not in self._completed_task_names]
-                    if not outstanding_dep_task_name_list:
-                        LOGGER.debug(
-                            "sending task %s right away", new_task.task_name)
-                        self._task_ready_priority_queue.put(new_task)
-                        self._task_waiting_count += 1
-                        self._executor_ready_event.set()
-                    else:
-                        # there are unresolved tasks that the waiting
-                        # process scheduler has not been notified of.
-                        # Record dependencies.
-                        for dep_task_name in outstanding_dep_task_name_list:
-                            # record tasks that are dependent on dep_task_name
-                            self._task_dependent_map[dep_task_name].add(
-                                new_task.task_name)
-                            # record tasks that new_task depends on
-                            self._dependent_task_map[new_task.task_name].add(
-                                dep_task_name)
-                return new_task
+                        "sending task %s right away", new_task.task_name)
+                    self._task_ready_priority_queue.put(new_task)
+                    self._task_waiting_count += 1
+                    self._executor_ready_event.set()
+                else:
+                    # there are unresolved tasks that the waiting
+                    # process scheduler has not been notified of.
+                    # Record dependencies.
+                    for dep_task_name in outstanding_dep_task_name_list:
+                        # record tasks that are dependent on dep_task_name
+                        self._task_dependent_map[dep_task_name].add(
+                            new_task.task_name)
+                        # record tasks that new_task depends on
+                        self._dependent_task_map[new_task.task_name].add(
+                            dep_task_name)
+            return new_task
 
-            except Exception:
-                # something went wrong, shut down the taskgraph
-                LOGGER.exception(
-                    "Something went wrong when adding task %s, "
-                    "terminating taskgraph.", task_name)
-                self._terminate()
-                raise
+        except Exception:
+            # something went wrong, shut down the taskgraph
+            LOGGER.exception(
+                "Something went wrong when adding task %s, "
+                "terminating taskgraph.", task_name)
+            self._terminate()
+            raise
 
     def _handle_logs_from_processes(self, queue_):
         LOGGER.debug('Starting logging worker')
