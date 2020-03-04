@@ -14,14 +14,6 @@ Unreleased Changes
 * Removing unnecessary internal locks which will improve runtime performance of
   processing many small Tasks.
 * Refactor to support separate TaskGraph objects that use the same database.
-* ``Task``s can now return the result of the ``func`` call after it is
-  executed. This value is cached in the TaskGraph database for future avoided
-  re-execution and can be retrieved with a call to ``get`` on the Task object
-  once the call is complete. As part of this change the previous behavior of
-  transient runs if a target path list was empty has now been made explicit.
-  There is a new parameter ``transient_run`` that if set True will cause a
-  Task to reexecute on a future TaskGraph object even if a previous generation
-  successfully executed it with the same parameters.
 * Removed the ``n_retries`` parameter from ``add_task``. Users are recommended
   to handle retries within functions themselves.
 * Added a ``hash_target_files`` flag to ``add_task`` that when set to False,
@@ -39,8 +31,8 @@ Unreleased Changes
   path list. In previous versions the Task would execute once per TaskGraph
   instance, now successive ``Task`` objects with the same execution signature
   will use cached results.
-* To support the addition of the ``.get()`` function a flag called
-  ``transient_run`` is added to ``add_task`` that causes TaskGraph to avoid
+* To support the addition of the ``.get()`` function a ``transient_run``
+  parameter is added to ``add_task`` that causes TaskGraph to avoid
   recording a completed ``Task`` even if the execution hash would have been
   identical to a previously completed run where the target artifacts still
   existed.
