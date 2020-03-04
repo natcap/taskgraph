@@ -635,8 +635,6 @@ class TaskGraph(object):
                 break
             logger = logging.getLogger(record.name)
             logger.handle(record)
-        with open('done.txt', 'w') as donefile:
-            donefile('.done.')
         LOGGER.debug('_handle_logs_from_processes shutting down')
 
     def _execution_monitor(self, monitor_wait_event):
