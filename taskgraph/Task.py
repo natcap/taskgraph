@@ -1105,7 +1105,7 @@ class Task(object):
         """Return true if _call need not be invoked.
 
         If the task has been precalculated it will fetch the return result from
-        the previous run if possible.
+        the previous run.
 
         Returns:
             True if the Task's target paths exist in the same state as the
