@@ -21,6 +21,14 @@ N_TEARDOWN_RETRIES = 5
 MAX_TRY_WAIT_MS = 500
 
 
+def _return_value_once(value):
+    """Returns the value passed to it only once."""
+    if hasattr(_return_value_once, 'executed'):
+        raise RuntimeError("this function was called twice")
+    _return_value_once.executed = True
+    return value
+
+
 def _noop_function(**kwargs):
     """Does nothing except allow kwargs to be passed."""
     pass
@@ -586,8 +594,8 @@ class TaskGraphTests(unittest.TestCase):
         result = list(_get_file_stats(nofile, 'sizetimestamp', [], False))
         self.assertEqual(result, [])
 
-    def test_repeat_targetless_runs(self):
-        """TaskGraph: ensure that repeated runs with no targets reexecute."""
+    def test_transient_runs(self):
+        """TaskGraph: ensure that transent tasks reexecute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
@@ -595,6 +603,7 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value, list_len),
+            transient_run=True,
             kwargs={
                 'target_path': target_path,
             })
@@ -948,6 +957,10 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: test that duplicate calls copy target path."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+
+        if hasattr(_create_file_once, 'executed'):
+            del _create_file_once.executed
+
         task_graph.add_task(
             func=_create_file_once,
             args=(target_path, 'test'),
@@ -978,6 +991,45 @@ class TaskGraphTests(unittest.TestCase):
         with open(alt_target_path, 'r') as alt_target_file:
             alt_contents = alt_target_file.read()
         self.assertEqual(contents, alt_contents)
+
+    def test_duplicate_call_changed_target(self):
+        """TaskGraph: test that duplicate calls copy target path."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
+
+        if hasattr(_create_file_once, 'executed'):
+            del _create_file_once.executed
+
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            hash_target_files=False,
+            task_name='first _create_file_once')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        with open(target_path, 'a') as target_file:
+            target_file.write('updated')
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+        task_graph.add_task(
+            func=_create_file_once,
+            args=(target_path, 'test'),
+            target_path_list=[target_path],
+            hash_target_files=False,
+            task_name='first _create_file_once')
+
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        with open(target_path, 'r') as result_file:
+            result_contents = result_file.read()
+        self.assertEqual('testupdated', result_contents)
+
 
     def test_duplicate_call_modify_timestamp(self):
         """TaskGraph: test that duplicate call modified stamp recompute."""
@@ -1281,6 +1333,49 @@ class TaskGraphTests(unittest.TestCase):
         self.assertNotEqual(
             task_a._task_id_hash, task_b._task_id_hash,
             "task ids should be different since the filenames are different")
+
+    def test_return_value(self):
+        """TaskGraph: test that `.get` behavior works as expected."""
+        n_iterations = 3
+        for iteration_id in range(n_iterations):
+            transient_run = iteration_id == n_iterations-1
+            LOGGER.debug(iteration_id)
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
+            expected_value = 'a good value'
+            value_task = task_graph.add_task(
+                func=_return_value_once,
+                transient_run=transient_run,
+                args=(expected_value,))
+            value = value_task.get()
+            self.assertEqual(value, expected_value)
+            task_graph.close()
+            task_graph.join()
+            task_graph = None
+
+        # reset run
+        del _return_value_once.executed
+        for iteration_id in range(n_iterations):
+            LOGGER.debug(iteration_id)
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
+            expected_value = 'transient run'
+            if iteration_id == 0:
+                value_task = task_graph.add_task(
+                    func=_return_value_once,
+                    transient_run=True,
+                    args=(expected_value,))
+                value = value_task.get()
+                self.assertEqual(value, expected_value)
+            else:
+                with self.assertRaises(RuntimeError):
+                    value_task = task_graph.add_task(
+                        func=_return_value_once,
+                        transient_run=True,
+                        args=(expected_value,))
+                    value = value_task.get()
+
+            task_graph.close()
+            task_graph.join()
+            task_graph = None
 
 
 def Fail(n_tries, result_path):

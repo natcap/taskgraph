@@ -6,7 +6,7 @@ TaskGraph Release History
 
 Unreleased Changes
 ------------------
-* Updating primary repo url to Github.
+* Updating primary repository URL to GitHub.
 * Adding support for Python 3.8.
 * Removing the ``EncapsulatedOp`` abstract class. In practice the development
   loop that encouraged the use of ``EncapsulatedOp`` is flawed and can lead to
@@ -16,6 +16,26 @@ Unreleased Changes
 * Refactor to support separate TaskGraph objects that use the same database.
 * Removed the ``n_retries`` parameter from ``add_task``. Users are recommended
   to handle retries within functions themselves.
+* Added a ``hash_target_files`` flag to ``add_task`` that when set to False,
+  causes TaskGraph to only note the existence of target files after execution
+  or as part of an evaluation to determine if the Task was precalculated.
+  This is useful for operations that initialize a file but subsequent runs of
+  the program modify it such as a new database or a downloaded file.
+* Fixed an issue on the monitor execution thread that caused shutdown of a
+  TaskGraph object to be delayed up to the amount of delay in the monitor
+  reporting update.
+* Added a ``.get()`` function for ``Task`` objects that returns the result of
+  the respective ``func`` call. This value is cached in the TaskGraph database
+  and hence can be used to avoid repeated execution. Note the addition of this
+  function changes the functionality of calling ``add_task`` with no target
+  path list. In previous versions the Task would execute once per TaskGraph
+  instance, now successive ``Task`` objects with the same execution signature
+  will use cached results.
+* To support the addition of the ``.get()`` function a ``transient_run``
+  parameter is added to ``add_task`` that causes TaskGraph to avoid
+  recording a completed ``Task`` even if the execution hash would have been
+  identical to a previously completed run where the target artifacts still
+  existed.
 
 0.8.5 (2019-09-11)
 ------------------
