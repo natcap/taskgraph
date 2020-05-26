@@ -4,6 +4,10 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Adding open source BSD-3-Clause license.
+
 0.9.0 (2020-03-05)
 ------------------
 * Updating primary repository URL to GitHub.
