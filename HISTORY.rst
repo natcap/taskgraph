@@ -6,7 +6,7 @@ TaskGraph Release History
 
 Unreleased Changes
 ------------------
-* Adding a license file.
+* Adding open source BSD-3-Clause license.
 
 0.9.0 (2020-03-05)
 ------------------
