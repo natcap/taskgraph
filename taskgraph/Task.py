@@ -1,4 +1,5 @@
 """Task graph framework."""
+from pkg_resources import get_distribution
 import collections
 import hashlib
 import inspect
@@ -18,6 +19,9 @@ import threading
 import time
 
 import retrying
+
+__version__ = get_distribution('taskgraph').version
+
 
 _VALID_PATH_TYPES = (str, pathlib.Path)
 _TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
@@ -103,6 +107,101 @@ def _initialize_logging_to_queue(logging_queue):
     root_logger.setLevel(logging.NOTSET)
     handler = logging.handlers.QueueHandler(logging_queue)
     root_logger.addHandler(handler)
+
+
+def _create_taskgraph_table_schema(taskgraph_database_path):
+    """Create database exists and/or ensures it is compatable and recreate.
+
+    Args:
+        taskgraph_database_path (str): path to an existing database or desired
+            location of a new database.
+
+    Returns:
+        None.
+
+    """
+    sql_create_projects_table_script = (
+        """
+        CREATE TABLE taskgraph_data (
+            task_reexecution_hash TEXT NOT NULL,
+            target_path_stats BLOB NOT NULL,
+            result BLOB NOT NULL,
+            PRIMARY KEY (task_reexecution_hash)
+        );
+        CREATE TABLE global_variables (
+            key TEXT NOT NULL,
+            value BLOB,
+            PRIMARY KEY (key)
+        );
+        """)
+
+    table_valid = True
+    expected_table_column_name_map = {
+        'taskgraph_data': [
+            'task_reexecution_hash', 'target_path_stats', 'result'],
+        'global_variables': ['key', 'value']}
+    if os.path.exists(taskgraph_database_path):
+        try:
+            connection = sqlite3.connect(taskgraph_database_path)
+            # check that the tables exist and the column names are as expected
+            for expected_table_name in expected_table_column_name_map:
+                cursor = connection.execute('''
+                    SELECT name
+                    FROM sqlite_master
+                    WHERE type='table' AND name=?''', (expected_table_name,))
+                if not cursor:
+                    raise ValueError(f'missing table {expected_table_name}')
+                cursor.close()
+
+                # this query returns a list of results of the form
+                # [(0, 'task_reexecution_hash', 'TEXT', 1, None, 1), ... ]
+                # we'll just check that the header names are the same, no
+                # need to be super aggressive, also need to construct the
+                # PRAGMA string directly since it doesn't take arguments
+                cursor = connection.execute(
+                    f'PRAGMA table_info({expected_table_name})')
+
+                expected_column_names = expected_table_column_name_map[
+                    expected_table_name]
+                header_count = 0
+                for header_line in cursor:
+                    column_name = header_line[1]
+                    if column_name not in expected_column_names:
+                        raise ValueError(
+                            f'unexpected column name {column_name} in table '
+                            f'{expected_table_name}')
+                    header_count += 1
+                if header_count < len(expected_column_names):
+                    raise ValueError(
+                        f'found only {header_count} of an expected '
+                        f'{len(expected_column_names)} columns in table '
+                        f'{expected_table_name}')
+                if not cursor:
+                    raise ValueError(f'missing table {expected_table_name}')
+                cursor.close()
+
+        except Exception:
+            LOGGER.exception(
+                f'{taskgraph_database_path} exists, but is incompatable '
+                'somehow. Deleting and making a new one.')
+            os.remove(taskgraph_database_path)
+            table_valid = False
+    else:
+        # table does not exist
+        table_valid = False
+
+    if not table_valid:
+        # create the base table
+        _execute_sqlite(
+            sql_create_projects_table_script, taskgraph_database_path,
+            mode='modify', execute='script')
+        # set the database version
+        _execute_sqlite(
+            '''
+            INSERT OR REPLACE INTO global_variables
+            VALUES ("version", ?)
+            ''', taskgraph_database_path, mode='modify',
+            argument_list=(__version__,))
 
 
 class TaskGraph(object):
@@ -204,21 +303,22 @@ class TaskGraph(object):
         self._task_database_path = os.path.join(
             self._taskgraph_cache_dir_path, _TASKGRAPH_DATABASE_FILENAME)
 
-        sql_create_projects_table = (
-            """
-            CREATE TABLE IF NOT EXISTS taskgraph_data (
-                task_reexecution_hash TEXT NOT NULL,
-                target_path_stats BLOB NOT NULL,
-                result BLOB NOT NULL,
-                PRIMARY KEY (task_reexecution_hash)
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS task_reexecution_hash_index
-            ON taskgraph_data (task_reexecution_hash);
-            """)
+        # create new table if needed
+        _create_taskgraph_table_schema(self._task_database_path)
 
-        _execute_sqlite(
-            sql_create_projects_table, self._task_database_path, mode='modify',
-            execute='script')
+        # check the version of the database and warn if a problem
+        local_version = _execute_sqlite(
+            '''
+            SELECT value
+            FROM global_variables
+            WHERE key=?
+            ''', self._task_database_path, mode='read_only',
+            fetch='one', argument_list=['version'])[0]
+        if local_version != __version__:
+            LOGGER.warn(
+                f'the database located at {self._task_database_path} was '
+                f'created with TaskGraph version {local_version} but the '
+                f'current version is {__version__}')
 
         # no need to set up schedulers if n_workers is single threaded
         self._n_workers = n_workers
@@ -1479,7 +1579,7 @@ def _normalize_path(path):
 
 
 @retrying.retry(
-    wait_exponential_multiplier=1000, wait_exponential_max=5000,
+    wait_exponential_multiplier=100, wait_exponential_max=3200,
     stop_max_attempt_number=5)
 def _execute_sqlite(
         sqlite_command, database_path, argument_list=None,
