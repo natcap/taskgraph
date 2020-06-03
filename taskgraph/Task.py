@@ -1478,7 +1478,9 @@ def _normalize_path(path):
     return os.path.normcase(abs_path)
 
 
-@retrying.retry(wait_exponential_multiplier=1000, wait_exponential_max=5000)
+@retrying.retry(
+    wait_exponential_multiplier=1000, wait_exponential_max=5000,
+    stop_max_attempt_number=5)
 def _execute_sqlite(
         sqlite_command, database_path, argument_list=None,
         mode='read_only', execute='execute', fetch=None):
