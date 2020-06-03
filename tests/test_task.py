@@ -1377,6 +1377,64 @@ class TaskGraphTests(unittest.TestCase):
             task_graph.join()
             task_graph = None
 
+    def test_malformed_taskgraph_database(self):
+        """TaskGraph: Test an empty task."""
+        db_schema_test_list = [
+            '''
+            CREATE TABLE taskgraph_data (
+                bad_name_1 TEXT NOT NULL,
+                bad_name_2 BLOB NOT NULL,
+                bad_name_3 BLOB NOT NULL);
+            ''',
+            '''
+            CREATE TABLE taskgraph_data (
+                task_reexecution_hash TEXT NOT NULL,
+                target_path_stats BLOB NOT NULL);
+            ''',
+            '''
+            CREATE TABLE bad_table_name (
+                task_reexecution_hash TEXT NOT NULL,
+                target_path_stats BLOB NOT NULL,
+                result BLOB NOT NULL,
+                PRIMARY KEY (task_reexecution_hash));
+            '''
+        ]
+
+        for db_schema in db_schema_test_list:
+            database_path = os.path.join(
+                self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+            if os.path.exists(database_path):
+                os.remove(database_path)
+            connection = sqlite3.connect(database_path)
+            cursor = connection.cursor()
+            cursor.executescript(db_schema)
+            cursor.close()
+            connection.commit()
+            connection.close()
+
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
+            _ = task_graph.add_task()
+            task_graph.close()
+            task_graph.join()
+            del task_graph
+
+            expected_column_name_list = [
+                'task_reexecution_hash', 'target_path_stats', 'result']
+            connection = sqlite3.connect(database_path)
+            cursor = connection.cursor()
+            cursor.execute(f'PRAGMA table_info(taskgraph_data)')
+            result = list(cursor.fetchall())
+            cursor.close()
+            connection.commit()
+            connection.close()
+            for header_line in result:
+                column_name = header_line[1]
+                if column_name not in expected_column_name_list:
+                    raise ValueError(
+                        f'unexpected column name {column_name} in '
+                        'taskgraph_data ')
+            self.assertEqual(len(result), len(expected_column_name_list))
+
 
 def Fail(n_tries, result_path):
     """Create a function that fails after `n_tries`."""

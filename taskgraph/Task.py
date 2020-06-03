@@ -142,44 +142,46 @@ def _create_taskgraph_table_schema(taskgraph_database_path):
         'global_variables': ['key', 'value']}
     if os.path.exists(taskgraph_database_path):
         try:
-            connection = sqlite3.connect(taskgraph_database_path)
             # check that the tables exist and the column names are as expected
             for expected_table_name in expected_table_column_name_map:
-                cursor = connection.execute('''
+                table_result = _execute_sqlite(
+                    '''
                     SELECT name
                     FROM sqlite_master
-                    WHERE type='table' AND name=?''', (expected_table_name,))
-                if not cursor:
+                    WHERE type='table' AND name=?
+                    ''', taskgraph_database_path,
+                    argument_list=[expected_table_name],
+                    mode='read_only', execute='execute', fetch='all')
+                if not table_result:
                     raise ValueError(f'missing table {expected_table_name}')
-                cursor.close()
 
                 # this query returns a list of results of the form
                 # [(0, 'task_reexecution_hash', 'TEXT', 1, None, 1), ... ]
                 # we'll just check that the header names are the same, no
                 # need to be super aggressive, also need to construct the
                 # PRAGMA string directly since it doesn't take arguments
-                cursor = connection.execute(
-                    f'PRAGMA table_info({expected_table_name})')
+                table_info_result = _execute_sqlite(
+                    f'PRAGMA table_info({expected_table_name})',
+                    taskgraph_database_path, mode='read_only',
+                    execute='execute', fetch='all')
 
                 expected_column_names = expected_table_column_name_map[
                     expected_table_name]
                 header_count = 0
-                for header_line in cursor:
+                for header_line in table_info_result:
                     column_name = header_line[1]
                     if column_name not in expected_column_names:
                         raise ValueError(
-                            f'unexpected column name {column_name} in table '
-                            f'{expected_table_name}')
+                            f'expected {column_name} in table '
+                            f'{expected_table_name} but not found')
                     header_count += 1
                 if header_count < len(expected_column_names):
                     raise ValueError(
                         f'found only {header_count} of an expected '
                         f'{len(expected_column_names)} columns in table '
                         f'{expected_table_name}')
-                if not cursor:
+                if not table_info_result:
                     raise ValueError(f'missing table {expected_table_name}')
-                cursor.close()
-
         except Exception:
             LOGGER.exception(
                 f'{taskgraph_database_path} exists, but is incompatable '
@@ -1617,6 +1619,8 @@ def _execute_sqlite(
             raise ValueError('Unknown mode: %s' % mode)
 
         if execute == 'execute':
+            if argument_list is None:
+                argument_list = []
             cursor = connection.execute(sqlite_command, argument_list)
         elif execute == 'script':
             cursor = connection.executescript(sqlite_command)
