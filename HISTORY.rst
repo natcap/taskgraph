@@ -12,6 +12,7 @@ Unreleased changes
   one.
 * Fixed issue that would cause some rare infinate loops if ``TaskGraph`` were
   to fail due to some kinds of task exceptions.
+* Adding open source BSD-3-Clause license.
 
 0.9.0 (2020-03-05)
 ------------------
