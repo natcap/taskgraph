@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-Unreleased changes
+0.9.1 (2020-06-04)
 ------------------
 * Fixed issue that would cause an infinite loop if a ``TaskGraph`` object were
   created with a database from an incompatible previous version. Behavior now
