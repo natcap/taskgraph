@@ -86,7 +86,7 @@ def _initialize_logging_to_queue(logging_queue):
     ``multiprocessing.Pool`` to establish logging from a Pool worker to the
     main python process via a multiprocessing Queue.
 
-    Parameters:
+    Args:
         logging_queue (multiprocessing.Queue): The queue to use for passing
             log records back to the main process.
 
@@ -110,7 +110,7 @@ def _initialize_logging_to_queue(logging_queue):
 
 
 def _create_taskgraph_table_schema(taskgraph_database_path):
-    """Create database exists and/or ensures it is compatable and recreate.
+    """Create database exists and/or ensures it is compatible and recreate.
 
     Args:
         taskgraph_database_path (str): path to an existing database or desired
@@ -184,10 +184,10 @@ def _create_taskgraph_table_schema(taskgraph_database_path):
                     raise ValueError(f'missing table {expected_table_name}')
         except Exception:
             # catch all "Exception"s because anything that goes wrong while
-            # checking the database should be considered a bad dabase and we
+            # checking the database should be considered a bad database and we
             # should make a new one.
             LOGGER.exception(
-                f'{taskgraph_database_path} exists, but is incompatable '
+                f'{taskgraph_database_path} exists, but is incompatible '
                 'somehow. Deleting and making a new one.')
             os.remove(taskgraph_database_path)
             table_valid = False
@@ -220,7 +220,7 @@ class TaskGraph(object):
         Creates an object for building task graphs, executing them,
         parallelizing independent work notes, and avoiding repeated calls.
 
-        Parameters:
+        Args:
             taskgraph_cache_dir_path (string): path to a directory that
                 either contains a taskgraph cache from a previous instance or
                 will create a new one if none exists.
@@ -537,7 +537,7 @@ class TaskGraph(object):
             transient_run=False):
         """Add a task to the task graph.
 
-        Parameters:
+        Args:
             func (callable): target function
             args (list): argument list for `func`
             kwargs (dict): keyword arguments for `func`
@@ -745,7 +745,7 @@ class TaskGraph(object):
     def _execution_monitor(self, monitor_wait_event):
         """Log state of taskgraph every `self._reporting_interval` seconds.
 
-        Parameters:
+        Args:
             monitor_wait_event (threading.Event): used to sleep the monitor
                 for `self._reporting_interval` seconds, or to wake up to
                 terminate for shutdown.
@@ -789,7 +789,7 @@ class TaskGraph(object):
     def join(self, timeout=None):
         """Join all threads in the graph.
 
-        Parameters:
+        Args:
             timeout (float): if not none will attempt to join subtasks with
                 this value. If a subtask times out, the whole function will
                 timeout.
@@ -885,7 +885,7 @@ class Task(object):
             task_database_path):
         """Make a Task.
 
-        Parameters:
+        Args:
             task_name (int): unique task id from the task graph.
             func (function): a function that takes the argument list
                 `args`
@@ -1345,7 +1345,7 @@ class Task(object):
         determined by a call to `.join()`. Otherwise will wait up to `timeout`
         seconds before raising a `RuntimeError` if exceeded.
 
-        Parameters:
+        Args:
             timeout (float): if not None this parameter is a floating point
                 number specifying a timeout for the operation in seconds.
 
@@ -1366,7 +1366,7 @@ def _get_file_stats(
         ignore_directories):
     """Return fingerprints of any filepaths in `base_value`.
 
-    Parameters:
+    Args:
         base_value: any python value. Any file paths in `base_value`
             should be "os.path.norm"ed before this function is called.
             contains filepaths in any nested structure.
@@ -1432,7 +1432,7 @@ def _filter_non_files(
         base_value, keep_list, ignore_list, keep_directories):
     """Remove any values that are files not in ignore list or directories.
 
-    Parameters:
+    Args:
         base_value: any python value. Any file paths in `base_value`
             should be "os.path.norm"ed before this function is called.
             contains filepaths in any nested structure.
@@ -1488,7 +1488,7 @@ def _scrub_task_args(base_value, target_path_list):
     This function can be called before the Task dependencies are satisfied
     since it doesn't inspect any file stats on disk.
 
-    Parameters:
+    Args:
         base_value: any python value
         target_path_list (list): a list of strings that if found in
             `base_value` should be replaced with 'in_target_path' so
@@ -1538,7 +1538,7 @@ def _scrub_task_args(base_value, target_path_list):
 def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """Return a hex digest of `file_path`.
 
-    Parameters:
+    Args:
         file_path (string): path to file to hash.
         hash_algorithm (string): a hash function id that exists in
             hashlib.algorithms_available or 'sizetimestamp'. If function id
@@ -1591,7 +1591,7 @@ def _execute_sqlite(
         mode='read_only', execute='execute', fetch=None):
     """Execute SQLite command and attempt retries on a failure.
 
-    Parameters:
+    Args:
         sqlite_command (str): a well formatted SQLite command.
         database_path (str): path to the SQLite database to operate on.
         argument_list (list): `execute == 'execute` then this list is passed to

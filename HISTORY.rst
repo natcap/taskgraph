@@ -6,11 +6,11 @@ TaskGraph Release History
 
 Unreleased changes
 ------------------
-* Fixed issue that would cause an infinate loop if a ``TaskGraph`` object were
-  created with a database from an incomptable previous version. Behavior now
-  is to log the issue, delete the old database, and create a new compatable
+* Fixed issue that would cause an infinite loop if a ``TaskGraph`` object were
+  created with a database from an incompatible previous version. Behavior now
+  is to log the issue, delete the old database, and create a new compatible
   one.
-* Fixed issue that would cause some rare infinate loops if ``TaskGraph`` were
+* Fixed issue that would cause some rare infinite loops if ``TaskGraph`` were
   to fail due to some kinds of task exceptions.
 * Adding open source BSD-3-Clause license.
 
