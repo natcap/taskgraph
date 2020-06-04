@@ -183,6 +183,9 @@ def _create_taskgraph_table_schema(taskgraph_database_path):
                 if not table_info_result:
                     raise ValueError(f'missing table {expected_table_name}')
         except Exception:
+            # catch all "Exception"s because anything that goes wrong while
+            # checking the database should be considered a bad dabase and we
+            # should make a new one.
             LOGGER.exception(
                 f'{taskgraph_database_path} exists, but is incompatable '
                 'somehow. Deleting and making a new one.')
