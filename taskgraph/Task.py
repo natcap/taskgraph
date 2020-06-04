@@ -1620,8 +1620,9 @@ def _execute_sqlite(
 
         if execute == 'execute':
             if argument_list is None:
-                argument_list = []
-            cursor = connection.execute(sqlite_command, argument_list)
+                cursor = connection.execute(sqlite_command)
+            else:
+                cursor = connection.execute(sqlite_command, argument_list)
         elif execute == 'script':
             cursor = connection.executescript(sqlite_command)
         else:
