@@ -409,7 +409,7 @@ class TaskGraph(object):
                         x = self._logging_queue.get_nowait()
                         LOGGER.debug(
                             "the logging queue had this in it: %s", x)
-                    except queue.Empty:
+                    except Exception:
                         break
 
             self._taskgraph_started_event.set()
