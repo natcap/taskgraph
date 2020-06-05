@@ -386,6 +386,7 @@ class TaskGraph(object):
             self._terminated = True
             if self._n_workers > 0:
                 LOGGER.debug("shutting down workers")
+                self._worker_pool.close()
                 self._worker_pool.terminate()
                 # close down the log monitor thread
                 self._logging_queue.put(None)
@@ -455,8 +456,9 @@ class TaskGraph(object):
         self._taskgraph_started_event.wait()
         while True:
             # this event blocks until the task graph has signaled it wants
-            # the executors to read the state of the queue or a stop event
-            self._executor_ready_event.wait()
+            # the executors to read the state of the queue or a stop event or
+            # a timeout exceeded just to protect against a worst case deadlock
+            self._executor_ready_event.wait(_MAX_TIMEOUT)
             # this lock synchronizes changes between the queue and
             # executor_ready_event
             if self._terminated:
@@ -479,10 +481,11 @@ class TaskGraph(object):
                     # executor can terminate.
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
-                        "terminating executor %s." %
-                        threading.currentThread())
+                        "terminating executor %s." % threading.currentThread())
                     break
                 else:
+                    # there's still the possibility for work to be added or
+                    # still work in the pipeline
                     self._executor_ready_event.clear()
             if task is None:
                 continue
@@ -525,6 +528,10 @@ class TaskGraph(object):
                     # indicate to executors there is work to do
                     self._executor_ready_event.set()
             del self._task_dependent_map[task.task_name]
+            # this extra set ensures that recently emptied map won't get
+            # ignored by the exeuctor if no work is left to do and the graph is
+            # closed
+            self._executor_ready_event.set()
             LOGGER.debug("task %s done processing", task.task_name)
         LOGGER.debug("task executor shutting down")
 
@@ -853,6 +860,9 @@ class TaskGraph(object):
         if self._closed:
             return
         self._closed = True
+        # this wakes up all the executors and any that wouldn't otherwise
+        # have work to do will see there are no tasks left and terminate
+        self._executor_ready_event.set()
         LOGGER.debug("taskgraph closed")
 
     def _terminate(self):
@@ -868,6 +878,7 @@ class TaskGraph(object):
             task.task_done_executing_event.set()
 
         if self._worker_pool:
+            self._worker_pool.close()
             self._worker_pool.terminate()
 
         self._taskgraph_started_event.set()
