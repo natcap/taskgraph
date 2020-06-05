@@ -344,6 +344,7 @@ class TaskGraph(object):
             self._execution_monitor_thread.start()
 
         # launch executor threads
+        self._executor_thread_count = max(0, n_workers)
         for thread_id in range(max(1, n_workers)):
             task_executor_thread = threading.Thread(
                 target=self._task_executor,
