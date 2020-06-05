@@ -479,7 +479,14 @@ class TaskGraph(object):
                     # the task graph is signaling executors to stop,
                     # since the self._task_dependent_map is empty the
                     # executor can terminate.
-                    self._worker_pool.close()
+                    if self._executor_thread_count == 1 and self._worker_pool:
+                        # only the last executor should terminate the worker
+                        # pool, because otherwise who knows if it's still
+                        # executing anything
+                        self._worker_pool.close()
+                        self._worker_pool.terminate()
+                        self._worker_pool = None
+                    self._executor_thread_count -= 1
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
                         "terminating executor %s." % threading.currentThread())
