@@ -387,8 +387,10 @@ class TaskGraph(object):
             self._terminated = True
             if self._n_workers > 0:
                 LOGGER.debug("shutting down workers")
-                self._worker_pool.close()
-                self._worker_pool.terminate()
+                if self._worker_pool:
+                    self._worker_pool.close()
+                    self._worker_pool.terminate()
+                    self._worker_pool = None
                 # close down the log monitor thread
                 self._logging_queue.put(None)
                 timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
