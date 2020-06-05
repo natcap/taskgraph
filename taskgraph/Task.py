@@ -242,8 +242,6 @@ class TaskGraph(object):
 
         self._taskgraph_cache_dir_path = taskgraph_cache_dir_path
 
-        self._taskgraph_started_event = threading.Event()
-
         # this variable is used to print accurate representation of how many
         # tasks have been completed in the logging output.
         self._added_task_count = 0
@@ -385,19 +383,14 @@ class TaskGraph(object):
             # it's possible the global state is not well defined, so just in
             # case we'll wrap it all up in a try/except
             self._terminated = True
-            if self._n_workers > 0:
-                LOGGER.debug("shutting down workers")
-                if self._worker_pool:
-                    self._worker_pool.close()
-                    self._worker_pool.terminate()
-                    self._worker_pool = None
-                # close down the log monitor thread
-                self._logging_queue.put(None)
-                timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
-                if timedout:
-                    LOGGER.debug(
-                        '_logging_monitor_thread %s timed out',
-                        self._logging_monitor_thread)
+            if self._executor_ready_event:
+                # alert exeuctors to check that _terminated is True
+                self._executor_ready_event.set()
+            LOGGER.debug("shutting down workers")
+            if self._worker_pool:
+                self._worker_pool.close()
+                self._worker_pool.terminate()
+                self._worker_pool = None
 
             if self._logging_queue:
                 # Close down the logging monitor thread.
@@ -412,7 +405,6 @@ class TaskGraph(object):
                     except Exception:
                         break
 
-            self._taskgraph_started_event.set()
             if self._n_workers >= 0:
                 self._executor_ready_event.set()
                 for executor_thread in self._task_executor_thread_list:
@@ -455,8 +447,6 @@ class TaskGraph(object):
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
-        # this event blocks until the TaskGraph has signaled ready to execute
-        self._taskgraph_started_event.wait()
         while True:
             # this event blocks until the task graph has signaled it wants
             # the executors to read the state of the queue or a stop event or
@@ -668,8 +658,7 @@ class TaskGraph(object):
                 ignore_path_list, hash_target_files, ignore_directories,
                 transient_run, self._worker_pool,
                 self._taskgraph_cache_dir_path, priority, hash_algorithm,
-                copy_duplicate_artifact, self._taskgraph_started_event,
-                self._task_database_path)
+                copy_duplicate_artifact, self._task_database_path)
 
             self._task_name_map[new_task.task_name] = new_task
             # it may be this task was already created in an earlier call,
@@ -817,9 +806,6 @@ class TaskGraph(object):
 
         """
         LOGGER.debug("joining taskgraph")
-        # start delayed execution if necessary:
-        self._taskgraph_started_event.set()
-        # if single threaded, nothing to join.
         if self._n_workers < 0 or self._terminated:
             return True
         try:
@@ -892,7 +878,6 @@ class TaskGraph(object):
             self._worker_pool.close()
             self._worker_pool.terminate()
 
-        self._taskgraph_started_event.set()
         self._executor_ready_event.set()
 
 
@@ -903,8 +888,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, hash_target_files, ignore_directories,
             transient_run, worker_pool, cache_dir, priority, hash_algorithm,
-            copy_duplicate_artifact, taskgraph_started_event,
-            task_database_path):
+            copy_duplicate_artifact, task_database_path):
         """Make a Task.
 
         Args:
@@ -955,8 +939,6 @@ class Task(object):
                 than their positions in the target path list, the target
                 artifacts from a previously successful Task execution will
                 be copied to the new one.
-            taskgraph_started_event (Event): can be used to start the main
-                TaskGraph if it has not yet started in case a Task is joined.
             task_database_path (str): path to an SQLITE database that has
                 table named "taskgraph_data" with the three fields:
                     task_hash TEXT NOT NULL,
@@ -993,7 +975,6 @@ class Task(object):
         self._ignore_directories = ignore_directories
         self._transient_run = transient_run
         self._worker_pool = worker_pool
-        self._taskgraph_started_event = taskgraph_started_event
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
@@ -1349,9 +1330,6 @@ class Task(object):
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
-        self._taskgraph_started_event.set()
-        LOGGER.debug(
-            'started taskgraph %s', self._taskgraph_started_event.isSet())
         LOGGER.debug(
             "joining %s done executing: %s", self.task_name,
             self.task_done_executing_event)
