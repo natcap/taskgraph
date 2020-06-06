@@ -403,6 +403,11 @@ class TaskGraph(object):
                         LOGGER.debug(
                             "the logging queue had this in it: %s", x)
                     except Exception:
+                        # Normally this could be an empty Queue, but if the
+                        # TaskGraph were being terminated it's possible this
+                        # object is corrupt and we'd get a different kind
+                        # of exception like EOF. In any case we should always
+                        # terminate in the case of an Exception.
                         break
 
             if self._n_workers >= 0:
@@ -1637,7 +1642,6 @@ def _execute_sqlite(
         return result
     except Exception:
         LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
-        LOGGER.error(f"database_path exists: {os.path.exists(database_path)}")
         if cursor is not None:
             cursor.close()
         if connection is not None:
