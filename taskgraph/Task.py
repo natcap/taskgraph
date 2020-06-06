@@ -468,10 +468,11 @@ class TaskGraph(object):
             except queue.Empty:
                 # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
-                if self._closed and not self._task_dependent_map:
-                    # the task graph is signaling executors to stop,
-                    # since the self._task_dependent_map is empty the
-                    # executor can terminate.
+                if (self._closed and len(self._completed_task_names) ==
+                        self._added_task_count):
+                    # the graph is closed and there are as many completed tasks
+                    # as there are added tasks, so none left. The executor can
+                    # terminate.
                     if self._executor_thread_count == 1 and self._worker_pool:
                         # only the last executor should terminate the worker
                         # pool, because otherwise who knows if it's still
@@ -821,23 +822,6 @@ class TaskGraph(object):
                     LOGGER.info(
                         "task %s timed out in graph join", task.task_name)
                     return False
-            if self._closed and self._n_workers >= 0:
-                # we only have a task_manager if running in threaded mode
-                # wake executors so they can process that the taskgraph is
-                # closed and can shut down if there is no pending work
-                self._executor_ready_event.set()
-                self._terminated = True
-                if self._logging_queue:
-                    self._logging_queue.put(None)
-                    self._logging_monitor_thread.join(timeout)
-                if self._reporting_interval is not None:
-                    LOGGER.debug("joining _monitor_thread.")
-                    # wake up the execution monitor
-                    self._execution_monitor_wait_event.set()
-                    self._execution_monitor_thread.join(timeout)
-                for executor_task in self._task_executor_thread_list:
-                    executor_task.join(timeout)
-            LOGGER.debug('taskgraph terminated')
             return True
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -1647,6 +1631,7 @@ def _execute_sqlite(
         return result
     except Exception:
         LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
+        LOGGER.error(f"database_path exists: {os.path.exists(database_path)}")
         if cursor is not None:
             cursor.close()
         if connection is not None:
