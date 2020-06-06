@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+Unrleased Changes
+-----------------
+* Fixed several race conditions that could cause the ``TaskGraph`` object to
+  hang on an otherwise ordinary termination.
+
 0.9.1 (2020-06-04)
 ------------------
 * Fixed issue that would cause an infinite loop if a ``TaskGraph`` object were
