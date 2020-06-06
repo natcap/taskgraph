@@ -473,14 +473,20 @@ class TaskGraph(object):
                     # the graph is closed and there are as many completed tasks
                     # as there are added tasks, so none left. The executor can
                     # terminate.
-                    if self._executor_thread_count == 1 and self._worker_pool:
+                    self._executor_thread_count -= 1
+                    if self._executor_thread_count == 0 and self._worker_pool:
                         # only the last executor should terminate the worker
                         # pool, because otherwise who knows if it's still
                         # executing anything
-                        self._worker_pool.close()
-                        self._worker_pool.terminate()
-                        self._worker_pool = None
-                    self._executor_thread_count -= 1
+                        try:
+                            self._worker_pool.close()
+                            self._worker_pool.terminate()
+                            self._worker_pool = None
+                        except Exception:
+                            # there's the possibility for a race condition here
+                            # where anothe thread already closed the worker
+                            # pool, so just guard against it
+                            LOGGER.warn('worker pool was already closed')
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
                         "terminating executor %s." % threading.currentThread())
