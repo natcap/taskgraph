@@ -403,11 +403,13 @@ class TaskGraph(object):
                         LOGGER.debug(
                             "the logging queue had this in it: %s", x)
                     except Exception:
-                        # Normally this could be an empty Queue, but if the
-                        # TaskGraph were being terminated it's possible this
-                        # object is corrupt and we'd get a different kind
-                        # of exception like EOF. In any case we should always
-                        # terminate in the case of an Exception.
+                        LOGGER.exception(
+                            "Expected an empty logging queue, but if the "
+                            "TaskGraph were being terminated it's possible "
+                            "this object is corrupt and we'd get a different "
+                            "kind of exception like EOF. In any case we "
+                            "should always stop trying to drain the queue "
+                            "in the case of an Exception.")
                         break
 
             if self._n_workers >= 0:
