@@ -491,7 +491,7 @@ class TaskGraph(object):
                             self._worker_pool = None
                         except Exception:
                             # there's the possibility for a race condition here
-                            # where anothe thread already closed the worker
+                            # where another thread already closed the worker
                             # pool, so just guard against it
                             LOGGER.warn('worker pool was already closed')
                     LOGGER.debug(
@@ -544,7 +544,7 @@ class TaskGraph(object):
                     self._executor_ready_event.set()
             del self._task_dependent_map[task.task_name]
             # this extra set ensures that recently emptied map won't get
-            # ignored by the exeuctor if no work is left to do and the graph is
+            # ignored by the executor if no work is left to do and the graph is
             # closed
             self._executor_ready_event.set()
             LOGGER.debug("task %s done processing", task.task_name)
