@@ -384,7 +384,7 @@ class TaskGraph(object):
             # case we'll wrap it all up in a try/except
             self._terminated = True
             if self._executor_ready_event:
-                # alert exeuctors to check that _terminated is True
+                # alert executors to check that _terminated is True
                 self._executor_ready_event.set()
             LOGGER.debug("shutting down workers")
             if self._worker_pool:
