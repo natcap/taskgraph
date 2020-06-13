@@ -242,8 +242,6 @@ class TaskGraph(object):
 
         self._taskgraph_cache_dir_path = taskgraph_cache_dir_path
 
-        self._taskgraph_started_event = threading.Event()
-
         # this variable is used to print accurate representation of how many
         # tasks have been completed in the logging output.
         self._added_task_count = 0
@@ -344,6 +342,7 @@ class TaskGraph(object):
             self._execution_monitor_thread.start()
 
         # launch executor threads
+        self._executor_thread_count = max(0, n_workers)
         for thread_id in range(max(1, n_workers)):
             task_executor_thread = threading.Thread(
                 target=self._task_executor,
@@ -384,16 +383,14 @@ class TaskGraph(object):
             # it's possible the global state is not well defined, so just in
             # case we'll wrap it all up in a try/except
             self._terminated = True
-            if self._n_workers > 0:
-                LOGGER.debug("shutting down workers")
+            if self._executor_ready_event:
+                # alert executors to check that _terminated is True
+                self._executor_ready_event.set()
+            LOGGER.debug("shutting down workers")
+            if self._worker_pool:
+                self._worker_pool.close()
                 self._worker_pool.terminate()
-                # close down the log monitor thread
-                self._logging_queue.put(None)
-                timedout = not self._logging_monitor_thread.join(_MAX_TIMEOUT)
-                if timedout:
-                    LOGGER.debug(
-                        '_logging_monitor_thread %s timed out',
-                        self._logging_monitor_thread)
+                self._worker_pool = None
 
             if self._logging_queue:
                 # Close down the logging monitor thread.
@@ -405,10 +402,16 @@ class TaskGraph(object):
                         x = self._logging_queue.get_nowait()
                         LOGGER.debug(
                             "the logging queue had this in it: %s", x)
-                    except queue.Empty:
+                    except Exception:
+                        LOGGER.exception(
+                            "Expected an empty logging queue, but if the "
+                            "TaskGraph were being terminated it's possible "
+                            "this object is corrupt and we'd get a different "
+                            "kind of exception like EOF. In any case we "
+                            "should always stop trying to drain the queue "
+                            "in the case of an Exception.")
                         break
 
-            self._taskgraph_started_event.set()
             if self._n_workers >= 0:
                 self._executor_ready_event.set()
                 for executor_thread in self._task_executor_thread_list:
@@ -451,12 +454,11 @@ class TaskGraph(object):
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
-        # this event blocks until the TaskGraph has signaled ready to execute
-        self._taskgraph_started_event.wait()
         while True:
             # this event blocks until the task graph has signaled it wants
-            # the executors to read the state of the queue or a stop event
-            self._executor_ready_event.wait()
+            # the executors to read the state of the queue or a stop event or
+            # a timeout exceeded just to protect against a worst case deadlock
+            self._executor_ready_event.wait(_MAX_TIMEOUT)
             # this lock synchronizes changes between the queue and
             # executor_ready_event
             if self._terminated:
@@ -473,16 +475,32 @@ class TaskGraph(object):
             except queue.Empty:
                 # no tasks are waiting could be because the taskgraph is
                 # closed or because the queue is just empty.
-                if self._closed and not self._task_dependent_map:
-                    # the task graph is signaling executors to stop,
-                    # since the self._task_dependent_map is empty the
-                    # executor can terminate.
+                if (self._closed and len(self._completed_task_names) ==
+                        self._added_task_count):
+                    # the graph is closed and there are as many completed tasks
+                    # as there are added tasks, so none left. The executor can
+                    # terminate.
+                    self._executor_thread_count -= 1
+                    if self._executor_thread_count == 0 and self._worker_pool:
+                        # only the last executor should terminate the worker
+                        # pool, because otherwise who knows if it's still
+                        # executing anything
+                        try:
+                            self._worker_pool.close()
+                            self._worker_pool.terminate()
+                            self._worker_pool = None
+                        except Exception:
+                            # there's the possibility for a race condition here
+                            # where another thread already closed the worker
+                            # pool, so just guard against it
+                            LOGGER.warn('worker pool was already closed')
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
-                        "terminating executor %s." %
-                        threading.currentThread())
+                        "terminating executor %s." % threading.currentThread())
                     break
                 else:
+                    # there's still the possibility for work to be added or
+                    # still work in the pipeline
                     self._executor_ready_event.clear()
             if task is None:
                 continue
@@ -525,6 +543,10 @@ class TaskGraph(object):
                     # indicate to executors there is work to do
                     self._executor_ready_event.set()
             del self._task_dependent_map[task.task_name]
+            # this extra set ensures that recently emptied map won't get
+            # ignored by the executor if no work is left to do and the graph is
+            # closed
+            self._executor_ready_event.set()
             LOGGER.debug("task %s done processing", task.task_name)
         LOGGER.debug("task executor shutting down")
 
@@ -650,8 +672,7 @@ class TaskGraph(object):
                 ignore_path_list, hash_target_files, ignore_directories,
                 transient_run, self._worker_pool,
                 self._taskgraph_cache_dir_path, priority, hash_algorithm,
-                copy_duplicate_artifact, self._taskgraph_started_event,
-                self._task_database_path)
+                copy_duplicate_artifact, self._task_database_path)
 
             self._task_name_map[new_task.task_name] = new_task
             # it may be this task was already created in an earlier call,
@@ -799,9 +820,6 @@ class TaskGraph(object):
 
         """
         LOGGER.debug("joining taskgraph")
-        # start delayed execution if necessary:
-        self._taskgraph_started_event.set()
-        # if single threaded, nothing to join.
         if self._n_workers < 0 or self._terminated:
             return True
         try:
@@ -817,23 +835,6 @@ class TaskGraph(object):
                     LOGGER.info(
                         "task %s timed out in graph join", task.task_name)
                     return False
-            if self._closed and self._n_workers >= 0:
-                # we only have a task_manager if running in threaded mode
-                # wake executors so they can process that the taskgraph is
-                # closed and can shut down if there is no pending work
-                self._executor_ready_event.set()
-                self._terminated = True
-                if self._logging_queue:
-                    self._logging_queue.put(None)
-                    self._logging_monitor_thread.join(timeout)
-                if self._reporting_interval is not None:
-                    LOGGER.debug("joining _monitor_thread.")
-                    # wake up the execution monitor
-                    self._execution_monitor_wait_event.set()
-                    self._execution_monitor_thread.join(timeout)
-                for executor_task in self._task_executor_thread_list:
-                    executor_task.join(timeout)
-            LOGGER.debug('taskgraph terminated')
             return True
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -853,6 +854,9 @@ class TaskGraph(object):
         if self._closed:
             return
         self._closed = True
+        # this wakes up all the executors and any that wouldn't otherwise
+        # have work to do will see there are no tasks left and terminate
+        self._executor_ready_event.set()
         LOGGER.debug("taskgraph closed")
 
     def _terminate(self):
@@ -868,9 +872,9 @@ class TaskGraph(object):
             task.task_done_executing_event.set()
 
         if self._worker_pool:
+            self._worker_pool.close()
             self._worker_pool.terminate()
 
-        self._taskgraph_started_event.set()
         self._executor_ready_event.set()
 
 
@@ -881,8 +885,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, hash_target_files, ignore_directories,
             transient_run, worker_pool, cache_dir, priority, hash_algorithm,
-            copy_duplicate_artifact, taskgraph_started_event,
-            task_database_path):
+            copy_duplicate_artifact, task_database_path):
         """Make a Task.
 
         Args:
@@ -933,8 +936,6 @@ class Task(object):
                 than their positions in the target path list, the target
                 artifacts from a previously successful Task execution will
                 be copied to the new one.
-            taskgraph_started_event (Event): can be used to start the main
-                TaskGraph if it has not yet started in case a Task is joined.
             task_database_path (str): path to an SQLITE database that has
                 table named "taskgraph_data" with the three fields:
                     task_hash TEXT NOT NULL,
@@ -971,7 +972,6 @@ class Task(object):
         self._ignore_directories = ignore_directories
         self._transient_run = transient_run
         self._worker_pool = worker_pool
-        self._taskgraph_started_event = taskgraph_started_event
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
@@ -1327,9 +1327,6 @@ class Task(object):
 
     def join(self, timeout=None):
         """Block until task is complete, raise exception if runtime failed."""
-        self._taskgraph_started_event.set()
-        LOGGER.debug(
-            'started taskgraph %s', self._taskgraph_started_event.isSet())
         LOGGER.debug(
             "joining %s done executing: %s", self.task_name,
             self.task_done_executing_event)
