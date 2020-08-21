@@ -981,7 +981,7 @@ class Task(object):
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
-        self.hardlink_allowed = hardlink_allowed
+        self._hardlink_allowed = hardlink_allowed
         self.exception_object = None
 
         # invert the priority since sorting goes smallest to largest and we
@@ -1151,7 +1151,7 @@ class Task(object):
                                     self._target_path_list):
                                 if artifact_target != new_target:
                                     target_linked = False
-                                    if self.hardlink_allowed:
+                                    if self._hardlink_allowed:
                                         # some OSes may not allow hardlinks
                                         # but we don't know unless we try
                                         try:
