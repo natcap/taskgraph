@@ -8,6 +8,8 @@ Unrleased Changes
 -----------------
 * Fixed several race conditions that could cause the ``TaskGraph`` object to
   hang on an otherwise ordinary termination.
+* Changed logging level to "INFO" on cases where the taskgraph was not
+  precalculated since it's an expected path of execution in ``TaskGraph``.
 
 0.9.1 (2020-06-04)
 ------------------
