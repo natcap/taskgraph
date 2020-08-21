@@ -556,7 +556,7 @@ class TaskGraph(object):
             hash_target_files=True, dependent_task_list=None,
             ignore_directories=True, priority=0,
             hash_algorithm='sizetimestamp', copy_duplicate_artifact=False,
-            transient_run=False):
+            transient_run=False, store_result=False):
         """Add a task to the task graph.
 
         Args:
@@ -619,6 +619,9 @@ class TaskGraph(object):
                 to the same object it will not be re-run in any scenario.
                 Otherwise if False, subsequent tasks with an identical
                 execution hash will be skipped.
+            store_result (bool): If True, the result of ``func`` will be stored
+                in the TaskGraph database and retrieveable with a call to
+                ``.get()`` on a ``Task`` object.
 
         Returns:
             Task which was just added to the graph or an existing Task that
@@ -672,7 +675,8 @@ class TaskGraph(object):
                 ignore_path_list, hash_target_files, ignore_directories,
                 transient_run, self._worker_pool,
                 self._taskgraph_cache_dir_path, priority, hash_algorithm,
-                copy_duplicate_artifact, self._task_database_path)
+                copy_duplicate_artifact, store_result,
+                self._task_database_path)
 
             self._task_name_map[new_task.task_name] = new_task
             # it may be this task was already created in an earlier call,
@@ -885,7 +889,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, hash_target_files, ignore_directories,
             transient_run, worker_pool, cache_dir, priority, hash_algorithm,
-            copy_duplicate_artifact, task_database_path):
+            copy_duplicate_artifact, store_result, task_database_path):
         """Make a Task.
 
         Args:
@@ -936,6 +940,9 @@ class Task(object):
                 than their positions in the target path list, the target
                 artifacts from a previously successful Task execution will
                 be copied to the new one.
+            store_result (bool): If true, the result of ``func`` will be
+                stored in the TaskGraph database and retrievable with a call
+                to ``.get()`` on the Task object.
             task_database_path (str): path to an SQLITE database that has
                 table named "taskgraph_data" with the three fields:
                     task_hash TEXT NOT NULL,
@@ -975,6 +982,7 @@ class Task(object):
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
+        self._store_result = store_result
         self.exception_object = None
 
         # invert the priority since sorting goes smallest to largest and we
@@ -1168,10 +1176,12 @@ class Task(object):
                 # the following blocks and raises an exception if result
                 # raised an exception
                 LOGGER.debug("apply_async for task %s", self.task_name)
-                self._result = result.get()
+                payload = result.get()
             else:
                 LOGGER.debug("direct _func for task %s", self.task_name)
-                self._result = self._func(*self._args, **self._kwargs)
+                payload = self._func(*self._args, **self._kwargs)
+            if self._store_result:
+                self._result = payload
 
         # check that the target paths exist and record stats for later
         if not self._hash_target_files:
@@ -1250,10 +1260,11 @@ class Task(object):
         self._reexecution_info['file_stat_list'] = file_stat_list
         self._reexecution_info['other_arguments'] = other_arguments
 
-        reexecution_string = '%s:%s:%s:%s' % (
+        reexecution_string = '%s:%s:%s:%s:%s' % (
             self._reexecution_info['func_name'],
             self._reexecution_info['source_code_hash'],
             self._reexecution_info['other_arguments'],
+            self._store_result,
             # the x[2] is to only take the *hash* part of the 'file_stat'
             str([x[2] for x in file_stat_list]))
 
@@ -1318,7 +1329,8 @@ class Task(object):
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
                 return False
-            self._result = pickle.loads(database_result[1])
+            if self._store_result:
+                self._result = pickle.loads(database_result[1])
             LOGGER.debug("precalculated (%s)" % self)
             return True
         except EOFError:
@@ -1336,11 +1348,11 @@ class Task(object):
         return successful_wait
 
     def get(self, timeout=None):
-        """Return the result of the `func` once it is ready.
+        """Return the result of the ``func`` once it is ready.
 
-        If `timeout` is None, this call blocks until the task is complete
-        determined by a call to `.join()`. Otherwise will wait up to `timeout`
-        seconds before raising a `RuntimeError` if exceeded.
+        If ``timeout`` is None, this call blocks until the task is complete
+        determined by a call to ``.join()``. Otherwise will wait up to
+        ``timeout`` seconds before raising a `RuntimeError` if exceeded.
 
         Args:
             timeout (float): if not None this parameter is a floating point
@@ -1348,10 +1360,17 @@ class Task(object):
 
         Returns:
             value of the result
+
         Raises:
-            RuntimeError when `timeout` exceeded.
+            RuntimeError when ``timeout`` exceeded.
+            ValueError if ``store_result`` was set to ``False`` when the task
+                was created.
 
         """
+        if not self._store_result:
+            raise ValueError(
+                'must set `store_result` to True in `add_task` to invoke this '
+                'function')
         timeout = not self.join(timeout)
         if timeout:
             raise RuntimeError('call to get timed out')

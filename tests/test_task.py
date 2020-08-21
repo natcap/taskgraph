@@ -1334,6 +1334,17 @@ class TaskGraphTests(unittest.TestCase):
             task_a._task_id_hash, task_b._task_id_hash,
             "task ids should be different since the filenames are different")
 
+    def test_return_value_no_record(self):
+        """TaskGraph: test that `get` raises exception if not set to record."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        value_task = task_graph.add_task(
+            func=_noop_function,
+            store_result=False)
+
+        # get wil raise a ValueError because store_result is not True
+        with self.assertRaises(ValueError):
+            _ = value_task.get()
+
     def test_return_value(self):
         """TaskGraph: test that `.get` behavior works as expected."""
         n_iterations = 3
@@ -1345,6 +1356,7 @@ class TaskGraphTests(unittest.TestCase):
             value_task = task_graph.add_task(
                 func=_return_value_once,
                 transient_run=transient_run,
+                store_result=True,
                 args=(expected_value,))
             value = value_task.get()
             self.assertEqual(value, expected_value)
@@ -1362,6 +1374,7 @@ class TaskGraphTests(unittest.TestCase):
                 value_task = task_graph.add_task(
                     func=_return_value_once,
                     transient_run=True,
+                    store_result=True,
                     args=(expected_value,))
                 value = value_task.get()
                 self.assertEqual(value, expected_value)
@@ -1370,6 +1383,7 @@ class TaskGraphTests(unittest.TestCase):
                     value_task = task_graph.add_task(
                         func=_return_value_once,
                         transient_run=True,
+                        store_result=True,
                         args=(expected_value,))
                     value = value_task.get()
 
