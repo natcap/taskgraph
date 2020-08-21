@@ -556,7 +556,7 @@ class TaskGraph(object):
             hash_target_files=True, dependent_task_list=None,
             ignore_directories=True, priority=0,
             hash_algorithm='sizetimestamp', copy_duplicate_artifact=False,
-            transient_run=False):
+            hardlink_allowed=False, transient_run=False):
         """Add a task to the task graph.
 
         Args:
@@ -613,6 +613,8 @@ class TaskGraph(object):
                 than their positions in the target path list, the target
                 artifacts from a previously successful Task execution will
                 be copied to the new one.
+            hardlink_allowed (bool): if ``copy_duplicate_artifact`` is True,
+                this will allow a hardlink rather than a copy when needed.
             transient_run (bool): if True a call with an identical execution
                 hash will be reexecuted on a subsequent instantiation of a
                 future TaskGraph object. If a duplicate task is submitted
@@ -672,7 +674,8 @@ class TaskGraph(object):
                 ignore_path_list, hash_target_files, ignore_directories,
                 transient_run, self._worker_pool,
                 self._taskgraph_cache_dir_path, priority, hash_algorithm,
-                copy_duplicate_artifact, self._task_database_path)
+                copy_duplicate_artifact, hardlink_allowed,
+                self._task_database_path)
 
             self._task_name_map[new_task.task_name] = new_task
             # it may be this task was already created in an earlier call,
@@ -885,7 +888,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, hash_target_files, ignore_directories,
             transient_run, worker_pool, cache_dir, priority, hash_algorithm,
-            copy_duplicate_artifact, task_database_path):
+            copy_duplicate_artifact, hardlink_allowed, task_database_path):
         """Make a Task.
 
         Args:
@@ -936,6 +939,9 @@ class Task(object):
                 than their positions in the target path list, the target
                 artifacts from a previously successful Task execution will
                 be copied to the new one.
+            hardlink_allowed (bool): if ``copy_duplicate_artifact`` is True,
+                this allows taskgraph to create a hardlink rather than make a
+                direct copy.
             task_database_path (str): path to an SQLITE database that has
                 table named "taskgraph_data" with the three fields:
                     task_hash TEXT NOT NULL,
@@ -975,6 +981,7 @@ class Task(object):
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
         self._copy_duplicate_artifact = copy_duplicate_artifact
+        self.hardlink_allowed = hardlink_allowed
         self.exception_object = None
 
         # invert the priority since sorting goes smallest to largest and we
@@ -1143,8 +1150,24 @@ class Task(object):
                                     result_target_path_stats,
                                     self._target_path_list):
                                 if artifact_target != new_target:
-                                    shutil.copyfile(
-                                        artifact_target[0], new_target)
+                                    target_linked = False
+                                    if self.hardlink_allowed:
+                                        # some OSes may not allow hardlinks
+                                        # but we don't know unless we try
+                                        try:
+                                            os.link(
+                                                artifact_target[0], new_target)
+                                            target_linked = True
+                                        except Exception:
+                                            LOGGER.exception(
+                                                f'failed to os.link '
+                                                f'{artifact_target[0]} to '
+                                                f'{new_target}')
+                                    # this is the default if either no hardlink
+                                    # allowed or a hardlink failed
+                                    if not target_linked:
+                                        shutil.copyfile(
+                                            artifact_target[0], new_target)
                                 else:
                                     # This is a bug if this ever happens, and
                                     # so bad if it does I want to stop and

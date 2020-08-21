@@ -8,6 +8,10 @@ Unrleased Changes
 -----------------
 * Fixed several race conditions that could cause the ``TaskGraph`` object to
   hang on an otherwise ordinary termination.
+* Adding a ``hardlink_allowed`` parameter to ``add_task`` that allows the
+  attempt to hardlink a file in a case where a ``copy_artifact=True`` may
+  permit one. This will save on disk space as well as computation time
+  if large files are not needed to copy.
 
 0.9.1 (2020-06-04)
 ------------------

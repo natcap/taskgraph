@@ -1030,7 +1030,6 @@ class TaskGraphTests(unittest.TestCase):
             result_contents = result_file.read()
         self.assertEqual('testupdated', result_contents)
 
-
     def test_duplicate_call_modify_timestamp(self):
         """TaskGraph: test that duplicate call modified stamp recompute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
@@ -1158,6 +1157,8 @@ class TaskGraphTests(unittest.TestCase):
         target_b_path = os.path.join(self.workspace_dir, 'testb.txt')
         target_c_path = os.path.join(self.workspace_dir, 'testc.txt')
         target_d_path = os.path.join(self.workspace_dir, 'testd.txt')
+        target_e_path = os.path.join(self.workspace_dir, 'teste.txt')
+        target_f_path = os.path.join(self.workspace_dir, 'testf.txt')
 
         test_string = 'test string'
         with open(base_path, 'w') as base_file:
@@ -1168,18 +1169,32 @@ class TaskGraphTests(unittest.TestCase):
             args=(base_path, target_a_path, target_b_path),
             copy_duplicate_artifact=True,
             hash_algorithm='md5',
-            target_path_list=[target_a_path, target_b_path])
-        # this task should copy b to c but not a to a.
+            target_path_list=[target_a_path, target_b_path],
+            task_name='copy file ab')
+
+        # this task should copy a to c and b to d
         _ = task_graph.add_task(
             func=_copy_two_files_once,
             args=(base_path, target_c_path, target_d_path),
             copy_duplicate_artifact=True,
             hash_algorithm='md5',
-            target_path_list=[target_c_path, target_d_path])
+            target_path_list=[target_c_path, target_d_path],
+            task_name='copy file cd')
+
+        # this task should hardlink a to e and b to f if allowed on this OS
+        _ = task_graph.add_task(
+            func=_copy_two_files_once,
+            args=(base_path, target_e_path, target_f_path),
+            copy_duplicate_artifact=True,
+            hardlink_allowed=True,
+            hash_algorithm='md5',
+            target_path_list=[target_e_path, target_f_path],
+            task_name='copy file ef')
         task_graph.close()
         task_graph.join()
 
-        for path in (target_a_path, target_b_path, target_c_path):
+        for path in (target_a_path, target_b_path, target_c_path,
+                     target_e_path, target_f_path):
             with open(path, 'r') as target_file:
                 contents = target_file.read()
             self.assertEqual(contents, test_string)
