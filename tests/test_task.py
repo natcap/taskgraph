@@ -1435,6 +1435,19 @@ class TaskGraphTests(unittest.TestCase):
                         'taskgraph_data ')
             self.assertEqual(len(result), len(expected_column_name_list))
 
+    def test_terminate_log(self):
+        """TaskGraph: test that the logger thread terminates on .join."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1, 5.0)
+        _ = task_graph.add_task()
+        task_graph.join()
+        # logger should not terminate until after join
+        task_graph._logging_monitor_thread.join(0.001)
+        self.assertTrue(task_graph._logging_monitor_thread.is_alive())
+        task_graph.close()
+        task_graph.join()
+        task_graph._logging_monitor_thread.join(5)
+        self.assertFalse(task_graph._logging_monitor_thread.is_alive())
+
 
 def Fail(n_tries, result_path):
     """Create a function that fails after `n_tries`."""

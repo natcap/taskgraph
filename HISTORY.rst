@@ -8,6 +8,8 @@ Unrleased Changes
 -----------------
 * Fixed several race conditions that could cause the ``TaskGraph`` object to
   hang on an otherwise ordinary termination.
+* Fixed issue that would cause the logger thread to continue reporting status
+  after all tasks were complete and the graph was closed.
 
 0.9.1 (2020-06-04)
 ------------------

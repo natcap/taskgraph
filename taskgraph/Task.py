@@ -79,6 +79,11 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
 
 
+def _null_func():
+    """Used when func=None on add_task."""
+    return None
+
+
 def _initialize_logging_to_queue(logging_queue):
     """Add a synchronized queue to a new process.
 
@@ -656,7 +661,7 @@ class TaskGraph(object):
             if ignore_path_list is None:
                 ignore_path_list = []
             if func is None:
-                def func(): return None
+                func = _null_func
 
             # this is a pretty common error to accidentally not pass a
             # Task to the dependent task list.
