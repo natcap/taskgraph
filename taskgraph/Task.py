@@ -840,7 +840,7 @@ class TaskGraph(object):
                     LOGGER.info(
                         "task %s timed out in graph join", task.task_name)
                     return False
-            if self._logging_queue:
+            if self._closed and self._logging_queue:
                 # Close down the logging monitor thread.
                 self._logging_queue.put(None)
             return True
