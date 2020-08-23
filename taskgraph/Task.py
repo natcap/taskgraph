@@ -841,8 +841,8 @@ class TaskGraph(object):
                         "task %s timed out in graph join", task.task_name)
                     return False
             if self._closed and self._logging_queue:
-                # Close down the logging monitor thread.
-                self._logging_queue.put(None)
+                # Close down the taskgraph
+                self._terminate()
             return True
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -874,6 +874,9 @@ class TaskGraph(object):
         if self._terminated:
             return
         self._terminated = True
+
+        if self._logging_queue:
+            self._logging_queue.put(None)
 
         for task in self._task_hash_map.values():
             LOGGER.debug("setting task done for %s", task.task_name)

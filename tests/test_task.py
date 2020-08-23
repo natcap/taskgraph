@@ -1445,12 +1445,17 @@ class TaskGraphTests(unittest.TestCase):
         # to have a chance to close, but not so long the test hangs
         task_graph._logging_monitor_thread.join(0.1)
         self.assertTrue(task_graph._logging_monitor_thread.is_alive())
+        task_graph._execution_monitor_thread.join(0.1)
+        self.assertTrue(task_graph._execution_monitor_thread.is_alive())
 
         task_graph.close()
         task_graph.join()
+
         # 5 seconds should be way too much time to expect the thread to join
         task_graph._logging_monitor_thread.join(5)
         self.assertFalse(task_graph._logging_monitor_thread.is_alive())
+        task_graph._execution_monitor_thread.join(5)
+        self.assertFalse(task_graph._execution_monitor_thread.is_alive())
 
 
 def Fail(n_tries, result_path):
