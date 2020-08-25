@@ -12,7 +12,8 @@ Unrleased Changes
   the ``func`` result in the database for later ``.get``. This was added to
   guard against return types that were not picklable and would otherwise
   cause an exception when being executed normally.
-
+* Fixed issue that would cause the logger thread to continue reporting status
+  after all tasks were complete and the graph was closed.
 
 0.9.1 (2020-06-04)
 ------------------
