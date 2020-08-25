@@ -35,12 +35,12 @@ def _noop_function(**kwargs):
 
 
 def _long_running_function(delay):
-    """Wait for `delay` seconds."""
+    """Wait for ``delay`` seconds."""
     time.sleep(delay)
 
 
 def _create_two_files_on_disk(value, target_a_path, target_b_path):
-    """Create two files and write `value` and append if possible."""
+    """Create two files and write ``value`` and append if possible."""
     with open(target_a_path, 'a') as a_file:
         a_file.write(value)
 
@@ -57,18 +57,18 @@ def _merge_and_append_files(base_a_path, base_b_path, target_path):
 
 
 def _create_list_on_disk(value, length, target_path=None):
-    """Create a numpy array on disk filled with value of `size`."""
+    """Create a numpy array on disk filled with value of ``size``."""
     target_list = [value] * length
     pickle.dump(target_list, open(target_path, 'wb'))
 
 
 def _call_it(target, *args):
-    """Invoke `target` with `args`."""
+    """Invoke ``target`` with ``args``."""
     target(*args)
 
 
 def _append_val(path, *val):
-    """Append a `val` to file at `path`."""
+    """Append a ``val`` to file at ``path``."""
     with open(path, 'a') as target_file:
         for v in val:
             target_file.write(str(v))
@@ -124,7 +124,7 @@ def _copy_two_files_once(base_path, target_a_path, target_b_path):
 def _log_from_another_process(logger_name, log_message):
     """Write a log message to a given logger.
 
-    Parameters:
+    Args:
         logger_name (string): The string logger name to which ``log_message``
             will be logged.
         log_message (string): The string log message to be logged (at INFO
@@ -231,8 +231,8 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: test that relative path equates to absolute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
 
-        target_a_path = os.path.relpath(
-            os.path.join(self.workspace_dir, 'a.txt'), start=self.workspace_dir)
+        target_a_path = os.path.relpath(os.path.join(
+            self.workspace_dir, 'a.txt'), start=self.workspace_dir)
         target_b_path = os.path.abspath(target_a_path)
 
         _ = task_graph.add_task(
@@ -845,7 +845,7 @@ class TaskGraphTests(unittest.TestCase):
 
         # this causes the address to change
         def _append_val(path, *val):
-            """Append a `val` to file at `path`."""
+            """Append a ``val`` to file at ``path``."""
             with open(path, 'a') as target_file:
                 for v in val:
                     target_file.write(str(v))
@@ -1030,7 +1030,6 @@ class TaskGraphTests(unittest.TestCase):
             result_contents = result_file.read()
         self.assertEqual('testupdated', result_contents)
 
-
     def test_duplicate_call_modify_timestamp(self):
         """TaskGraph: test that duplicate call modified stamp recompute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
@@ -1158,6 +1157,8 @@ class TaskGraphTests(unittest.TestCase):
         target_b_path = os.path.join(self.workspace_dir, 'testb.txt')
         target_c_path = os.path.join(self.workspace_dir, 'testc.txt')
         target_d_path = os.path.join(self.workspace_dir, 'testd.txt')
+        target_e_path = os.path.join(self.workspace_dir, 'teste.txt')
+        target_f_path = os.path.join(self.workspace_dir, 'testf.txt')
 
         test_string = 'test string'
         with open(base_path, 'w') as base_file:
@@ -1168,18 +1169,32 @@ class TaskGraphTests(unittest.TestCase):
             args=(base_path, target_a_path, target_b_path),
             copy_duplicate_artifact=True,
             hash_algorithm='md5',
-            target_path_list=[target_a_path, target_b_path])
-        # this task should copy b to c but not a to a.
+            target_path_list=[target_a_path, target_b_path],
+            task_name='copy file ab')
+
+        # this task should copy a to c and b to d
         _ = task_graph.add_task(
             func=_copy_two_files_once,
             args=(base_path, target_c_path, target_d_path),
             copy_duplicate_artifact=True,
             hash_algorithm='md5',
-            target_path_list=[target_c_path, target_d_path])
+            target_path_list=[target_c_path, target_d_path],
+            task_name='copy file cd')
+
+        # this task should hardlink a to e and b to f if allowed on this OS
+        _ = task_graph.add_task(
+            func=_copy_two_files_once,
+            args=(base_path, target_e_path, target_f_path),
+            copy_duplicate_artifact=True,
+            hardlink_allowed=True,
+            hash_algorithm='md5',
+            target_path_list=[target_e_path, target_f_path],
+            task_name='copy file ef')
         task_graph.close()
         task_graph.join()
 
-        for path in (target_a_path, target_b_path, target_c_path):
+        for path in (target_a_path, target_b_path, target_c_path,
+                     target_e_path, target_f_path):
             with open(path, 'r') as target_file:
                 contents = target_file.read()
             self.assertEqual(contents, test_string)
@@ -1334,8 +1349,22 @@ class TaskGraphTests(unittest.TestCase):
             task_a._task_id_hash, task_b._task_id_hash,
             "task ids should be different since the filenames are different")
 
+    def test_return_value_no_record(self):
+        """TaskGraph: test  ``get`` raises exception if not set to record."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        value_task = task_graph.add_task(
+            func=_noop_function,
+            store_result=False)
+
+        # get wil raise a ValueError because store_result is not True
+        with self.assertRaises(ValueError) as cm:
+            _ = value_task.get()
+        expected_message = 'must set `store_result` to True in `add_task`'
+        actual_message = str(cm.exception)
+        self.assertTrue(expected_message in actual_message, actual_message)
+
     def test_return_value(self):
-        """TaskGraph: test that `.get` behavior works as expected."""
+        """TaskGraph: test that ``.get`` behavior works as expected."""
         n_iterations = 3
         for iteration_id in range(n_iterations):
             transient_run = iteration_id == n_iterations-1
@@ -1345,6 +1374,7 @@ class TaskGraphTests(unittest.TestCase):
             value_task = task_graph.add_task(
                 func=_return_value_once,
                 transient_run=transient_run,
+                store_result=True,
                 args=(expected_value,))
             value = value_task.get()
             self.assertEqual(value, expected_value)
@@ -1362,6 +1392,7 @@ class TaskGraphTests(unittest.TestCase):
                 value_task = task_graph.add_task(
                     func=_return_value_once,
                     transient_run=True,
+                    store_result=True,
                     args=(expected_value,))
                 value = value_task.get()
                 self.assertEqual(value, expected_value)
@@ -1370,6 +1401,7 @@ class TaskGraphTests(unittest.TestCase):
                     value_task = task_graph.add_task(
                         func=_return_value_once,
                         transient_run=True,
+                        store_result=True,
                         args=(expected_value,))
                     value = value_task.get()
 
@@ -1459,7 +1491,7 @@ class TaskGraphTests(unittest.TestCase):
 
 
 def Fail(n_tries, result_path):
-    """Create a function that fails after `n_tries`."""
+    """Create a function that fails after ``n_tries``."""
     def fail_func():
         fail_func._n_tries -= 1
         if fail_func._n_tries > 0:
