@@ -8,6 +8,10 @@ Unrleased Changes
 -----------------
 * Fixed several race conditions that could cause the ``TaskGraph`` object to
   hang on an otherwise ordinary termination.
+* Adding a ``store_result`` flag to ``add_task`` that conditionally stores
+  the ``func`` result in the database for later ``.get``. This was added to
+  guard against return types that were not picklable and would otherwise
+  cause an exception when being executed normally.
 * Fixed issue that would cause the logger thread to continue reporting status
   after all tasks were complete and the graph was closed.
 
