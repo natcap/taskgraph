@@ -4,8 +4,8 @@
 TaskGraph Release History
 =========================
 
-Unrleased Changes
------------------
+0.10.0 (2020-08-25)
+-------------------
 * Fixed several race conditions that could cause the ``TaskGraph`` object to
   hang on an otherwise ordinary termination.
 * Changed logging level to "INFO" on cases where the taskgraph was not
