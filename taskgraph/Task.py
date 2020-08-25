@@ -79,6 +79,11 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
 
 
+def _null_func():
+    """Used when func=None on add_task."""
+    return None
+
+
 def _initialize_logging_to_queue(logging_queue):
     """Add a synchronized queue to a new process.
 
@@ -658,7 +663,7 @@ class TaskGraph(object):
             if ignore_path_list is None:
                 ignore_path_list = []
             if func is None:
-                def func(): return None
+                func = _null_func
 
             # this is a pretty common error to accidentally not pass a
             # Task to the dependent task list.
@@ -838,6 +843,9 @@ class TaskGraph(object):
                     LOGGER.info(
                         "task %s timed out in graph join", task.task_name)
                     return False
+            if self._closed and self._logging_queue:
+                # Close down the taskgraph
+                self._terminate()
             return True
         except Exception:
             # If there's an exception on a join it means that a task failed
@@ -869,6 +877,9 @@ class TaskGraph(object):
         if self._terminated:
             return
         self._terminated = True
+
+        if self._logging_queue:
+            self._logging_queue.put(None)
 
         for task in self._task_hash_map.values():
             LOGGER.debug("setting task done for %s", task.task_name)

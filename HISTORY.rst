@@ -12,6 +12,8 @@ Unrleased Changes
   attempt to hardlink a file in a case where a ``copy_artifact=True`` may
   permit one. This will save on disk space as well as computation time
   if large files are not needed to copy.
+* Fixed issue that would cause the logger thread to continue reporting status
+  after all tasks were complete and the graph was closed.
 
 0.9.1 (2020-06-04)
 ------------------
