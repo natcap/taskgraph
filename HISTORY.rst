@@ -10,6 +10,8 @@ Unrleased Changes
   hang on an otherwise ordinary termination.
 * Changed logging level to "INFO" on cases where the taskgraph was not
   precalculated since it's an expected path of execution in ``TaskGraph``.
+* Fixed issue that would cause the logger thread to continue reporting status
+  after all tasks were complete and the graph was closed.
 
 0.9.1 (2020-06-04)
 ------------------
