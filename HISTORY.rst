@@ -8,6 +8,8 @@ Unrleased Changes
 -----------------
 * Fixed several race conditions that could cause the ``TaskGraph`` object to
   hang on an otherwise ordinary termination.
+* Changed logging level to "INFO" on cases where the taskgraph was not
+  precalculated since it's an expected path of execution in ``TaskGraph``.
 * Adding a ``hardlink_allowed`` parameter to ``add_task`` that allows the
   attempt to hardlink a file in a case where a ``copy_artifact=True`` may
   permit one. This will save on disk space as well as computation time

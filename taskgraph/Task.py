@@ -1365,7 +1365,7 @@ class Task(object):
                             "File hashes are different. cached: (%s) "
                             "actual: (%s)" % (hash_string, target_hash))
             if mismatched_target_file_list:
-                LOGGER.warning(
+                LOGGER.info(
                     "not precalculated (%s), Task hash exists, "
                     "but there are these mismatches: %s",
                     self.task_name, '\n'.join(mismatched_target_file_list))
