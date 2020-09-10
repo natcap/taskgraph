@@ -628,11 +628,11 @@ class TaskGraph(object):
             hardlink_allowed (bool): if ``copy_duplicate_artifact`` is True,
                 this will allow a hardlink rather than a copy when needed.
             transient_run (bool): if True a call with an identical execution
-                hash will be reexecuted on a subsequent instantiation of a
-                future TaskGraph object. If a duplicate task is submitted
+                hash will be reexecuted on the same or subsequent instantiation
+                of a TaskGraph object. If a duplicate task is submitted
                 to the same object it will not be re-run in any scenario.
-                Otherwise if False, subsequent tasks with an identical
-                execution hash will be skipped.
+                If False, subsequent tasks with an identical execution hash
+                will be skipped.
             store_result (bool): If True, the result of ``func`` will be stored
                 in the TaskGraph database and retrieveable with a call to
                 ``.get()`` on a ``Task`` object.

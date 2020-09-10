@@ -1368,6 +1368,25 @@ class TaskGraphTests(unittest.TestCase):
         if hasattr(_return_value_once, 'executed'):
             del _return_value_once.executed
         n_iterations = 3
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
+        for iteration_id in range(n_iterations):
+            transient_run = iteration_id == n_iterations-1
+            LOGGER.debug(iteration_id)
+            expected_value = 'a good value'
+            value_task = task_graph.add_task(
+                func=_return_value_once,
+                transient_run=transient_run,
+                store_result=True,
+                args=(expected_value,),
+                task_name=f'{expected_value} iter {iteration_id}')
+            value = value_task.get()
+            self.assertEqual(value, expected_value)
+        task_graph.close()
+        task_graph.join()
+        task_graph = None
+
+        # reset run
+        del _return_value_once.executed
         for iteration_id in range(n_iterations):
             LOGGER.debug(iteration_id)
             task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
@@ -1375,7 +1394,7 @@ class TaskGraphTests(unittest.TestCase):
             if iteration_id == 0:
                 value_task = task_graph.add_task(
                     func=_return_value_once,
-                    transient_run=False,
+                    transient_run=True,
                     store_result=True,
                     args=(expected_value,),
                     task_name=f'first re-run transient')
@@ -1388,7 +1407,7 @@ class TaskGraphTests(unittest.TestCase):
                         transient_run=True,
                         store_result=True,
                         args=(expected_value,),
-                        task_name=f'expected error on {iteration_id}')
+                        task_name=f'expected error {iteration_id}')
                     value = value_task.get()
 
             task_graph.close()
