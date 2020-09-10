@@ -603,7 +603,6 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_create_list_on_disk,
             args=(value, list_len),
-            transient_run=True,
             kwargs={
                 'target_path': target_path,
             })
@@ -617,6 +616,7 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph2.add_task(
             func=_create_list_on_disk,
             args=(value, list_len),
+            transient_run=True,
             kwargs={
                 'target_path': target_path,
             })
@@ -1365,25 +1365,9 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_return_value(self):
         """TaskGraph: test that ``.get`` behavior works as expected."""
+        if hasattr(_return_value_once, 'executed'):
+            del _return_value_once.executed
         n_iterations = 3
-        for iteration_id in range(n_iterations):
-            transient_run = iteration_id == n_iterations-1
-            LOGGER.debug(iteration_id)
-            task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
-            expected_value = 'a good value'
-            value_task = task_graph.add_task(
-                func=_return_value_once,
-                transient_run=transient_run,
-                store_result=True,
-                args=(expected_value,))
-            value = value_task.get()
-            self.assertEqual(value, expected_value)
-            task_graph.close()
-            task_graph.join()
-            task_graph = None
-
-        # reset run
-        del _return_value_once.executed
         for iteration_id in range(n_iterations):
             LOGGER.debug(iteration_id)
             task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
@@ -1391,9 +1375,10 @@ class TaskGraphTests(unittest.TestCase):
             if iteration_id == 0:
                 value_task = task_graph.add_task(
                     func=_return_value_once,
-                    transient_run=True,
+                    transient_run=False,
                     store_result=True,
-                    args=(expected_value,))
+                    args=(expected_value,),
+                    task_name=f'first re-run transient')
                 value = value_task.get()
                 self.assertEqual(value, expected_value)
             else:
@@ -1402,7 +1387,8 @@ class TaskGraphTests(unittest.TestCase):
                         func=_return_value_once,
                         transient_run=True,
                         store_result=True,
-                        args=(expected_value,))
+                        args=(expected_value,),
+                        task_name=f'expected error on {iteration_id}')
                     value = value_task.get()
 
             task_graph.close()

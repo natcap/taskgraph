@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Fixed an issue that would ignore the state of a ``transient_run`` flag if
+  a previous Task run had run it with that flag set to False.
+
 0.10.0 (2020-08-25)
 -------------------
 * Fixed several race conditions that could cause the ``TaskGraph`` object to
