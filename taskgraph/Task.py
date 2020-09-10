@@ -1138,7 +1138,7 @@ class Task(object):
 
         """
         LOGGER.debug("_call check if precalculated %s", self.task_name)
-        if self.is_precalculated():
+        if not self.transient_run and self.is_precalculated():
             self.task_done_executing_event.set()
             return
         LOGGER.debug("not precalculated %s", self.task_name)
