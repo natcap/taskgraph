@@ -627,14 +627,16 @@ class TaskGraph(object):
                 be copied to the new one.
             hardlink_allowed (bool): if ``copy_duplicate_artifact`` is True,
                 this will allow a hardlink rather than a copy when needed.
-            transient_run (bool): if True a call with an identical execution
-                hash will be reexecuted on a subsequent instantiation of a
-                future TaskGraph object. If a duplicate task is submitted
-                to the same object it will not be re-run in any scenario.
-                Otherwise if False, subsequent tasks with an identical
-                execution hash will be skipped.
+            transient_run (bool): if True, this Task will be reexecuted
+                even if it was successfully executed in a previous TaskGraph
+                instance. If False, this Task will be skipped if it was
+                executed successfully in a previous TaskGraph instance. One
+                might wish to set `transient_run` to True on a Task that does
+                some sort of initialization that's needed every time a
+                TaskGraph is instantiated. Perhaps to acquire dynamic resources
+                or authenticate permissions.
             store_result (bool): If True, the result of ``func`` will be stored
-                in the TaskGraph database and retrieveable with a call to
+                in the TaskGraph database and retrievable with a call to
                 ``.get()`` on a ``Task`` object.
 
         Returns:
@@ -1138,7 +1140,7 @@ class Task(object):
 
         """
         LOGGER.debug("_call check if precalculated %s", self.task_name)
-        if self.is_precalculated():
+        if not self._transient_run and self.is_precalculated():
             self.task_done_executing_event.set()
             return
         LOGGER.debug("not precalculated %s", self.task_name)
