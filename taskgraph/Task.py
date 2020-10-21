@@ -1643,8 +1643,8 @@ def _normalize_path(path):
 
 
 @retrying.retry(
-    wait_exponential_multiplier=100, wait_exponential_max=3200,
-    stop_max_attempt_number=5)
+    wait_exponential_multiplier=500, wait_exponential_max=3200,
+    stop_max_attempt_number=100)
 def _execute_sqlite(
         sqlite_command, database_path, argument_list=None,
         mode='read_only', execute='execute', fetch=None):
@@ -1704,6 +1704,10 @@ def _execute_sqlite(
         connection.commit()
         connection.close()
         return result
+    except sqlite3.OperationalError:
+        LOGGER.warning(
+            'TaskGraph database is locked because another process is using '
+            'it, waiting for a bit of time to try again')
     except Exception:
         LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
         if cursor is not None:
