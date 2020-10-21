@@ -8,6 +8,10 @@ Unreleased Changes
 ------------------
 * Fixed an issue that would ignore the state of a ``transient_run`` flag if
   a previous Task run had run it with that flag set to False.
+* Removed a limit on the number of times ``TaskGraph`` can attempt to update
+  its database up to 5 minutes of continuous failures. This is to address
+  expected issues when many parallel threads may compete for an update.
+  Relevant information about why the database update fails is logged.
 
 0.10.0 (2020-08-25)
 -------------------
