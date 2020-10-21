@@ -1708,11 +1708,13 @@ def _execute_sqlite(
         LOGGER.warning(
             'TaskGraph database is locked because another process is using '
             'it, waiting for a bit of time to try again')
+        raise
     except Exception:
         LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
+        raise
+    finally:
         if cursor is not None:
             cursor.close()
         if connection is not None:
             connection.commit()
             connection.close()
-        raise
