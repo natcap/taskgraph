@@ -1703,6 +1703,8 @@ def _execute_sqlite(
         cursor.close()
         connection.commit()
         connection.close()
+        cursor = None
+        connection = None
         return result
     except sqlite3.OperationalError:
         LOGGER.warning(
