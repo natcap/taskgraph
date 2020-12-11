@@ -4,8 +4,14 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
-------------------
+0.10.2 (2020-12-11)
+-------------------
+* Fixed an issue that would raise an exception when `__del__` was
+  deconstructing a taskgraph object and a thread ``join()`` would cause a
+  deadlock.
+
+0.10.1 (2020-12-11)
+-------------------
 * Fixed an issue that would ignore the state of a ``transient_run`` flag if
   a previous Task run had run it with that flag set to False.
 * Removed a limit on the number of times ``TaskGraph`` can attempt to update
@@ -14,9 +20,6 @@ Unreleased Changes
   Relevant information about why the database update fails is logged.
 * Fixed an issue where the logging queue would always report an exception
   even if the logging thread shut down correctly.
-* Fixed an issue that would raise an exception when `__del__` was
-  deconstructing a taskgraph object and a thread ``join()`` would cause a
-  deadlock.
 
 0.10.0 (2020-08-25)
 -------------------
