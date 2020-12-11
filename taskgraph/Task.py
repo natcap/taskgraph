@@ -329,7 +329,7 @@ class TaskGraph(object):
             ''', self._task_database_path, mode='read_only',
             fetch='one', argument_list=['version'])[0]
         if local_version != __version__:
-            LOGGER.warn(
+            LOGGER.warning(
                 f'the database located at {self._task_database_path} was '
                 f'created with TaskGraph version {local_version} but the '
                 f'current version is {__version__}')
@@ -394,16 +394,16 @@ class TaskGraph(object):
             # it's possible the global state is not well defined, so just in
             # case we'll wrap it all up in a try/except
             self._terminated = True
-            if self._executor_ready_event:
+            if self._executor_ready_event is not None:
                 # alert executors to check that _terminated is True
                 self._executor_ready_event.set()
             LOGGER.debug("shutting down workers")
-            if self._worker_pool:
+            if self._worker_pool is not None:
                 self._worker_pool.close()
                 self._worker_pool.terminate()
                 self._worker_pool = None
 
-            if self._logging_queue:
+            if self._logging_queue is not None:
                 # Close down the logging monitor thread.
                 self._logging_queue.put(None)
                 self._logging_monitor_thread.join(_MAX_TIMEOUT)
@@ -436,21 +436,28 @@ class TaskGraph(object):
                                 'task executor thread timed out %s',
                                 executor_thread)
                     except Exception:
-                        LOGGER.exception(
-                            "Exception when joining %s", executor_thread)
+                        LOGGER.warning(
+                            f'Joining executor thread {executor_thread} '
+                            f'would have caused a deadlock, skipping.')
                 if self._reporting_interval is not None:
                     LOGGER.debug("joining _monitor_thread.")
                     if self._logging_queue:
                         self._logging_queue.put(None)
                     self._execution_monitor_wait_event.set()
-                    self._execution_monitor_thread.join(_MAX_TIMEOUT)
-                    timedout = self._execution_monitor_thread.is_alive()
-                    if timedout:
-                        LOGGER.debug(
-                            '_monitor_thread %s timed out',
-                            self._execution_monitor_thread)
+                    try:
+                        self._execution_monitor_thread.join(_MAX_TIMEOUT)
+                        timedout = self._execution_monitor_thread.is_alive()
+                        if timedout:
+                            LOGGER.debug(
+                                '_monitor_thread %s timed out',
+                                self._execution_monitor_thread)
+                    except Exception:
+                        LOGGER.warning(
+                            'joining execution monitor thread '
+                            f'{self._execution_monitor_thread} would have '
+                            'caused a deadlock, skipping.')
                     for task in self._task_hash_map.values():
-                        # this is a shortcut to get the tasks to mark as joined
+                        # shortcut to get the tasks to mark as joined
                         task.task_done_executing_event.set()
 
             # drain the task ready queue if there's anything left
@@ -506,7 +513,7 @@ class TaskGraph(object):
                             # there's the possibility for a race condition here
                             # where another thread already closed the worker
                             # pool, so just guard against it
-                            LOGGER.warn('worker pool was already closed')
+                            LOGGER.warning('worker pool was already closed')
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
                         "terminating executor %s." % threading.currentThread())
@@ -1638,7 +1645,7 @@ def _normalize_path(path):
     except TypeError:
         # this occurs when encountering VERY long strings that might be
         # interpreted as paths
-        LOGGER.warn(
+        LOGGER.warning(
             "failed to abspath %s so returning normalized path instead")
         abs_path = norm_path
     return os.path.normcase(abs_path)
