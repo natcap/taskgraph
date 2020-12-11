@@ -394,16 +394,16 @@ class TaskGraph(object):
             # it's possible the global state is not well defined, so just in
             # case we'll wrap it all up in a try/except
             self._terminated = True
-            if self._executor_ready_event:
+            if self._executor_ready_event is not None:
                 # alert executors to check that _terminated is True
                 self._executor_ready_event.set()
             LOGGER.debug("shutting down workers")
-            if self._worker_pool:
+            if self._worker_pool is not None:
                 self._worker_pool.close()
                 self._worker_pool.terminate()
                 self._worker_pool = None
 
-            if self._logging_queue:
+            if self._logging_queue is not None:
                 # Close down the logging monitor thread.
                 self._logging_queue.put(None)
                 self._logging_monitor_thread.join(_MAX_TIMEOUT)
@@ -436,21 +436,28 @@ class TaskGraph(object):
                                 'task executor thread timed out %s',
                                 executor_thread)
                     except Exception:
-                        LOGGER.exception(
-                            "Exception when joining %s", executor_thread)
+                        LOGGER.warn(
+                            f'Joining executor thread {executor_thread} '
+                            f'would have caused a deadlock, skipping.')
                 if self._reporting_interval is not None:
                     LOGGER.debug("joining _monitor_thread.")
                     if self._logging_queue:
                         self._logging_queue.put(None)
                     self._execution_monitor_wait_event.set()
-                    self._execution_monitor_thread.join(_MAX_TIMEOUT)
-                    timedout = self._execution_monitor_thread.is_alive()
-                    if timedout:
-                        LOGGER.debug(
-                            '_monitor_thread %s timed out',
-                            self._execution_monitor_thread)
+                    try:
+                        self._execution_monitor_thread.join(_MAX_TIMEOUT)
+                        timedout = self._execution_monitor_thread.is_alive()
+                        if timedout:
+                            LOGGER.debug(
+                                '_monitor_thread %s timed out',
+                                self._execution_monitor_thread)
+                    except Exception:
+                        LOGGER.warn(
+                            'joining execution monitor thread '
+                            f'{self._execution_monitor_thread} would have '
+                            'caused a deadlock, skipping.')
                     for task in self._task_hash_map.values():
-                        # this is a shortcut to get the tasks to mark as joined
+                        # shortcut to get the tasks to mark as joined
                         task.task_done_executing_event.set()
 
             # drain the task ready queue if there's anything left
