@@ -12,6 +12,8 @@ Unreleased Changes
   its database up to 5 minutes of continuous failures. This is to address
   expected issues when many parallel threads may compete for an update.
   Relevant information about why the database update fails is logged.
+* Fixed an issue where the logging queue would always report an exception
+  even if the logging thread shut down correctly.
 
 0.10.0 (2020-08-25)
 -------------------
