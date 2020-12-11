@@ -14,6 +14,9 @@ Unreleased Changes
   Relevant information about why the database update fails is logged.
 * Fixed an issue where the logging queue would always report an exception
   even if the logging thread shut down correctly.
+* Fixed an issue that would raise an exception when `__del__` was
+  deconstructing a taskgraph object and a thread ``join()`` would cause a
+  deadlock.
 
 0.10.0 (2020-08-25)
 -------------------
