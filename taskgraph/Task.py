@@ -413,6 +413,8 @@ class TaskGraph(object):
                         x = self._logging_queue.get_nowait()
                         LOGGER.debug(
                             "the logging queue had this in it: %s", x)
+                    except queue.Empty:
+                        break
                     except Exception:
                         LOGGER.exception(
                             "Expected an empty logging queue, but if the "
