@@ -329,7 +329,7 @@ class TaskGraph(object):
             ''', self._task_database_path, mode='read_only',
             fetch='one', argument_list=['version'])[0]
         if local_version != __version__:
-            LOGGER.warn(
+            LOGGER.warning(
                 f'the database located at {self._task_database_path} was '
                 f'created with TaskGraph version {local_version} but the '
                 f'current version is {__version__}')
@@ -436,7 +436,7 @@ class TaskGraph(object):
                                 'task executor thread timed out %s',
                                 executor_thread)
                     except Exception:
-                        LOGGER.warn(
+                        LOGGER.warning(
                             f'Joining executor thread {executor_thread} '
                             f'would have caused a deadlock, skipping.')
                 if self._reporting_interval is not None:
@@ -452,7 +452,7 @@ class TaskGraph(object):
                                 '_monitor_thread %s timed out',
                                 self._execution_monitor_thread)
                     except Exception:
-                        LOGGER.warn(
+                        LOGGER.warning(
                             'joining execution monitor thread '
                             f'{self._execution_monitor_thread} would have '
                             'caused a deadlock, skipping.')
@@ -513,7 +513,7 @@ class TaskGraph(object):
                             # there's the possibility for a race condition here
                             # where another thread already closed the worker
                             # pool, so just guard against it
-                            LOGGER.warn('worker pool was already closed')
+                            LOGGER.warning('worker pool was already closed')
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
                         "terminating executor %s." % threading.currentThread())
@@ -1645,7 +1645,7 @@ def _normalize_path(path):
     except TypeError:
         # this occurs when encountering VERY long strings that might be
         # interpreted as paths
-        LOGGER.warn(
+        LOGGER.warning(
             "failed to abspath %s so returning normalized path instead")
         abs_path = norm_path
     return os.path.normcase(abs_path)
