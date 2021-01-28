@@ -5,6 +5,7 @@ import logging.handlers
 import multiprocessing
 import os
 import pickle
+import pathlib
 import re
 import shutil
 import sqlite3
@@ -1512,18 +1513,69 @@ class TaskGraphTests(unittest.TestCase):
     def test_filter_non_files(self):
         """TaskGraph: test internal filter non-files function."""
         from taskgraph.Task import _filter_non_files
+        from taskgraph.Task import _normalize_path
 
+        # Test a passthrough
         test_dict = {
             0: {'one': 0, 'two': 1, 'three': 2},
             1: {'one': 1, 'two': 2, 'three': 3},
             2: {'one': 2, 'two': 3, 'three': 4}}
+        self.assertEqual(
+            test_dict, _filter_non_files(test_dict, [], [], False))
+
+        # Test combination of files, not existing files, and flags in the
+        # call
+        test_file_a_exists = _normalize_path(os.path.join(
+            self.workspace_dir, 'exists_a.txt'))
+        pathlib.Path(test_file_a_exists).touch()
+        test_file_b_exists = _normalize_path(os.path.join(
+            self.workspace_dir, 'exists_b.txt'))
+        pathlib.Path(test_file_b_exists).touch()
+        test_file_not_a_exists = _normalize_path(os.path.join(
+            self.workspace_dir, 'does_not_exist_a.txt'))
+        test_file_not_b_exists = _normalize_path(os.path.join(
+            self.workspace_dir, 'does_not_exist_b.txt'))
+
+        test_dict = {
+            0: {'one': 0, 'two': 1, 'three': 2},
+            1: {'one': 1, 'two': 2, 'three': 3},
+            2: {'one': 2, 'two': 3, 'three': 4},
+            4: {'bar': test_file_not_a_exists},
+            5: {'foo': test_file_a_exists},
+            6: test_file_b_exists,
+            7: test_file_not_b_exists,
+            8: _normalize_path(self.workspace_dir)}
+
+        expected_result_dict = {
+            0: {'one': 0, 'two': 1, 'three': 2},
+            1: {'one': 1, 'two': 2, 'three': 3},
+            2: {'one': 2, 'two': 3, 'three': 4},
+            4: {'bar': test_file_not_a_exists},
+            5: {'foo': None},
+            6: test_file_b_exists,
+            7: None,
+            8: _normalize_path(self.workspace_dir)}
 
         self.assertEqual(
-            test_dict, _filter_non_files(test_dict, [], [], []))
+            _filter_non_files(
+                test_dict,
+                [test_file_b_exists],
+                [test_file_not_b_exists],
+                True),
+            expected_result_dict)
 
-        test_file_exists = os.path.join(
-            self.workspace, 'exists.txt')
-        pathlib.Path(test_file_exists).touch()
+        # and test same as above but don't keep directories:
+        expected_result_dict[8] = None
+        self.assertEqual(
+            _filter_non_files(
+                test_dict,
+                [test_file_b_exists],
+                [test_file_not_b_exists],
+                False),
+            expected_result_dict)
+
+
+
 
 
 def Fail(n_tries, result_path):

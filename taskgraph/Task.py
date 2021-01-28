@@ -1436,8 +1436,7 @@ def _get_file_stats(
 
     Args:
         base_value: any python value. Any file paths in ``base_value``
-            should be "os.path.norm"ed before this function is called.
-            contains filepaths in any nested structure.
+            should be processed with `_normalize_path`.
         hash_algorithm (string): either a hash function id that
             exists in hashlib.algorithms_available, 'exists', or
             'sizetimestamp'. Any paths to actual files in the arguments will be
@@ -1511,17 +1510,20 @@ def _filter_non_files(
             out.
 
     Return:
-        original``base_value`` with any nested file paths for files that
-        exist in the os.exists removed.
+        original ``base_value`` with any nested file paths for files that
+        exist in the os.exists set to ``None``.
 
     """
     if isinstance(base_value, _VALID_PATH_TYPES):
         try:
             norm_path = _normalize_path(base_value)
-            if norm_path not in ignore_list and (norm_path in keep_list or (
-                    os.path.isdir(norm_path) and keep_directories) or
-                    not os.path.isfile(norm_path)):
+            if norm_path not in ignore_list and (
+                    norm_path in keep_list or ((
+                        os.path.isdir(norm_path) and keep_directories) or (
+                        not os.path.isfile(norm_path) and
+                        not os.path.isdir(norm_path)))):
                 return norm_path
+            return None
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.
