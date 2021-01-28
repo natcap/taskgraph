@@ -4,6 +4,12 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Fixed issue that could cause combinatorial memory usage leading to poor
+  runtime or ``MemoryError`` if a dictionary were passed that had thousands
+  of elements.
+
 0.10.2 (2020-12-11)
 -------------------
 * Fixed an issue that would raise an exception when `__del__` was

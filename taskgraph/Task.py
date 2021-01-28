@@ -1302,7 +1302,6 @@ class Task(object):
             self._target_path_list,
             self._ignore_path_list,
             self._ignore_directories))
-
         LOGGER.debug("file_stat_list: %s", file_stat_list)
         LOGGER.debug("other_arguments: %s", other_arguments)
 
@@ -1533,9 +1532,11 @@ def _filter_non_files(
     elif isinstance(base_value, dict):
         for key in base_value.keys():
             value = base_value[key]
+            scrubbed_dict = {}
             for filter_value in _filter_non_files(
                     value, keep_list, ignore_list, keep_directories):
-                yield (value, filter_value)
+                scrubbed_dict[key] = filter_value
+            yield scrubbed_dict
     elif isinstance(base_value, (list, set, tuple)):
         for value in base_value:
             for filter_value in _filter_non_files(

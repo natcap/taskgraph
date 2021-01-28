@@ -1494,6 +1494,21 @@ class TaskGraphTests(unittest.TestCase):
         task_graph._execution_monitor_thread.join(5)
         self.assertFalse(task_graph._execution_monitor_thread.is_alive())
 
+    def test_dictionary_arguments(self):
+        """TaskGraph: test that large dictionary arguments behave well."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+        dict_arg = {}
+        x = {None: None}
+        for _ in range(10000):
+            dict_arg[_] = x
+
+        def my_op(dict_arg):
+            pass
+        task_graph.add_task(
+            func=my_op, args=(), kwargs={'dict_arg': dict_arg})
+        task_graph.join()
+        self.assertTrue(True, 'no memory error so everything is fine')
+
 
 def Fail(n_tries, result_path):
     """Create a function that fails after ``n_tries``."""
