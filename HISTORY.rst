@@ -9,6 +9,9 @@ Unreleased Changes
 * Fixed issue that could cause combinatorial memory usage leading to poor
   runtime or ``MemoryError`` if a dictionary were passed that had thousands
   of elements.
+* Fixed issue that would cause ``TaskGraph`` to not recognize a directory
+  that was meant to be ignored and in some cases cause ``Task``s to
+  unnecessarily reexecute.
 
 0.10.2 (2020-12-11)
 -------------------
