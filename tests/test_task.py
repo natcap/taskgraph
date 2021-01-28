@@ -1509,6 +1509,22 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.join()
         self.assertTrue(True, 'no memory error so everything is fine')
 
+    def test_filter_non_files(self):
+        """TaskGraph: test internal filter non-files function."""
+        from taskgraph.Task import _filter_non_files
+
+        test_dict = {
+            0: {'one': 0, 'two': 1, 'three': 2},
+            1: {'one': 1, 'two': 2, 'three': 3},
+            2: {'one': 2, 'two': 3, 'three': 4}}
+
+        self.assertEqual(
+            test_dict, _filter_non_files(test_dict, [], [], []))
+
+        test_file_exists = os.path.join(
+            self.workspace, 'exists.txt')
+        pathlib.Path(test_file_exists).touch()
+
 
 def Fail(n_tries, result_path):
     """Create a function that fails after ``n_tries``."""

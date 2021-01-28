@@ -1296,12 +1296,13 @@ class Task(object):
             self._target_path_list+self._ignore_path_list,
             self._ignore_directories))
 
-        other_arguments = list(_filter_non_files(
+        other_arguments = _filter_non_files(
             [self._reexecution_info['args_clean'],
              self._reexecution_info['kwargs_clean']],
             self._target_path_list,
             self._ignore_path_list,
-            self._ignore_directories))
+            self._ignore_directories)
+
         LOGGER.debug("file_stat_list: %s", file_stat_list)
         LOGGER.debug("other_arguments: %s", other_arguments)
 
@@ -1520,7 +1521,7 @@ def _filter_non_files(
             if norm_path not in ignore_list and (norm_path in keep_list or (
                     os.path.isdir(norm_path) and keep_directories) or
                     not os.path.isfile(norm_path)):
-                yield norm_path
+                return norm_path
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.
@@ -1530,20 +1531,18 @@ def _filter_non_files(
             LOGGER.exception(
                 "base_value couldn't be analyzed somehow '%s'", base_value)
     elif isinstance(base_value, dict):
-        for key in base_value.keys():
-            value = base_value[key]
-            scrubbed_dict = {}
-            for filter_value in _filter_non_files(
-                    value, keep_list, ignore_list, keep_directories):
-                scrubbed_dict[key] = filter_value
-            yield scrubbed_dict
+        return {
+            key: _filter_non_files(
+                value, keep_list, ignore_list, keep_directories)
+            for key, value in base_value.items()
+        }
     elif isinstance(base_value, (list, set, tuple)):
-        for value in base_value:
-            for filter_value in _filter_non_files(
-                    value, keep_list, ignore_list, keep_directories):
-                yield filter_value
+        return type(base_value)([
+            _filter_non_files(
+                value, keep_list, ignore_list, keep_directories)
+            for value in base_value])
     else:
-        yield base_value
+        return base_value
 
 
 def _scrub_task_args(base_value, target_path_list):
