@@ -4,7 +4,7 @@
 TaskGraph Release History
 =========================
 
-0.11.0 (2021-01-29)
+0.10.3 (2021-01-29)
 -------------------
 * Fixed issue that could cause combinatorial memory usage leading to poor
   runtime or ``MemoryError`` if a dictionary were passed that had thousands
