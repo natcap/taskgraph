@@ -23,7 +23,7 @@ MAX_TRY_WAIT_MS = 500
 
 
 def _return_value_once(value):
-    """Returns the value passed to it only once."""
+    """Return the value passed to it only once."""
     if hasattr(_return_value_once, 'executed'):
         raise RuntimeError("this function was called twice")
     _return_value_once.executed = True
@@ -31,7 +31,7 @@ def _return_value_once(value):
 
 
 def _noop_function(**kwargs):
-    """Does nothing except allow kwargs to be passed."""
+    """Do nothing except allow kwargs to be passed."""
     pass
 
 
@@ -1573,9 +1573,6 @@ class TaskGraphTests(unittest.TestCase):
                 [test_file_not_b_exists],
                 False),
             expected_result_dict)
-
-
-
 
 
 def Fail(n_tries, result_path):
