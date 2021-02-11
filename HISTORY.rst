@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Updated the ``taskgraph`` example in the README for the latest API changes
+  and to clarify the need for ``if __name__ == '__main__':``
+
 0.10.3 (2021-01-29)
 -------------------
 * Fixed issue that could cause combinatorial memory usage leading to poor
