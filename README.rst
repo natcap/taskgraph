@@ -89,11 +89,11 @@ tests on all platforms, run:
     $ tox
 
 Alternatively, if you're only trying to run tests on a single configuration
-(say, python 3.5 without ``psutil``), you'd run::
+(say, python 3.7 without ``psutil``), you'd run::
 
-    $ tox -e py36
+    $ tox -e py37
 
-Or if you'd like to run the tests for the combination of Python 2.7 with
+Or if you'd like to run the tests for the combination of Python 3.7 with
 ``psutil``, you'd run::
 
-    $ tox -e py27-psutil
+    $ tox -e py37-psutil
