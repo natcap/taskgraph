@@ -30,8 +30,11 @@ Then
 
   import os
   import pickle
+  import logging
 
   import taskgraph
+
+  logging.basicConfig(level=logging.DEBUG)
 
   def _create_list_on_disk(value, length, target_path):
       """Create a numpy array on disk filled with value of `size`."""
