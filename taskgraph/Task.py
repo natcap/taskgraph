@@ -23,7 +23,7 @@ import retrying
 __version__ = get_distribution('taskgraph').version
 
 
-_VALID_PATH_TYPES = (str, pathlib.Path)
+_VALID_PATH_TYPES = (str, pathlib.PurePath)
 _TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
 
 try:

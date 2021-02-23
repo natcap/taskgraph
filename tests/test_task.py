@@ -7,6 +7,7 @@ import os
 import pickle
 import pathlib
 import re
+import rstcheck
 import shutil
 import sqlite3
 import tempfile
@@ -1580,13 +1581,19 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, 'target.txt')
         content = 'test'
         for _ in range(10):
-            task = task_graph.add_task(
+            _ = task_graph.add_task(
                 func=_create_file,
                 args=(target_path, content),
                 target_path_list=[target_path],
                 task_name='create content')
         task_graph.join()
         task_graph.close()
+
+    def test_history_rst_format(self):
+        """TaskGraph: ensure HISTORY.rst is correctly formatted."""
+        # ensure there are no errors when checking the history file
+        self.assertEqual(
+            list(rstcheck.check(open('HISTORY.rst', 'r').read())), [])
 
 
 def Fail(n_tries, result_path):
