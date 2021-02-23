@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Fixes an issue that causes an ``EOFError`` or ``BrokenPipeError`` to occur
+  when the ``TaskGraph`` terminates.
+
 0.10.3 (2021-01-29)
 -------------------
 * Fixed issue that could cause combinatorial memory usage leading to poor
