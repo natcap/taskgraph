@@ -1575,6 +1575,20 @@ class TaskGraphTests(unittest.TestCase):
                 False),
             expected_result_dict)
 
+    def test_duplicate_task_hang_on_exit(self):
+        """TaskGraph: ensure duplicate tasks don't cause taskgraph to hang."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        target_path = os.path.join(self.workspace_dir, 'target.txt')
+        content = 'test'
+        for _ in range(10):
+            _ = task_graph.add_task(
+                func=_create_file,
+                args=(target_path, content),
+                target_path_list=[target_path],
+                task_name='create content')
+        task_graph.join()
+        task_graph.close()
+
     def test_history_rst_format(self):
         """TaskGraph: ensure HISTORY.rst is correctly formatted."""
         # ensure there are no errors when checking the history file

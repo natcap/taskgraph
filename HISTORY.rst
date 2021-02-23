@@ -8,6 +8,8 @@ Unreleased Changes
 ------------------
 * Updated the ``taskgraph`` example in the README for the latest API changes
   and to clarify the need for ``if __name__ == '__main__':``
+* Fixed an issue that could cause the ``TaskGraph`` object to hang if
+  duplicate ``Task`` objects were created.
 
 0.10.3 (2021-01-29)
 -------------------
