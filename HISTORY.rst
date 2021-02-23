@@ -4,6 +4,11 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Fixed an issue that could cause the ``TaskGraph`` object to hang if
+  duplicate ``Task`` objects were created.
+
 0.10.3 (2021-01-29)
 -------------------
 * Fixed issue that could cause combinatorial memory usage leading to poor
