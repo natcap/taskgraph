@@ -441,6 +441,7 @@ class TaskGraph(object):
                             self._worker_pool.close()
                             self._worker_pool.terminate()
                             self._worker_pool = None
+                            self._terminate()
                         except Exception:
                             # there's the possibility for a race condition here
                             # where another thread already closed the worker
