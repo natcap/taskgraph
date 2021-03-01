@@ -28,6 +28,14 @@ Then
 
 .. code-block:: python
 
+  import os
+  import pickle
+  import logging
+
+  import taskgraph
+
+  logging.basicConfig(level=logging.DEBUG)
+
   def _create_list_on_disk(value, length, target_path):
       """Create a numpy array on disk filled with value of `size`."""
       target_list = [value] * length
@@ -44,33 +52,35 @@ Then
       pickle.dump(target_list, open(target_path, 'wb'))
 
   # create a taskgraph that uses 4 multiprocessing subprocesses when possible
-  task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
-  target_a_path = os.path.join(self.workspace_dir, 'a.dat')
-  target_b_path = os.path.join(self.workspace_dir, 'b.dat')
-  result_path = os.path.join(self.workspace_dir, 'result.dat')
-  result_2_path = os.path.join(self.workspace_dir, 'result2.dat')
-  value_a = 5
-  value_b = 10
-  list_len = 10
-  task_a = task_graph.add_task(
-      target=_create_list_on_disk,
-      args=(value_a, list_len, target_a_path),
-      target_path_list=[target_a_path])
-  task_b = task_graph.add_task(
-      target=_create_list_on_disk,
-      args=(value_b, list_len, target_b_path),
-      target_path_list=[target_b_path])
-  sum_task = task_graph.add_task(
-      target=_sum_lists_from_disk,
-      args=(target_a_path, target_b_path, result_path),
-      target_path_list=[result_path],
-      dependent_task_list=[task_a, task_b])
+  if __name__ == '__main__':
+      workspace_dir = 'workspace'
+      task_graph = taskgraph.TaskGraph(workspace_dir, 4)
+      target_a_path = os.path.join(workspace_dir, 'a.dat')
+      target_b_path = os.path.join(workspace_dir, 'b.dat')
+      result_path = os.path.join(workspace_dir, 'result.dat')
+      result_2_path = os.path.join(workspace_dir, 'result2.dat')
+      value_a = 5
+      value_b = 10
+      list_len = 10
+      task_a = task_graph.add_task(
+          func=_create_list_on_disk,
+          args=(value_a, list_len, target_a_path),
+          target_path_list=[target_a_path])
+      task_b = task_graph.add_task(
+          func=_create_list_on_disk,
+          args=(value_b, list_len, target_b_path),
+          target_path_list=[target_b_path])
+      sum_task = task_graph.add_task(
+          func=_sum_lists_from_disk,
+          args=(target_a_path, target_b_path, result_path),
+          target_path_list=[result_path],
+          dependent_task_list=[task_a, task_b])
 
-  task_graph.close()
-  task_graph.join()
+      task_graph.close()
+      task_graph.join()
 
-  # expect that result is a list `list_len` long with `value_a+value_b` in it
-  result = pickle.load(open(result_path, 'rb'))
+      # expect that result is a list `list_len` long with `value_a+value_b` in it
+      result = pickle.load(open(result_path, 'rb'))
 
 Running Tests
 -------------
@@ -82,11 +92,11 @@ tests on all platforms, run:
     $ tox
 
 Alternatively, if you're only trying to run tests on a single configuration
-(say, python 3.5 without ``psutil``), you'd run::
+(say, python 3.7 without ``psutil``), you'd run::
 
-    $ tox -e py36
+    $ tox -e py37
 
-Or if you'd like to run the tests for the combination of Python 2.7 with
+Or if you'd like to run the tests for the combination of Python 3.7 with
 ``psutil``, you'd run::
 
-    $ tox -e py27-psutil
+    $ tox -e py37-psutil

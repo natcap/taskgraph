@@ -648,6 +648,7 @@ class TaskGraph(object):
                     LOGGER.warning(
                         "A duplicate task was submitted: %s original: %s",
                         new_task, self._task_hash_map[new_task])
+                    self._added_task_count -= 1
                     return duplicate_task
                 disjoint_target_set = (
                     new_task_target_set.symmetric_difference(
