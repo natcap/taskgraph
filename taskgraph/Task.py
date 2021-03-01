@@ -699,7 +699,7 @@ class TaskGraph(object):
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, hash_target_files, ignore_directories,
                 transient_run, self._worker_pool,
-                self._taskgraph_cache_dir_path, priority, hash_algorithm,
+                priority, hash_algorithm,
                 copy_duplicate_artifact, hardlink_allowed, store_result,
                 self._task_database_path)
 
@@ -954,8 +954,6 @@ class Task(object):
                 execution hash will be skipped.
             worker_pool (multiprocessing.Pool): if not None, is a
                 multiprocessing pool that can be used for ``_call`` execution.
-            cache_dir (string): path to a directory to both write and expect
-                data recorded from a previous Taskgraph run.
             priority (numeric): the priority of a task is considered when
                 there is more than one task whose dependencies have been
                 met and are ready for scheduling. Tasks are inserted into the
@@ -1008,7 +1006,6 @@ class Task(object):
         self._func = func
         self._args = args
         self._kwargs = kwargs
-        self._cache_dir = cache_dir
         self._ignore_path_list = [
             _normalize_path(path) for path in ignore_path_list]
         self._hash_target_files = hash_target_files
