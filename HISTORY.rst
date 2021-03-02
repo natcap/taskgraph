@@ -12,12 +12,6 @@ Unreleased Changes
   and to clarify the need for ``if __name__ == '__main__':``
 * Fixed an issue that could cause the ``TaskGraph`` object to hang if
   duplicate ``Task`` objects were created.
-* Removed ``copy_duplicate_artifact`` and ``hardlink_allowed`` parameters
-  and functionality from TaskGraph. This is to address a design error that
-  TaskGraph is not well suited for caching file results to avoid
-  recomputation. Rather than add additional complexity around the limitations
-  of this feature it is being removed to guide a design toward a standalone
-  cache library if needed.
 * Fixed an issue that was causing TaskGraph to ignore a changed
   ``hash_algorithm`` if the TaskGraph was created on one run, was
   deconstructed, then restarted. If the user chose a different hash, TaskGraph
