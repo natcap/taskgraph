@@ -13,7 +13,6 @@ import pathlib
 import pickle
 import pprint
 import queue
-import shutil
 import sqlite3
 import threading
 import time
@@ -50,6 +49,7 @@ _MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
 # https://stackoverflow.com/a/8963618/42897
 class NoDaemonProcess(multiprocessing.Process):
     """Make 'daemon' attribute always return False."""
+
     @property
     def daemon(self):
         """Return False indicating not a daemon process."""
@@ -73,6 +73,7 @@ class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
     well since 3.8.
 
     """
+
     Process = NoDaemonProcess
 
 
@@ -80,13 +81,13 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
     def __init__(self, *args, **kwargs):
-        """Invoking super to set the context of Pool class explicitly."""
+        """Invoke super to set the context of Pool class explicitly."""
         kwargs['context'] = NoDaemonContext()
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
 
 
 def _null_func():
-    """Used when func=None on add_task."""
+    """Use when func=None on add_task."""
     return None
 
 
