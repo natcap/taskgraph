@@ -18,6 +18,7 @@ Unreleased Changes
   recomputation. Rather than add additional complexity around the limitations
   of this feature it is being removed to guide a design toward a standalone
   cache library if needed.
+
 0.10.3 (2021-01-29)
 -------------------
 * Fixed issue that could cause combinatorial memory usage leading to poor
