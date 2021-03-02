@@ -850,7 +850,8 @@ class TaskGraph(object):
 
             LOGGER.debug('taskgraph terminated')
         except Exception:
-            LOGGER.exception('exception occurred during __del__')
+            LOGGER.exception(
+                'ignoring an exception that occurred during _terminate')
 
 
 class Task(object):
