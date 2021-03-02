@@ -1351,6 +1351,54 @@ class TaskGraphTests(unittest.TestCase):
             task_a._task_id_hash, task_b._task_id_hash,
             "task ids should be different since the filenames are different")
 
+    def test_different_hash_different_file(self):
+        """TaskGraph: ensure identical files but filename are noticed."""
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+        target_file_path = os.path.join(self.workspace_dir, 'target.txt')
+        _ = task_graph.add_task(
+            func=_create_file,
+            args=(target_file_path, 'content'),
+            hash_algorithm='exists',
+            target_path_list=[target_file_path],
+            task_name='create content, hash with exists')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        with open(target_file_path, 'r') as target_file:
+            self.assertEqual(target_file.read(), 'content')
+        with open(target_file_path, 'w') as target_file:
+            target_file.write('overwritten')
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+        _ = task_graph.add_task(
+            func=_create_file,
+            args=(target_file_path, 'content'),
+            hash_algorithm='exists',
+            target_path_list=[target_file_path],
+            task_name='will not overwrite content, hash with exists')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        with open(target_file_path, 'r') as target_file:
+            self.assertEqual(target_file.read(), 'overwritten')
+
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
+        _ = task_graph.add_task(
+            func=_create_file,
+            args=(target_file_path, 'content'),
+            hash_algorithm='md5',
+            target_path_list=[target_file_path],
+            task_name='create content again with new hash')
+        task_graph.close()
+        task_graph.join()
+        del task_graph
+
+        with open(target_file_path, 'r') as target_file:
+            self.assertEqual(target_file.read(), 'content')
+
+
     def test_return_value_no_record(self):
         """TaskGraph: test  ``get`` raises exception if not set to record."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)

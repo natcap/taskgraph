@@ -1258,6 +1258,7 @@ class Task(object):
         # transient between taskgraph executions and we should expect to
         # run it again.
         if not self._transient_run:
+            LOGGER.debug(result_target_path_stats)
             _execute_sqlite(
                 "INSERT OR REPLACE INTO taskgraph_data VALUES (?, ?, ?)",
                 self._task_database_path, mode='modify',
@@ -1317,8 +1318,8 @@ class Task(object):
             self._reexecution_info['source_code_hash'],
             self._reexecution_info['other_arguments'],
             self._store_result,
-            # the x[2] is to only take the *hash* part of the 'file_stat'
-            str([x[2] for x in file_stat_list]))
+            # the x[1] is to only take the *hash* part of the 'file_stat'
+            str([x[1] for x in file_stat_list]))
 
         self._task_reexecution_hash = hashlib.sha1(
             reexecution_string.encode('utf-8')).hexdigest()
@@ -1336,7 +1337,7 @@ class Task(object):
                 return False
             result_target_path_stats = pickle.loads(database_result[0])
             mismatched_target_file_list = []
-            for path, hash_algorithm, hash_string in result_target_path_stats:
+            for path, hash_string in result_target_path_stats:
                 if path not in self._target_path_list:
                     mismatched_target_file_list.append(
                         'Recorded path not in target path list %s' % path)
@@ -1344,11 +1345,11 @@ class Task(object):
                     mismatched_target_file_list.append(
                         'Path not found: %s' % path)
                     continue
-                elif hash_algorithm == 'exists':
+                elif target_hash_algorithm == 'exists':
                     # this is the case where hash_algorithm == 'exists' but
                     # we already know the file exists so we do nothing
                     continue
-                if hash_algorithm == 'sizetimestamp':
+                if target_hash_algorithm == 'sizetimestamp':
                     size, modified_time, actual_path = [
                         x for x in hash_string.split('::')]
                     if actual_path != path:
@@ -1370,7 +1371,7 @@ class Task(object):
                             "cached: (%s) actual: (%s)" % (
                                 size, target_size))
                 else:
-                    target_hash = _hash_file(path, hash_algorithm)
+                    target_hash = _hash_file(path, target_hash_algorithm)
                     if hash_string != target_hash:
                         mismatched_target_file_list.append(
                             "File hashes are different. cached: (%s) "
@@ -1469,11 +1470,10 @@ def _get_file_stats(
                     not os.path.isdir(norm_path) or
                     not ignore_directories) and os.path.exists(norm_path):
                 if hash_algorithm == 'exists':
-                    yield (norm_path, 'exists', 'exists')
+                    yield (norm_path, 'exists')
                 else:
                     yield (
-                        norm_path, hash_algorithm,
-                        _hash_file(norm_path, hash_algorithm))
+                        norm_path, _hash_file(norm_path, hash_algorithm))
         except (OSError, ValueError):
             # I ran across a ValueError when one of the os.path functions
             # interpreted the value as a path that was too long.
