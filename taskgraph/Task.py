@@ -1108,7 +1108,6 @@ class Task(object):
         # transient between taskgraph executions and we should expect to
         # run it again.
         if not self._transient_run:
-            LOGGER.debug(result_target_path_stats)
             _execute_sqlite(
                 "INSERT OR REPLACE INTO taskgraph_data VALUES (?, ?, ?)",
                 self._task_database_path, mode='modify',
