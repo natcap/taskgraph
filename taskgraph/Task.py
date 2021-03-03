@@ -120,6 +120,18 @@ def _initialize_logging_to_queue(logging_queue):
     root_logger.addHandler(handler)
 
 
+def _logging_queue_monitor(logging_queue):
+    """Monitor ``logging_queue`` for message and pass to ``logger``."""
+    LOGGER.debug('Starting logging worker')
+    while True:
+        record = logging_queue.get()
+        if record is None:
+            break
+        logger = logging.getLogger(record.name)
+        logger.handle(record)
+    LOGGER.debug('_logging_queue_monitor shutting down')
+
+
 def _create_taskgraph_table_schema(taskgraph_database_path):
     """Create database exists and/or ensures it is compatible and recreate.
 
@@ -371,7 +383,7 @@ class TaskGraph(object):
                 n_workers, initializer=_initialize_logging_to_queue,
                 initargs=(self._logging_queue,))
             self._logging_monitor_thread = threading.Thread(
-                target=self._handle_logs_from_processes,
+                target=_logging_queue_monitor,
                 args=(self._logging_queue,))
 
             self._logging_monitor_thread.daemon = True
@@ -390,87 +402,7 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
-        try:
-            # it's possible the global state is not well defined, so just in
-            # case we'll wrap it all up in a try/except
-            self._terminated = True
-            if self._executor_ready_event is not None:
-                # alert executors to check that _terminated is True
-                self._executor_ready_event.set()
-            LOGGER.debug("shutting down workers")
-            if self._worker_pool is not None:
-                self._worker_pool.close()
-                self._worker_pool.terminate()
-                self._worker_pool = None
-
-            if self._logging_queue is not None:
-                # Close down the logging monitor thread.
-                self._logging_queue.put(None)
-                self._logging_monitor_thread.join(_MAX_TIMEOUT)
-                # drain the queue if anything is left
-                while True:
-                    try:
-                        x = self._logging_queue.get_nowait()
-                        LOGGER.debug(
-                            "the logging queue had this in it: %s", x)
-                    except queue.Empty:
-                        break
-                    except Exception:
-                        LOGGER.exception(
-                            "Expected an empty logging queue, but if the "
-                            "TaskGraph were being terminated it's possible "
-                            "this object is corrupt and we'd get a different "
-                            "kind of exception like EOF. In any case we "
-                            "should always stop trying to drain the queue "
-                            "in the case of an Exception.")
-                        break
-
-            if self._n_workers >= 0:
-                self._executor_ready_event.set()
-                for executor_thread in self._task_executor_thread_list:
-                    try:
-                        executor_thread.join(_MAX_TIMEOUT)
-                        timedout = executor_thread.is_alive()
-                        if timedout:
-                            LOGGER.debug(
-                                'task executor thread timed out %s',
-                                executor_thread)
-                    except Exception:
-                        LOGGER.warning(
-                            f'Joining executor thread {executor_thread} '
-                            f'would have caused a deadlock, skipping.')
-                if self._reporting_interval is not None:
-                    LOGGER.debug("joining _monitor_thread.")
-                    if self._logging_queue:
-                        self._logging_queue.put(None)
-                    self._execution_monitor_wait_event.set()
-                    try:
-                        self._execution_monitor_thread.join(_MAX_TIMEOUT)
-                        timedout = self._execution_monitor_thread.is_alive()
-                        if timedout:
-                            LOGGER.debug(
-                                '_monitor_thread %s timed out',
-                                self._execution_monitor_thread)
-                    except Exception:
-                        LOGGER.warning(
-                            'joining execution monitor thread '
-                            f'{self._execution_monitor_thread} would have '
-                            'caused a deadlock, skipping.')
-                    for task in self._task_hash_map.values():
-                        # shortcut to get the tasks to mark as joined
-                        task.task_done_executing_event.set()
-
-            # drain the task ready queue if there's anything left
-            while True:
-                try:
-                    x = self._task_ready_priority_queue.get_nowait()
-                    LOGGER.debug(
-                        "task_ready_priority_queue not empty contains: %s", x)
-                except queue.Empty:
-                    break
-            LOGGER.debug('taskgraph terminated')
-        except Exception:
-            LOGGER.exception('exception occurred during __del__')
+        self._terminate()
 
     def _task_executor(self):
         """Worker that executes Tasks that have satisfied dependencies."""
@@ -509,6 +441,7 @@ class TaskGraph(object):
                             self._worker_pool.close()
                             self._worker_pool.terminate()
                             self._worker_pool = None
+                            self._terminate()
                         except Exception:
                             # there's the possibility for a race condition here
                             # where another thread already closed the worker
@@ -699,7 +632,7 @@ class TaskGraph(object):
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, hash_target_files, ignore_directories,
                 transient_run, self._worker_pool,
-                self._taskgraph_cache_dir_path, priority, hash_algorithm,
+                priority, hash_algorithm,
                 copy_duplicate_artifact, hardlink_allowed, store_result,
                 self._task_database_path)
 
@@ -783,16 +716,6 @@ class TaskGraph(object):
             self._terminate()
             raise
 
-    def _handle_logs_from_processes(self, queue_):
-        LOGGER.debug('Starting logging worker')
-        while True:
-            record = queue_.get()
-            if record is None:
-                break
-            logger = logging.getLogger(record.name)
-            logger.handle(record)
-        LOGGER.debug('_handle_logs_from_processes shutting down')
-
     def _execution_monitor(self, monitor_wait_event):
         """Log state of taskgraph every ``self._reporting_interval`` seconds.
 
@@ -865,8 +788,9 @@ class TaskGraph(object):
                     LOGGER.info(
                         "task %s timed out in graph join", task.task_name)
                     return False
-            if self._closed and self._logging_queue:
+            if self._closed:
                 # Close down the taskgraph
+                self._executor_ready_event.set()
                 self._terminate()
             return True
         except Exception:
@@ -898,20 +822,36 @@ class TaskGraph(object):
             "Invoking terminate. already terminated? %s", self._terminated)
         if self._terminated:
             return
-        self._terminated = True
+        try:
+            # it's possible the global state is not well defined, so just in
+            # case we'll wrap it all up in a try/except
+            self._terminated = True
+            if self._executor_ready_event is not None:
+                # alert executors to check that _terminated is True
+                self._executor_ready_event.set()
+            LOGGER.debug("shutting down workers")
+            if self._worker_pool is not None:
+                self._worker_pool.close()
+                self._worker_pool.terminate()
+                self._worker_pool = None
 
-        if self._logging_queue:
-            self._logging_queue.put(None)
+            # This will terminate the logging worker
+            if self._logging_queue is not None:
+                self._logging_queue.put(None)
 
-        for task in self._task_hash_map.values():
-            LOGGER.debug("setting task done for %s", task.task_name)
-            task.task_done_executing_event.set()
+            # This will cause all 'join'ed Tasks to join.
+            if self._n_workers >= 0:
+                self._executor_ready_event.set()
+                if self._reporting_interval is not None:
+                    self._execution_monitor_wait_event.set()
+                for task in self._task_hash_map.values():
+                    # shortcut to get the tasks to mark as joined
+                    task.task_done_executing_event.set()
 
-        if self._worker_pool:
-            self._worker_pool.close()
-            self._worker_pool.terminate()
-
-        self._executor_ready_event.set()
+            LOGGER.debug('taskgraph terminated')
+        except Exception:
+            LOGGER.exception(
+                'ignoring an exception that occurred during _terminate')
 
 
 class Task(object):
@@ -920,7 +860,7 @@ class Task(object):
     def __init__(
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, hash_target_files, ignore_directories,
-            transient_run, worker_pool, cache_dir, priority, hash_algorithm,
+            transient_run, worker_pool, priority, hash_algorithm,
             copy_duplicate_artifact, hardlink_allowed, store_result,
             task_database_path):
         """Make a Task.
@@ -954,8 +894,6 @@ class Task(object):
                 execution hash will be skipped.
             worker_pool (multiprocessing.Pool): if not None, is a
                 multiprocessing pool that can be used for ``_call`` execution.
-            cache_dir (string): path to a directory to both write and expect
-                data recorded from a previous Taskgraph run.
             priority (numeric): the priority of a task is considered when
                 there is more than one task whose dependencies have been
                 met and are ready for scheduling. Tasks are inserted into the
@@ -1008,7 +946,6 @@ class Task(object):
         self._func = func
         self._args = args
         self._kwargs = kwargs
-        self._cache_dir = cache_dir
         self._ignore_path_list = [
             _normalize_path(path) for path in ignore_path_list]
         self._hash_target_files = hash_target_files

@@ -6,6 +6,8 @@ TaskGraph Release History
 
 Unreleased Changes
 ------------------
+* Fixes an issue that causes an ``EOFError`` or ``BrokenPipeError`` to occur
+  when the ``TaskGraph`` terminates.
 * Updated the ``taskgraph`` example in the README for the latest API changes
   and to clarify the need for ``if __name__ == '__main__':``
 * Fixed an issue that could cause the ``TaskGraph`` object to hang if
