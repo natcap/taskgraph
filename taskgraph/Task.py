@@ -13,7 +13,6 @@ import pathlib
 import pickle
 import pprint
 import queue
-import shutil
 import sqlite3
 import threading
 import time
@@ -50,6 +49,7 @@ _MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
 # https://stackoverflow.com/a/8963618/42897
 class NoDaemonProcess(multiprocessing.Process):
     """Make 'daemon' attribute always return False."""
+
     @property
     def daemon(self):
         """Return False indicating not a daemon process."""
@@ -73,6 +73,7 @@ class NoDaemonContext(type(multiprocessing.get_context('spawn'))):
     well since 3.8.
 
     """
+
     Process = NoDaemonProcess
 
 
@@ -80,13 +81,13 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
     """NonDaemonic Process Pool."""
 
     def __init__(self, *args, **kwargs):
-        """Invoking super to set the context of Pool class explicitly."""
+        """Invoke super to set the context of Pool class explicitly."""
         kwargs['context'] = NoDaemonContext()
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
 
 
 def _null_func():
-    """Used when func=None on add_task."""
+    """Use when func=None on add_task."""
     return None
 
 
@@ -508,8 +509,8 @@ class TaskGraph(object):
             target_path_list=None, ignore_path_list=None,
             hash_target_files=True, dependent_task_list=None,
             ignore_directories=True, priority=0,
-            hash_algorithm='sizetimestamp', copy_duplicate_artifact=False,
-            hardlink_allowed=False, transient_run=False, store_result=False):
+            hash_algorithm='sizetimestamp', transient_run=False,
+            store_result=False):
         """Add a task to the task graph.
 
         Args:
@@ -561,14 +562,6 @@ class TaskGraph(object):
                 ``hash_algorithm`` is 'sizetimestamp' the task will require the
                 same base path files to determine equality. If it is a
                 ``hashlib`` algorithm only file contents will be considered.
-            copy_duplicate_artifact (bool): if True and the Tasks'
-                argument signature matches a previous Tasks without direct
-                comparison of the target path files in the arguments other
-                than their positions in the target path list, the target
-                artifacts from a previously successful Task execution will
-                be copied to the new one.
-            hardlink_allowed (bool): if ``copy_duplicate_artifact`` is True,
-                this will allow a hardlink rather than a copy when needed.
             transient_run (bool): if True, this Task will be reexecuted
                 even if it was successfully executed in a previous TaskGraph
                 instance. If False, this Task will be skipped if it was
@@ -632,8 +625,7 @@ class TaskGraph(object):
                 task_name, func, args, kwargs, target_path_list,
                 ignore_path_list, hash_target_files, ignore_directories,
                 transient_run, self._worker_pool,
-                priority, hash_algorithm,
-                copy_duplicate_artifact, hardlink_allowed, store_result,
+                priority, hash_algorithm, store_result,
                 self._task_database_path)
 
             self._task_name_map[new_task.task_name] = new_task
@@ -861,8 +853,7 @@ class Task(object):
             self, task_name, func, args, kwargs, target_path_list,
             ignore_path_list, hash_target_files, ignore_directories,
             transient_run, worker_pool, priority, hash_algorithm,
-            copy_duplicate_artifact, hardlink_allowed, store_result,
-            task_database_path):
+            store_result, task_database_path):
         """Make a Task.
 
         Args:
@@ -905,15 +896,6 @@ class Task(object):
                 with this algorithm. If value is 'sizetimestamp' the digest
                 will only use the normed path, size, and timestamp of any
                 files found in the arguments.
-            copy_duplicate_artifact (bool): if true and the Tasks'
-                argument signature matches a previous Tasks without direct
-                comparison of the target path files in the arguments other
-                than their positions in the target path list, the target
-                artifacts from a previously successful Task execution will
-                be copied to the new one.
-            hardlink_allowed (bool): if ``copy_duplicate_artifact`` is True,
-                this allows taskgraph to create a hardlink rather than make a
-                direct copy.
             store_result (bool): If true, the result of ``func`` will be
                 stored in the TaskGraph database and retrievable with a call
                 to ``.get()`` on the Task object.
@@ -954,8 +936,6 @@ class Task(object):
         self._worker_pool = worker_pool
         self._task_database_path = task_database_path
         self._hash_algorithm = hash_algorithm
-        self._copy_duplicate_artifact = copy_duplicate_artifact
-        self._hardlink_allowed = hardlink_allowed
         self._store_result = store_result
         self.exception_object = None
 
@@ -1091,87 +1071,19 @@ class Task(object):
             self.task_done_executing_event.set()
             return
         LOGGER.debug("not precalculated %s", self.task_name)
-        artifact_copied = False
-        if self._copy_duplicate_artifact:
-            # try to see if we can copy old files
-            database_result = _execute_sqlite(
-                """
-                SELECT target_path_stats from taskgraph_data
-                WHERE (task_reexecution_hash == ?)
-                """,
-                self._task_database_path, mode='read_only',
-                argument_list=(self._task_reexecution_hash,),
-                execute='execute', fetch='one')
-            try:
-                if database_result:
-                    result_target_path_stats = pickle.loads(database_result[0])
-                    LOGGER.debug(
-                        'duplicate artifact db results: %s',
-                        result_target_path_stats)
-                    if (len(result_target_path_stats) ==
-                            len(self._target_path_list)):
-                        if all([
-                            file_fingerprint == _hash_file(
-                                path, hash_algorithm)
-                            for path, hash_algorithm, file_fingerprint in (
-                                result_target_path_stats)]):
-                            LOGGER.debug(
-                                "copying stored artifacts to target path "
-                                "list. \n\tstored artifacts: %s\n\t"
-                                "target_path_list: %s\n",
-                                [x[0] for x in result_target_path_stats],
-                                self._target_path_list)
-                            for artifact_target, new_target in zip(
-                                    result_target_path_stats,
-                                    self._target_path_list):
-                                if artifact_target != new_target:
-                                    target_linked = False
-                                    if self._hardlink_allowed:
-                                        # some OSes may not allow hardlinks
-                                        # but we don't know unless we try
-                                        try:
-                                            os.link(
-                                                artifact_target[0], new_target)
-                                            target_linked = True
-                                        except Exception:
-                                            LOGGER.exception(
-                                                f'failed to os.link '
-                                                f'{artifact_target[0]} to '
-                                                f'{new_target}')
-                                    # this is the default if either no hardlink
-                                    # allowed or a hardlink failed
-                                    if not target_linked:
-                                        shutil.copyfile(
-                                            artifact_target[0], new_target)
-                                else:
-                                    # This is a bug if this ever happens, and
-                                    # so bad if it does I want to stop and
-                                    # report a helpful error message
-                                    raise RuntimeError(
-                                        "duplicate copy artifact and target "
-                                        "path: %s, result_path_stats: %s, "
-                                        "target_path_list: %s" % (
-                                            artifact_target,
-                                            result_target_path_stats,
-                                            self._target_path_list))
-                            artifact_copied = True
-            except IOError as e:
-                LOGGER.warning(
-                    "IOError encountered when hashing original source "
-                    "files.\n%s" % e)
-        if not artifact_copied:
-            if self._worker_pool is not None:
-                result = self._worker_pool.apply_async(
-                    func=self._func, args=self._args, kwds=self._kwargs)
-                # the following blocks and raises an exception if result
-                # raised an exception
-                LOGGER.debug("apply_async for task %s", self.task_name)
-                payload = result.get()
-            else:
-                LOGGER.debug("direct _func for task %s", self.task_name)
-                payload = self._func(*self._args, **self._kwargs)
-            if self._store_result:
-                self._result = payload
+
+        if self._worker_pool is not None:
+            result = self._worker_pool.apply_async(
+                func=self._func, args=self._args, kwds=self._kwargs)
+            # the following blocks and raises an exception if result
+            # raised an exception
+            LOGGER.debug("apply_async for task %s", self.task_name)
+            payload = result.get()
+        else:
+            LOGGER.debug("direct _func for task %s", self.task_name)
+            payload = self._func(*self._args, **self._kwargs)
+        if self._store_result:
+            self._result = payload
 
         # check that the target paths exist and record stats for later
         if not self._hash_target_files:

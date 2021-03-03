@@ -196,17 +196,13 @@ class TaskGraphTests(unittest.TestCase):
         task_a = task_graph.add_task(
             func=_create_file,
             args=(target_a_path, 'test value'),
-            target_path_list=[target_a_path],
-            hash_algorithm='md5',
-            copy_duplicate_artifact=True)
+            target_path_list=[target_a_path])
         task_a.join()
         target_b_path = os.path.join(self.workspace_dir, 'b.txt')
         _ = task_graph.add_task(
             func=_create_file,
             args=(target_b_path, 'test value'),
-            target_path_list=[target_b_path],
-            hash_algorithm='md5',
-            copy_duplicate_artifact=True)
+            target_path_list=[target_b_path])
         task_graph.close()
         task_graph.join()
         del task_graph
@@ -219,9 +215,7 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task(
             func=_create_file,
             args=(target_c_path, 'test value'),
-            target_path_list=[target_c_path],
-            hash_algorithm='md5',
-            copy_duplicate_artifact=True)
+            target_path_list=[target_c_path])
         task_graph.close()
         task_graph.join()
 
@@ -241,16 +235,12 @@ class TaskGraphTests(unittest.TestCase):
            func=_create_file,
            args=(target_a_path, 'test value'),
            target_path_list=[target_a_path],
-           hash_algorithm='md5',
-           copy_duplicate_artifact=True,
            task_name='task a')
 
         _ = task_graph.add_task(
            func=_create_file,
            args=(target_b_path, 'test value'),
            target_path_list=[target_b_path],
-           hash_algorithm='md5',
-           copy_duplicate_artifact=True,
            task_name='task b')
 
         task_graph.close()
@@ -912,88 +902,6 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(
             list(_get_file_stats(base_value, 'sizetimestamp', [], True)), [])
 
-    def test_same_contents_duplicate_call(self):
-        """TaskGraph: test that same contents copy target path."""
-        base_file_path = os.path.join(self.workspace_dir, 'base.txt')
-        with open(base_file_path, 'w') as base_file:
-            base_file.write('xxx')
-        base2_file_path = os.path.join(self.workspace_dir, 'base2.txt')
-        shutil.copyfile(base_file_path, base2_file_path)
-
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
-        task_graph.add_task(
-            func=_copy_file_once,
-            args=(base_file_path, target_path),
-            target_path_list=[target_path],
-            copy_duplicate_artifact=True,
-            hash_algorithm='md5',
-            task_name='first _copy_file_once')
-
-        task_graph.close()
-        task_graph.join()
-        del task_graph
-
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        alt_target_path = os.path.join(self.workspace_dir, 'alt_testfile.txt')
-        task_graph.add_task(
-            func=_copy_file_once,
-            args=(base2_file_path, alt_target_path),
-            target_path_list=[alt_target_path],
-            copy_duplicate_artifact=True,
-            hash_algorithm='md5',
-            task_name='second _copy_file_once')
-
-        task_graph.close()
-        task_graph.join()
-
-        with open(target_path, 'r') as target_file:
-            contents = target_file.read()
-        self.assertEqual(contents, 'xxx')
-
-        with open(alt_target_path, 'r') as alt_target_file:
-            alt_contents = alt_target_file.read()
-        self.assertEqual(contents, alt_contents)
-
-    def test_duplicate_call(self):
-        """TaskGraph: test that duplicate calls copy target path."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        target_path = os.path.join(self.workspace_dir, 'testfile.txt')
-
-        if hasattr(_create_file_once, 'executed'):
-            del _create_file_once.executed
-
-        task_graph.add_task(
-            func=_create_file_once,
-            args=(target_path, 'test'),
-            target_path_list=[target_path],
-            copy_duplicate_artifact=True,
-            task_name='first _create_file_once')
-
-        task_graph.close()
-        task_graph.join()
-        del task_graph
-
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        alt_target_path = os.path.join(self.workspace_dir, 'alt_testfile.txt')
-        task_graph.add_task(
-            func=_create_file_once,
-            args=(alt_target_path, 'test'),
-            target_path_list=[alt_target_path],
-            copy_duplicate_artifact=True,
-            task_name='second _create_file_once')
-
-        task_graph.close()
-        task_graph.join()
-
-        with open(target_path, 'r') as target_file:
-            contents = target_file.read()
-        self.assertEqual(contents, 'test')
-
-        with open(alt_target_path, 'r') as alt_target_file:
-            alt_contents = alt_target_file.read()
-        self.assertEqual(contents, alt_contents)
-
     def test_duplicate_call_changed_target(self):
         """TaskGraph: test that duplicate calls copy target path."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
@@ -1040,7 +948,6 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_file,
             args=(target_path, 'test'),
             target_path_list=[target_path],
-            copy_duplicate_artifact=True,
             task_name='first _create_file')
         task_graph.close()
         task_graph.join()
@@ -1057,7 +964,6 @@ class TaskGraphTests(unittest.TestCase):
             func=_create_file,
             args=(target_path, 'test'),
             target_path_list=[target_path],
-            copy_duplicate_artifact=True,
             task_name='second _create_file')
 
         task_graph.close()
@@ -1150,121 +1056,6 @@ class TaskGraphTests(unittest.TestCase):
         expected_message = "Missing expected target path results"
         actual_message = str(cm.exception)
         self.assertTrue(expected_message in actual_message, actual_message)
-
-    def test_duplicate_but_different_target(self):
-        """TaskGraph: Two tasks that are identical but for target."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-        base_path = os.path.join(self.workspace_dir, 'base.txt')
-        target_a_path = os.path.join(self.workspace_dir, 'testa.txt')
-        target_b_path = os.path.join(self.workspace_dir, 'testb.txt')
-        target_c_path = os.path.join(self.workspace_dir, 'testc.txt')
-        target_d_path = os.path.join(self.workspace_dir, 'testd.txt')
-        target_e_path = os.path.join(self.workspace_dir, 'teste.txt')
-        target_f_path = os.path.join(self.workspace_dir, 'testf.txt')
-
-        test_string = 'test string'
-        with open(base_path, 'w') as base_file:
-            base_file.write(test_string)
-
-        _ = task_graph.add_task(
-            func=_copy_two_files_once,
-            args=(base_path, target_a_path, target_b_path),
-            copy_duplicate_artifact=True,
-            hash_algorithm='md5',
-            target_path_list=[target_a_path, target_b_path],
-            task_name='copy file ab')
-
-        # this task should copy a to c and b to d
-        _ = task_graph.add_task(
-            func=_copy_two_files_once,
-            args=(base_path, target_c_path, target_d_path),
-            copy_duplicate_artifact=True,
-            hash_algorithm='md5',
-            target_path_list=[target_c_path, target_d_path],
-            task_name='copy file cd')
-
-        # this task should hardlink a to e and b to f if allowed on this OS
-        _ = task_graph.add_task(
-            func=_copy_two_files_once,
-            args=(base_path, target_e_path, target_f_path),
-            copy_duplicate_artifact=True,
-            hardlink_allowed=True,
-            hash_algorithm='md5',
-            target_path_list=[target_e_path, target_f_path],
-            task_name='copy file ef')
-        task_graph.close()
-        task_graph.join()
-
-        for path in (target_a_path, target_b_path, target_c_path,
-                     target_e_path, target_f_path):
-            with open(path, 'r') as target_file:
-                contents = target_file.read()
-            self.assertEqual(contents, test_string)
-
-    def test_modifying_functions_with_copy(self):
-        """TaskGraph: test with copy artifacts and ignore inputs."""
-        n_runs_a = 0
-        n_runs_b = 0
-
-        a_path = os.path.join(self.workspace_dir, 'a.txt')
-        b_path = os.path.join(self.workspace_dir, 'b.txt')
-        volatile_path = os.path.join(self.workspace_dir, 'volatile.txt')
-        d_path = os.path.join(self.workspace_dir, 'd.txt')
-
-        b_path_suffix = os.path.join(self.workspace_dir, 'b_suffix.txt')
-        volatile_path_suffix = os.path.join(
-            self.workspace_dir, 'volatile_suffix.txt')
-        d_path_suffix = os.path.join(self.workspace_dir, 'd_suffix.txt')
-
-        with open(a_path, 'w') as a_file:
-            a_file.write('a file')
-
-        def run_a_batch(a_path, b_path, volatile_path, d_path):
-            def _a(a_path, target_path):
-                nonlocal n_runs_a
-                n_runs_a += 1
-                if not os.path.exists(a_path):
-                    raise RuntimeError("a_path doesn't exist")
-                with open(target_path, 'w') as target_file:
-                    target_file.write('_a result')
-
-            def _b(b_path, volatile_path, target_path):
-                nonlocal n_runs_b
-                n_runs_b += 1
-                if not os.path.exists(a_path):
-                    raise RuntimeError("a_path path doesn't exist")
-                with open(volatile_path, 'w') as volitile_file:
-                    volitile_file.write('_b volatile')
-                with open(target_path, 'w') as target_file:
-                    target_file.write('_b result')
-
-            task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
-            task_a = task_graph.add_task(
-                func=_a,
-                args=(a_path, b_path),
-                target_path_list=[b_path],
-                hash_algorithm='md5',
-                copy_duplicate_artifact=True,
-                task_name='_a task')
-            _ = task_graph.add_task(
-                func=_b,
-                args=(b_path, volatile_path, d_path),
-                target_path_list=[d_path],
-                ignore_path_list=[volatile_path],
-                hash_algorithm='md5',
-                copy_duplicate_artifact=True,
-                dependent_task_list=[task_a],
-                task_name='_b task')
-            task_graph.join()
-            task_graph.close()
-            del task_graph
-
-        run_a_batch(a_path, b_path, volatile_path, d_path)
-        run_a_batch(a_path, b_path, volatile_path, d_path)
-        run_a_batch(a_path, b_path_suffix, volatile_path_suffix, d_path_suffix)
-
-        self.assertTrue(n_runs_a == 1)
-        self.assertTrue(n_runs_b == 1)
 
     def test_expected_path_list(self):
         """TaskGraph: test expected path list matches actual path list."""
