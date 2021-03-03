@@ -1189,7 +1189,6 @@ class TaskGraphTests(unittest.TestCase):
         with open(target_file_path, 'r') as target_file:
             self.assertEqual(target_file.read(), 'content')
 
-
     def test_return_value_no_record(self):
         """TaskGraph: test  ``get`` raises exception if not set to record."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
