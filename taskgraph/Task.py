@@ -1307,7 +1307,7 @@ def _get_file_stats(
 
 
     Return:
-        list of (path, hash_algorithm, hash) tuples for any filepaths found in
+        list of (path, hash) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
             ignored by the input parameters.
 
