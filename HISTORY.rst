@@ -17,6 +17,12 @@ Unreleased Changes
   deconstructed, then restarted. If the user chose a different hash, TaskGraph
   would use the hash that the target file was originally hashed under rather
   than the new algorithm.
+* Removed ``copy_duplicate_artifact`` and ``hardlink_allowed`` parameters
+  and functionality from TaskGraph. This is to address a design error that
+  TaskGraph is not well suited for caching file results to avoid
+  recomputation. Rather than add additional complexity around the limitations
+  of this feature it is being removed to guide a design toward a standalone
+  cache library if needed.
 
 0.10.3 (2021-01-29)
 -------------------

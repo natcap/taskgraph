@@ -552,16 +552,18 @@ class TaskGraph(object):
                 (priority 10 is higher than priority 1). This value can be
                 positive, negative, and/or floating point.
             hash_algorithm (string): either a hash function id that
-                exists in hashlib.algorithms_available or 'sizetimestamp'.
-                Any paths to actual files in the arguments will be digested
-                with this algorithm. If value is 'sizetimestamp' the digest
-                will only use the normed path, size, and timestamp of any
-                files found in the arguments. This value is used when
+                exists in hashlib.algorithms_available, 'sizetimestamp',
+                or 'exists'. Any paths to actual files in the arguments will
+                be digested with this algorithm. If value is 'sizetimestamp'
+                the digest will only use the normed path, size, and timestamp
+                of any files found in the arguments. This value is used when
                 determining whether a task is precalculated or its target
                 files can be copied to an equivalent task. Note if
                 ``hash_algorithm`` is 'sizetimestamp' the task will require the
                 same base path files to determine equality. If it is a
                 ``hashlib`` algorithm only file contents will be considered.
+                If the value is 'exists' the only test for file equivalence
+                will be if it exists on disk (True) or not (False).
             transient_run (bool): if True, this Task will be reexecuted
                 even if it was successfully executed in a previous TaskGraph
                 instance. If False, this Task will be skipped if it was
@@ -891,11 +893,13 @@ class Task(object):
                 work queue in order of decreasing priority. This value can be
                 positive, negative, and/or floating point.
             hash_algorithm (string): either a hash function id that
-                exists in hashlib.algorithms_available or 'sizetimestamp'.
-                Any paths to actual files in the arguments will be digested
-                with this algorithm. If value is 'sizetimestamp' the digest
-                will only use the normed path, size, and timestamp of any
-                files found in the arguments.
+                exists in hashlib.algorithms_available, 'sizetimestamp',
+                or 'exists'. Any paths to actual files in the arguments will
+                be digested with this algorithm. If value is 'sizetimestamp'
+                the digest will only use the normed path, size, and timestamp
+                of any files found in the arguments. If 'exists' will be
+                considered the same file only if a file with the same filename
+                exists on disk.
             store_result (bool): If true, the result of ``func`` will be
                 stored in the TaskGraph database and retrievable with a call
                 to ``.get()`` on the Task object.
@@ -1167,7 +1171,7 @@ class Task(object):
             self._reexecution_info['source_code_hash'],
             self._reexecution_info['other_arguments'],
             self._store_result,
-            # the x[1] is to only take the *hash* part of the 'file_stat'
+            # the x[1] is to only take the digest part of the 'file_stat'
             str([x[1] for x in file_stat_list]))
 
         self._task_reexecution_hash = hashlib.sha1(
@@ -1307,9 +1311,10 @@ def _get_file_stats(
 
 
     Return:
-        list of (path, hash_algorithm, hash) tuples for any filepaths found in
+        list of (path, digest) tuples for any filepaths found in
             base_value or nested in base value that are not otherwise
-            ignored by the input parameters.
+            ignored by the input parameters where digest is created by
+            the hash algorithm specified in ``hash_algorithm``.
 
     """
     if isinstance(base_value, _VALID_PATH_TYPES):
