@@ -1434,6 +1434,35 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(
             list(rstcheck.check(open('HISTORY.rst', 'r').read())), [])
 
+    def test_mtime_mismatch(self):
+        """TaskGraph: ensure re-run when file mtimes don't match.
+
+        This test addresses the issue described under the github issue
+        https://github.com/natcap/taskgraph/issues/70.
+        """
+        target_path = os.path.join(self.workspace_dir, 'target.txt')
+
+        # SETUP:  When we call 3 similar graphs in rapid succession, the file's
+        # mtime is not precise enough to detect that the file has actually
+        # changed.  The specific conditions here are:
+        #  * The task "test text" has already been computed once
+        #  * The file written by the first "test text" is replaced by content
+        #    of the same filesize (thus fooling the size part of sizetimestamp)
+        #  * The graphs are executed fast enough that _is_precalculated's mtime
+        #    check via math.isclose() couldn't detect the recalculation.
+        for content in ('test text', 'TEST TEXT', 'test text'):
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, n_workers=-1)
+            _ = task_graph.add_task(
+                func=_create_file,
+                args=(target_path, content),
+                target_path_list=[target_path],
+                task_name='create content')
+            task_graph.join()
+            task_graph.close()
+
+        with open(target_path) as target_file:
+            self.assertEqual(target_file.read(), content)
+
 
 def Fail(n_tries, result_path):
     """Create a function that fails after ``n_tries``."""
