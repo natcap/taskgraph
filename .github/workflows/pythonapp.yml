@@ -48,4 +48,4 @@ jobs:
           TMPDIR: $HOME
       run: |
         pip install pytest
-        pytest
+        pytest --log-level=DEBUG
