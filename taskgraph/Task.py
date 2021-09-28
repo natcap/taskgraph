@@ -1212,7 +1212,7 @@ class Task(object):
 
                     # Using nanosecond resolution for mtime (instead of the
                     # usual float result of os.path.getmtime()) allows us to
-                    # precisely compare creation time.
+                    # precisely compare modification time.
                     target_modified_time = os.stat(path).st_mtime_ns
                     if not int(modified_time) == target_modified_time:
                         mismatched_target_file_list.append(
