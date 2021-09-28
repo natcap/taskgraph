@@ -1209,9 +1209,14 @@ class Task(object):
                         mismatched_target_file_list.append(
                             "Path names don't match\n"
                             "cached: (%s)\nactual (%s)" % (path, actual_path))
+
+                    # Comparing mtimes as strings gets around binary
+                    # representation issues resulting in differing data:
+                    # what comes out of the db and what's read on disk.
+                    # The %.6f is to match the formatted number of decimals in
+                    # the string; matches what's in _hash_file.
                     target_modified_time = os.path.getmtime(path)
-                    if not math.isclose(
-                            float(modified_time), target_modified_time):
+                    if not modified_time == "%.6f" % target_modified_time:
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
@@ -1481,7 +1486,7 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = _normalize_path(file_path)
-        return '%d::%f::%s' % (
+        return '%d::%.6f::%s' % (
             os.path.getsize(norm_path), os.path.getmtime(norm_path),
             norm_path)
     hash_func = hashlib.new(hash_algorithm)
