@@ -1215,8 +1215,11 @@ class Task(object):
                     # what comes out of the db and what's read on disk.
                     # The %.6f is to match the formatted number of decimals in
                     # the string; matches what's in _hash_file.
+                    #if not modified_time == "%.6f" % target_modified_time:
                     target_modified_time = os.path.getmtime(path)
-                    if not modified_time == "%.6f" % target_modified_time:
+                    if not math.isclose(
+                            float(modified_time),
+                            target_modified_time, rel_tol=1e-12):
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
