@@ -6,6 +6,8 @@ TaskGraph Release History
 
 Unreleased Changes
 ------------------
+* Testing against python 3.9 in github actions and noting support in
+  ``setup.py``.
 * Fixes an issue that causes an ``EOFError`` or ``BrokenPipeError`` to occur
   when the ``TaskGraph`` terminates.
 * Updated the ``taskgraph`` example in the README for the latest API changes
