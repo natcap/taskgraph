@@ -1210,16 +1210,11 @@ class Task(object):
                             "Path names don't match\n"
                             "cached: (%s)\nactual (%s)" % (path, actual_path))
 
-                    # Comparing mtimes as strings gets around binary
-                    # representation issues resulting in differing data:
-                    # what comes out of the db and what's read on disk.
-                    # The %.6f is to match the formatted number of decimals in
-                    # the string; matches what's in _hash_file.
-                    #if not modified_time == "%.6f" % target_modified_time:
-                    target_modified_time = os.path.getmtime(path)
-                    if not math.isclose(
-                            float(modified_time),
-                            target_modified_time, rel_tol=1e-12):
+                    # Using nanosecond resolution for mtime (instead of the
+                    # usual float result of os.path.getmtime()) allows us to
+                    # precisely compare creation time.
+                    target_modified_time = os.stat(path).st_mtime_ns
+                    if not int(modified_time) == target_modified_time:
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
@@ -1489,8 +1484,8 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = _normalize_path(file_path)
-        return '%d::%.6f::%s' % (
-            os.path.getsize(norm_path), os.path.getmtime(norm_path),
+        return '%d::%i::%s' % (
+            os.path.getsize(norm_path), os.stat(norm_path).st_mtime_ns,
             norm_path)
     hash_func = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:
