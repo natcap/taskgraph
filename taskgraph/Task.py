@@ -772,10 +772,6 @@ class TaskGraph(object):
                 'n_workers: %s; join is vacuously true' % self._n_workers)
             return True
 
-        if self._terminated:
-            LOGGER.debug('Graph already terminated')
-            return True
-
         try:
             LOGGER.debug("attempting to join threads")
             timedout = False
@@ -790,7 +786,7 @@ class TaskGraph(object):
                         "task %s timed out in graph join", task.task_name)
                     return False
             if self._closed:
-                # Close down the taskgraph
+                # Close down the taskgraph; ok if already terminated
                 self._executor_ready_event.set()
                 self._terminate()
             return True

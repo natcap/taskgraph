@@ -479,7 +479,9 @@ class TaskGraphTests(unittest.TestCase):
             _ = broken_task.join()
 
         task_graph.close()
-        task_graph.join()
+
+        with self.assertRaises(ZeroDivisionError):
+            task_graph.join()
 
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
@@ -1243,6 +1245,8 @@ class TaskGraphTests(unittest.TestCase):
                     task_name='first re-run transient')
                 value = value_task.get()
                 self.assertEqual(value, expected_value)
+                task_graph.close()
+                task_graph.join()
             else:
                 with self.assertRaises(RuntimeError):
                     value_task = task_graph.add_task(
@@ -1253,8 +1257,9 @@ class TaskGraphTests(unittest.TestCase):
                         task_name='expected error {iteration_id}')
                     value = value_task.get()
 
-            task_graph.close()
-            task_graph.join()
+                with self.assertRaises(RuntimeError):
+                    task_graph.join()
+
             task_graph = None
 
     def test_malformed_taskgraph_database(self):
