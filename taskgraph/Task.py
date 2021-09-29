@@ -770,6 +770,13 @@ class TaskGraph(object):
             LOGGER.debug(
                 'workers: %s; terminated? %s' % (
                     self._n_workers, self._terminated))
+
+            for task_hash, task in self._task_hash_map.items():
+                if task.exception_object:
+                    LOGGER.debug(
+                        'Task %s had an exception; raising %s' % (
+                            task_hash, task.exception_object))
+                    raise task.exception_object
             return True
         try:
             LOGGER.debug("attempting to join threads")
