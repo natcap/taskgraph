@@ -7,7 +7,7 @@ TaskGraph Release History
 Unreleased Changes
 ------------------
 * Fixed an issue where tasks with ``hash_algorithm='sizetimestamp'`` would,
-  under certain conditions, fail to re-execute when the should.  This only
+  under certain conditions, fail to re-execute when they should.  This only
   occurred when a graph writing the same amount of , but possibly different,
   data is executed successively, with less than about 1.5 seconds between
   task executions.
