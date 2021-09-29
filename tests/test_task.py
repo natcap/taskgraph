@@ -473,11 +473,13 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
 
-        _ = task_graph.add_task(
+        broken_task = task_graph.add_task(
             func=_div_by_zero, task_name='test_broken_task')
-        task_graph.close()
         with self.assertRaises(ZeroDivisionError):
-            task_graph.join()
+            _ = broken_task.join()
+
+        task_graph.close()
+        task_graph.join()
 
     def test_broken_task_chain(self):
         """TaskGraph: test dependent tasks fail on ancestor fail."""
@@ -1190,7 +1192,6 @@ class TaskGraphTests(unittest.TestCase):
         with open(target_file_path, 'r') as target_file:
             self.assertEqual(target_file.read(), 'content')
 
-
     def test_return_value_no_record(self):
         """TaskGraph: test  ``get`` raises exception if not set to record."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -1239,7 +1240,7 @@ class TaskGraphTests(unittest.TestCase):
                     transient_run=True,
                     store_result=True,
                     args=(expected_value,),
-                    task_name=f'first re-run transient')
+                    task_name='first re-run transient')
                 value = value_task.get()
                 self.assertEqual(value, expected_value)
             else:
@@ -1249,7 +1250,7 @@ class TaskGraphTests(unittest.TestCase):
                         transient_run=True,
                         store_result=True,
                         args=(expected_value,),
-                        task_name=f'expected error {iteration_id}')
+                        task_name='expected error {iteration_id}')
                     value = value_task.get()
 
             task_graph.close()
@@ -1301,7 +1302,7 @@ class TaskGraphTests(unittest.TestCase):
                 'task_reexecution_hash', 'target_path_stats', 'result']
             connection = sqlite3.connect(database_path)
             cursor = connection.cursor()
-            cursor.execute(f'PRAGMA table_info(taskgraph_data)')
+            cursor.execute('PRAGMA table_info(taskgraph_data)')
             result = list(cursor.fetchall())
             cursor.close()
             connection.commit()

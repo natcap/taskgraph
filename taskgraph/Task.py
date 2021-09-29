@@ -767,18 +767,13 @@ class TaskGraph(object):
         """
         LOGGER.debug("joining taskgraph")
         if self._n_workers < 0:
+            # Join() is meaningless since tasks execute synchronously.
             LOGGER.debug(
                 'n_workers: %s; join is vacuously true' % self._n_workers)
             return True
 
         if self._terminated:
-            LOGGER.debug('Graph was terminated; checking for exceptions')
-            for task_hash, task in self._task_hash_map.items():
-                if task.exception_object:
-                    LOGGER.debug(
-                        'Task %s had an exception; raising %s' % (
-                            task_hash, task.exception_object))
-                    raise task.exception_object
+            LOGGER.debug('Graph already terminated')
             return True
 
         try:
