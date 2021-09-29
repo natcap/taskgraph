@@ -1212,7 +1212,18 @@ class Task(object):
 
                     # Using nanosecond resolution for mtime (instead of the
                     # usual float result of os.path.getmtime()) allows us to
-                    # precisely compare modification time.
+                    # precisely compare modification time because we're
+                    # comparing ints: st_mtime_ns always returns an int.
+                    #
+                    # Timestamp resolution: the python docs note that "many
+                    # filesystems do not provide nanosecond precision".
+                    # This is true (e.g. FAT, FAT32 timestamps are only
+                    # accurate to within 2 seconds), but the data read from the
+                    # filesystem will be consistent. This lets us know
+                    # whether the timestamp changed.  This also means that, on
+                    # FAT filesystems, if a file is changed within 2s of its
+                    # creation time, we might not be able to detect it.  This
+                    # is a weakness of FAT, not taskgraph.
                     target_modified_time = os.stat(path).st_mtime_ns
                     if not int(modified_time) == target_modified_time:
                         mismatched_target_file_list.append(
