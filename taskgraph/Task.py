@@ -1209,9 +1209,23 @@ class Task(object):
                         mismatched_target_file_list.append(
                             "Path names don't match\n"
                             "cached: (%s)\nactual (%s)" % (path, actual_path))
-                    target_modified_time = os.path.getmtime(path)
-                    if not math.isclose(
-                            float(modified_time), target_modified_time):
+
+                    # Using nanosecond resolution for mtime (instead of the
+                    # usual float result of os.path.getmtime()) allows us to
+                    # precisely compare modification time because we're
+                    # comparing ints: st_mtime_ns always returns an int.
+                    #
+                    # Timestamp resolution: the python docs note that "many
+                    # filesystems do not provide nanosecond precision".
+                    # This is true (e.g. FAT, FAT32 timestamps are only
+                    # accurate to within 2 seconds), but the data read from the
+                    # filesystem will be consistent. This lets us know
+                    # whether the timestamp changed.  This also means that, on
+                    # FAT filesystems, if a file is changed within 2s of its
+                    # creation time, we might not be able to detect it.  This
+                    # is a weakness of FAT, not taskgraph.
+                    target_modified_time = os.stat(path).st_mtime_ns
+                    if not int(modified_time) == target_modified_time:
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
@@ -1481,8 +1495,8 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = _normalize_path(file_path)
-        return '%d::%f::%s' % (
-            os.path.getsize(norm_path), os.path.getmtime(norm_path),
+        return '%d::%i::%s' % (
+            os.path.getsize(norm_path), os.stat(norm_path).st_mtime_ns,
             norm_path)
     hash_func = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:

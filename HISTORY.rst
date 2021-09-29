@@ -6,6 +6,11 @@ TaskGraph Release History
 
 Unreleased Changes
 ------------------
+* Fixed an issue where tasks with ``hash_algorithm='sizetimestamp'`` would,
+  under certain conditions, fail to re-execute when they should.  This only
+  occurred when a graph writing the same amount of , but possibly different,
+  data is executed successively, with less than about 1.5 seconds between
+  task executions.
 * After many years with the Natural Capital Project, Rich Sharp has stepped
   down from the Project and as the maintainer of ``taskgraph``.  James
   Douglass is taking his place, and this change is now reflected in
