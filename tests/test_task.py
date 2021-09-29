@@ -4,8 +4,8 @@ import logging
 import logging.handlers
 import multiprocessing
 import os
-import pickle
 import pathlib
+import pickle
 import re
 import rstcheck
 import shutil
@@ -88,6 +88,12 @@ def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
 
 def _div_by_zero():
     """Divide by zero to raise an exception."""
+    return 1/0
+
+
+def _div_by_zero_with_sleep():
+    """Divide by zero to raise an exception."""
+    time.sleep(1)
     return 1/0
 
 
@@ -472,8 +478,9 @@ class TaskGraphTests(unittest.TestCase):
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+
         _ = task_graph.add_task(
-            func=_div_by_zero, task_name='test_broken_task')
+            func=_div_by_zero_with_sleep, task_name='test_broken_task')
         task_graph.close()
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
