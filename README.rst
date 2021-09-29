@@ -86,7 +86,7 @@ Running Tests
 -------------
 
 Taskgraph includes a ``tox`` configuration for automating builds across
-python versions 2.7, 3.6, and whether ``psutil`` is installed.  To execute all
+multiple python versions and whether ``psutil`` is installed.  To execute all
 tests on all platforms, run:
 
     $ tox
