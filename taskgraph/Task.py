@@ -766,11 +766,13 @@ class TaskGraph(object):
 
         """
         LOGGER.debug("joining taskgraph")
-        if self._n_workers < 0 or self._terminated:
+        if self._n_workers < 0:
             LOGGER.debug(
-                'workers: %s; terminated? %s' % (
-                    self._n_workers, self._terminated))
+                'n_workers: %s; join is vacuously true' % self._n_workers)
+            return True
 
+        if self._terminated:
+            LOGGER.debug('Graph was terminated; checking for exceptions')
             for task_hash, task in self._task_hash_map.items():
                 if task.exception_object:
                     LOGGER.debug(
@@ -778,6 +780,7 @@ class TaskGraph(object):
                             task_hash, task.exception_object))
                     raise task.exception_object
             return True
+
         try:
             LOGGER.debug("attempting to join threads")
             timedout = False
