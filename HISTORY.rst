@@ -11,6 +11,10 @@ Unreleased Changes
   occurred when a graph writing the same amount of , but possibly different,
   data is executed successively, with less than about 1.5 seconds between
   task executions.
+* After many years with the Natural Capital Project, Rich Sharp has stepped
+  down from the Project and as the maintainer of ``taskgraph``.  James
+  Douglass is taking his place, and this change is now reflected in
+  ``setup.py``.
 * Fixes an issue that causes an ``EOFError`` or ``BrokenPipeError`` to occur
   when the ``TaskGraph`` terminates.
 * Updated the ``taskgraph`` example in the README for the latest API changes
