@@ -5,7 +5,6 @@ import hashlib
 import inspect
 import logging
 import logging.handlers
-import math
 import multiprocessing
 import multiprocessing.pool
 import os
@@ -768,6 +767,9 @@ class TaskGraph(object):
         """
         LOGGER.debug("joining taskgraph")
         if self._n_workers < 0 or self._terminated:
+            LOGGER.debug(
+                'workers: %s; terminated? %s' % (
+                    self._n_workers, self._terminated))
             return True
         try:
             LOGGER.debug("attempting to join threads")
