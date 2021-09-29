@@ -100,3 +100,11 @@ Or if you'd like to run the tests for the combination of Python 3.7 with
 ``psutil``, you'd run::
 
     $ tox -e py37-psutil
+
+If you don't have multiple python installations already available on your system,
+an easy way to accomplish this is to use ``tox-conda``
+(https://github.com/tox-dev/tox-conda) which will use conda environments to manage
+the versions of python available::
+
+    $ pip install tox-conda
+    $ tox
