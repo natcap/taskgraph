@@ -82,6 +82,28 @@ Then
       # expect that result is a list `list_len` long with `value_a+value_b` in it
       result = pickle.load(open(result_path, 'rb'))
 
+
+Caveats
+-------
+
+* Taskgraph's default method of checking whether a file has changed
+  (``hash_algorithm='sizetimestamp'``) uses the filesystem's modification
+  timestamp, interpreted in integer nanoseconds.  This check is only as
+  accurate as the filesystem's timestamp.  For example:
+
+  * FAT and FAT32 timestamps have a 2-second modification timestamp resolution
+  * exFAT has a 10 millisecond timestamp resolution
+  * NTFS has a 100 nanosecond timestamp resolution
+  * HFS+ has a 1 second timestamp resolution
+  * APFS has a 1 nanosecond timestamp resolution
+  * ext3 has a 1 second timestamp resolution
+  * ext4 has a 1 nanosecond timestamp resolution
+
+  If you suspect timestamp resolution to be an issue on your filesystem, you
+  may wish to store your files on a filesystem with more accurate timestamps or
+  else consider using a different ``hash_algorithm``.
+
+
 Running Tests
 -------------
 
