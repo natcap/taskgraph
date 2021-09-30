@@ -1254,7 +1254,8 @@ class TaskGraphTests(unittest.TestCase):
                         transient_run=True,
                         store_result=True,
                         args=(expected_value,),
-                        task_name='expected error {iteration_id}')
+                        task_name=f'expected error {iteration_id}')
+
                     value = value_task.get()
 
                 with self.assertRaises(RuntimeError):
