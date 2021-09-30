@@ -777,6 +777,8 @@ class TaskGraph(object):
             timedout = False
             for task in self._task_hash_map.values():
                 LOGGER.debug("attempting to join task %s", task.task_name)
+                # task.join() will raise any exception that resulted from the
+                # task's execution.
                 timedout = not task.join(timeout)
                 LOGGER.debug("task %s was joined", task.task_name)
                 # if the last task timed out then we want to timeout for all
