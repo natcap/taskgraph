@@ -6,6 +6,10 @@ TaskGraph Release History
 
 Unreleased Changes
 ------------------
+* Fixed an issue where exceptions raised during execution where the task
+  completed before ``TaskGraph.join()`` was called would not be raised.  Now,
+  if a task raises an exception, its exception will always be raised when
+  both ``Task.join()`` and ``TaskGraph.join()`` is called.
 * Fixed an issue where tasks with ``hash_algorithm='sizetimestamp'`` would,
   under certain conditions, fail to re-execute when they should.  This only
   occurred when a graph writing the same amount of , but possibly different,
