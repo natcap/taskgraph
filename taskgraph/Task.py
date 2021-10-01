@@ -5,7 +5,6 @@ import hashlib
 import inspect
 import logging
 import logging.handlers
-import math
 import multiprocessing
 import multiprocessing.pool
 import os
@@ -767,13 +766,19 @@ class TaskGraph(object):
 
         """
         LOGGER.debug("joining taskgraph")
-        if self._n_workers < 0 or self._terminated:
+        if self._n_workers < 0:
+            # Join() is meaningless since tasks execute synchronously.
+            LOGGER.debug(
+                'n_workers: %s; join is vacuously true' % self._n_workers)
             return True
+
         try:
             LOGGER.debug("attempting to join threads")
             timedout = False
             for task in self._task_hash_map.values():
                 LOGGER.debug("attempting to join task %s", task.task_name)
+                # task.join() will raise any exception that resulted from the
+                # task's execution.
                 timedout = not task.join(timeout)
                 LOGGER.debug("task %s was joined", task.task_name)
                 # if the last task timed out then we want to timeout for all
@@ -783,7 +788,7 @@ class TaskGraph(object):
                         "task %s timed out in graph join", task.task_name)
                     return False
             if self._closed:
-                # Close down the taskgraph
+                # Close down the taskgraph; ok if already terminated
                 self._executor_ready_event.set()
                 self._terminate()
             return True
