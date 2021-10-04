@@ -1439,8 +1439,10 @@ class TaskGraphTests(unittest.TestCase):
     def test_history_rst_format(self):
         """TaskGraph: ensure HISTORY.rst is correctly formatted."""
         # ensure there are no errors when checking the history file
+        history_filepath = os.path.join(
+            os.path.dirname(__file__), '..', 'HISTORY.rst')
         self.assertEqual(
-            list(rstcheck.check(open('HISTORY.rst', 'r').read())), [])
+            list(rstcheck.check(open(history_filepath, 'r').read())), [])
 
     def test_mtime_mismatch(self):
         """TaskGraph: ensure re-run when file mtimes don't match.

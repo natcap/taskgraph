@@ -108,7 +108,7 @@ Running Tests
 -------------
 
 Taskgraph includes a ``tox`` configuration for automating builds across
-python versions 2.7, 3.6, and whether ``psutil`` is installed.  To execute all
+multiple python versions and whether ``psutil`` is installed.  To execute all
 tests on all platforms, run:
 
     $ tox
@@ -122,3 +122,11 @@ Or if you'd like to run the tests for the combination of Python 3.7 with
 ``psutil``, you'd run::
 
     $ tox -e py37-psutil
+
+If you don't have multiple python installations already available on your system,
+an easy way to accomplish this is to use ``tox-conda``
+(https://github.com/tox-dev/tox-conda) which will use conda environments to manage
+the versions of python available::
+
+    $ pip install tox-conda
+    $ tox
