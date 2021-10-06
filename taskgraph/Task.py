@@ -416,7 +416,7 @@ class TaskGraph(object):
             if self._terminated:
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
-                    threading.currentThread())
+                    threading.current_thread())
                 break
             task = None
             try:
@@ -449,7 +449,7 @@ class TaskGraph(object):
                             LOGGER.warning('worker pool was already closed')
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
-                        "terminating executor %s." % threading.currentThread())
+                        "terminating executor %s." % threading.current_thread())
                     break
                 else:
                     # there's still the possibility for work to be added or

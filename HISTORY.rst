@@ -6,6 +6,8 @@ TaskGraph Release History
 
 Unreleased Changes
 ------------------
+* Testing against python 3.10 in github actions and officially noting support
+  for 3.10 in ``setup.py``.
 * Testing against python 3.9 in github actions and noting support in
   ``setup.py``.
 * Fixed an issue where exceptions raised during execution where the task
