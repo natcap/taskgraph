@@ -4,8 +4,10 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
-------------------
+.. Unreleased Changes
+
+0.11.0 (2021-10-12)
+-------------------
 * Testing against python 3.10 in github actions and officially noting support
   for 3.10 in ``setup.py``.
 * Testing against python 3.9 in github actions and noting support in
