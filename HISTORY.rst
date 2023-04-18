@@ -4,8 +4,27 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
-------------------
+.. Unreleased Changes
+
+0.11.0 (2021-10-12)
+-------------------
+* Testing against python 3.10 in github actions and officially noting support
+  for 3.10 in ``setup.py``.
+* Testing against python 3.9 in github actions and noting support in
+  ``setup.py``.
+* Fixed an issue where exceptions raised during execution where the task
+  completed before ``TaskGraph.join()`` was called would not be raised.  Now,
+  if a task raises an exception, its exception will always be raised when
+  either ``Task.join()`` and ``TaskGraph.join()`` is called.
+* Fixed an issue where tasks with ``hash_algorithm='sizetimestamp'`` would,
+  under certain conditions, fail to re-execute when they should.  This only
+  occurred when a graph writing the same amount of , but possibly different,
+  data is executed successively, with less than about 1.5 seconds between
+  task executions.
+* After many years with the Natural Capital Project, Rich Sharp has stepped
+  down from the Project and as the maintainer of ``taskgraph``.  James
+  Douglass is taking his place, and this change is now reflected in
+  ``setup.py``.
 * Fixes an issue that causes an ``EOFError`` or ``BrokenPipeError`` to occur
   when the ``TaskGraph`` terminates.
 * Updated the ``taskgraph`` example in the README for the latest API changes

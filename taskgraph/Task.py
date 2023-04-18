@@ -5,7 +5,6 @@ import hashlib
 import inspect
 import logging
 import logging.handlers
-import math
 import multiprocessing
 import multiprocessing.pool
 import os
@@ -418,7 +417,7 @@ class TaskGraph(object):
             if self._terminated:
                 LOGGER.debug(
                     "taskgraph is terminated, ending %s",
-                    threading.currentThread())
+                    threading.current_thread())
                 break
             task = None
             try:
@@ -451,7 +450,7 @@ class TaskGraph(object):
                             LOGGER.warning('worker pool was already closed')
                     LOGGER.debug(
                         "no tasks are pending and taskgraph closed, normally "
-                        "terminating executor %s." % threading.currentThread())
+                        "terminating executor %s." % threading.current_thread())
                     break
                 else:
                     # there's still the possibility for work to be added or
@@ -768,13 +767,19 @@ class TaskGraph(object):
 
         """
         LOGGER.debug("joining taskgraph")
-        if self._n_workers < 0 or self._terminated:
+        if self._n_workers < 0:
+            # Join() is meaningless since tasks execute synchronously.
+            LOGGER.debug(
+                'n_workers: %s; join is vacuously true' % self._n_workers)
             return True
+
         try:
             LOGGER.debug("attempting to join threads")
             timedout = False
             for task in self._task_hash_map.values():
                 LOGGER.debug("attempting to join task %s", task.task_name)
+                # task.join() will raise any exception that resulted from the
+                # task's execution.
                 timedout = not task.join(timeout)
                 LOGGER.debug("task %s was joined", task.task_name)
                 # if the last task timed out then we want to timeout for all
@@ -784,7 +789,7 @@ class TaskGraph(object):
                         "task %s timed out in graph join", task.task_name)
                     return False
             if self._closed:
-                # Close down the taskgraph
+                # Close down the taskgraph; ok if already terminated
                 self._executor_ready_event.set()
                 self._terminate()
             return True
@@ -1210,9 +1215,23 @@ class Task(object):
                         mismatched_target_file_list.append(
                             "Path names don't match\n"
                             "cached: (%s)\nactual (%s)" % (path, actual_path))
-                    target_modified_time = os.path.getmtime(path)
-                    if not math.isclose(
-                            float(modified_time), target_modified_time):
+
+                    # Using nanosecond resolution for mtime (instead of the
+                    # usual float result of os.path.getmtime()) allows us to
+                    # precisely compare modification time because we're
+                    # comparing ints: st_mtime_ns always returns an int.
+                    #
+                    # Timestamp resolution: the python docs note that "many
+                    # filesystems do not provide nanosecond precision".
+                    # This is true (e.g. FAT, FAT32 timestamps are only
+                    # accurate to within 2 seconds), but the data read from the
+                    # filesystem will be consistent. This lets us know
+                    # whether the timestamp changed.  This also means that, on
+                    # FAT filesystems, if a file is changed within 2s of its
+                    # creation time, we might not be able to detect it.  This
+                    # is a weakness of FAT, not taskgraph.
+                    target_modified_time = os.stat(path).st_mtime_ns
+                    if not int(modified_time) == target_modified_time:
                         mismatched_target_file_list.append(
                             "Modified times don't match "
                             "cached: (%f) actual: (%f)" % (
@@ -1482,8 +1501,8 @@ def _hash_file(file_path, hash_algorithm, buf_size=2**20):
     """
     if hash_algorithm == 'sizetimestamp':
         norm_path = _normalize_path(file_path)
-        return '%d::%f::%s' % (
-            os.path.getsize(norm_path), os.path.getmtime(norm_path),
+        return '%d::%i::%s' % (
+            os.path.getsize(norm_path), os.stat(norm_path).st_mtime_ns,
             norm_path)
     hash_func = hashlib.new(hash_algorithm)
     with open(file_path, 'rb') as f:

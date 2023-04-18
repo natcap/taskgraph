@@ -17,8 +17,8 @@ setup(
     setup_requires=['setuptools_scm'],
     description='Parallel task graph framework.',
     long_description=LONG_DESCRIPTION,
-    maintainer='Rich Sharp',
-    maintainer_email='richpsharp@gmail.com',
+    maintainer='James Douglass',
+    maintainer_email='jamesdouglassusa@gmail.com',
     url='https://github.com/natcap/taskgraph',
     packages=['taskgraph'],
     license='BSD',
@@ -38,5 +38,7 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
         'License :: OSI Approved :: BSD License'
     ])

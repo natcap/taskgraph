@@ -4,8 +4,8 @@ import logging
 import logging.handlers
 import multiprocessing
 import os
-import pickle
 import pathlib
+import pickle
 import re
 import rstcheck
 import shutil
@@ -472,9 +472,14 @@ class TaskGraphTests(unittest.TestCase):
     def test_broken_task(self):
         """TaskGraph: Test that a task with an exception won't hang."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
-        _ = task_graph.add_task(
+
+        broken_task = task_graph.add_task(
             func=_div_by_zero, task_name='test_broken_task')
+        with self.assertRaises(ZeroDivisionError):
+            _ = broken_task.join()
+
         task_graph.close()
+
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
 
@@ -1198,7 +1203,6 @@ class TaskGraphTests(unittest.TestCase):
         with open(target_file_path, 'r') as target_file:
             self.assertEqual(target_file.read(), 'content')
 
-
     def test_return_value_no_record(self):
         """TaskGraph: test  ``get`` raises exception if not set to record."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
@@ -1247,9 +1251,11 @@ class TaskGraphTests(unittest.TestCase):
                     transient_run=True,
                     store_result=True,
                     args=(expected_value,),
-                    task_name=f'first re-run transient')
+                    task_name='first re-run transient')
                 value = value_task.get()
                 self.assertEqual(value, expected_value)
+                task_graph.close()
+                task_graph.join()
             else:
                 with self.assertRaises(RuntimeError):
                     value_task = task_graph.add_task(
@@ -1258,10 +1264,12 @@ class TaskGraphTests(unittest.TestCase):
                         store_result=True,
                         args=(expected_value,),
                         task_name=f'expected error {iteration_id}')
+
                     value = value_task.get()
 
-            task_graph.close()
-            task_graph.join()
+                with self.assertRaises(RuntimeError):
+                    task_graph.join()
+
             task_graph = None
 
     def test_malformed_taskgraph_database(self):
@@ -1309,7 +1317,7 @@ class TaskGraphTests(unittest.TestCase):
                 'task_reexecution_hash', 'target_path_stats', 'result']
             connection = sqlite3.connect(database_path)
             cursor = connection.cursor()
-            cursor.execute(f'PRAGMA table_info(taskgraph_data)')
+            cursor.execute('PRAGMA table_info(taskgraph_data)')
             result = list(cursor.fetchall())
             cursor.close()
             connection.commit()
@@ -1440,8 +1448,39 @@ class TaskGraphTests(unittest.TestCase):
     def test_history_rst_format(self):
         """TaskGraph: ensure HISTORY.rst is correctly formatted."""
         # ensure there are no errors when checking the history file
+        history_filepath = os.path.join(
+            os.path.dirname(__file__), '..', 'HISTORY.rst')
         self.assertEqual(
-            list(rstcheck.check(open('HISTORY.rst', 'r').read())), [])
+            list(rstcheck.check(open(history_filepath, 'r').read())), [])
+
+    def test_mtime_mismatch(self):
+        """TaskGraph: ensure re-run when file mtimes don't match.
+
+        This test addresses the issue described under the github issue
+        https://github.com/natcap/taskgraph/issues/70.
+        """
+        target_path = os.path.join(self.workspace_dir, 'target.txt')
+
+        # SETUP:  When we call 3 similar graphs in rapid succession, the file's
+        # mtime is not precise enough to detect that the file has actually
+        # changed.  The specific conditions here are:
+        #  * The task "test text" has already been computed once
+        #  * The file written by the first "test text" is replaced by content
+        #    of the same filesize (thus fooling the size part of sizetimestamp)
+        #  * The graphs are executed fast enough that _is_precalculated's mtime
+        #    check via math.isclose() couldn't detect the recalculation.
+        for content in ('test text', 'TEST TEXT', 'test text'):
+            task_graph = taskgraph.TaskGraph(self.workspace_dir, n_workers=-1)
+            _ = task_graph.add_task(
+                func=_create_file,
+                args=(target_path, content),
+                target_path_list=[target_path],
+                task_name='create content')
+            task_graph.join()
+            task_graph.close()
+
+        with open(target_path) as target_file:
+            self.assertEqual(target_file.read(), content)
 
 
 def Fail(n_tries, result_path):
