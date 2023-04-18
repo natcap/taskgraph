@@ -4,7 +4,12 @@
 TaskGraph Release History
 =========================
 
-.. Unreleased Changes
+Unreleased Changes
+------------------
+* Python 3.6 has reached end-of-life and is no longer maintained, so it has
+  been removed from the automated tests.
+* Python 3.11 has been released, so ``taskgraph`` is now tested against this
+  new version of the language.
 
 0.11.0 (2021-10-12)
 -------------------
