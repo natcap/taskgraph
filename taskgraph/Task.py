@@ -129,7 +129,8 @@ def _logging_queue_monitor(logging_queue):
         if record is None:
             break
         logger = logging.getLogger(record.name)
-        logger.handle(record)
+        if record.levelno >= logger.getEffectiveLevel():
+            logger.handle(record)
     LOGGER.debug('_logging_queue_monitor shutting down')
 
 
