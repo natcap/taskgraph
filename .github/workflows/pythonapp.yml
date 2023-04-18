@@ -31,7 +31,7 @@ jobs:
           python -m pip install --upgrade pip
           # See this comment about the importlib_metadata constraint:
           # https://github.com/python/importlib_metadata/issues/406#issuecomment-1264666048
-          pip install tox tox-gh-actions flake8 "importlib_metadata<5"
+          pip install tox tox-gh-actions flake8 "importlib_metadata<5" rstcheck
 
       - name: Lint with flake8
         run: |
