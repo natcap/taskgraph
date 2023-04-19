@@ -7,9 +7,9 @@ import os
 import pathlib
 import pickle
 import re
-import rstcheck
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import time
 import unittest
@@ -164,6 +164,7 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: verify we can load the version."""
         try:
             import taskgraph
+
             # Verifies that there's a version attribute and it has a value.
             self.assertTrue(len(taskgraph.__version__) > 0)
         except Exception:
@@ -432,10 +433,12 @@ class TaskGraphTests(unittest.TestCase):
         # was a duplicate
         database_path = os.path.join(
             self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
-        with sqlite3.connect(database_path) as conn:
+        conn = sqlite3.connect(database_path)
+        with conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM taskgraph_data")
             result = cursor.fetchall()
+        conn.close()
         self.assertEqual(len(result), 4)
 
     def test_task_broken_chain(self):
@@ -526,10 +529,13 @@ class TaskGraphTests(unittest.TestCase):
         # we shouldn't have anything in the database
         database_path = os.path.join(
             self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
-        with sqlite3.connect(database_path) as conn:
+
+        conn = sqlite3.connect(database_path)
+        with conn:
             cursor = conn.cursor()
             cursor.executescript("SELECT * FROM taskgraph_data")
             result = cursor.fetchall()
+        conn.close()
         self.assertEqual(len(result), 0)
 
     def test_closed_graph(self):
@@ -899,6 +905,7 @@ class TaskGraphTests(unittest.TestCase):
     def test_very_long_string(self):
         """TaskGraph: ensure that long strings don't case an OSError."""
         from taskgraph.Task import _get_file_stats
+
         # this is a list with two super long strings to try to trick some
         # os function into thinking it's a path.
         base_value = [
@@ -1441,8 +1448,7 @@ class TaskGraphTests(unittest.TestCase):
         # ensure there are no errors when checking the history file
         history_filepath = os.path.join(
             os.path.dirname(__file__), '..', 'HISTORY.rst')
-        self.assertEqual(
-            list(rstcheck.check(open(history_filepath, 'r').read())), [])
+        subprocess.check_call(['rstcheck', history_filepath])
 
     def test_mtime_mismatch(self):
         """TaskGraph: ensure re-run when file mtimes don't match.
