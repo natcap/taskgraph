@@ -811,6 +811,7 @@ class TaskGraphTests(unittest.TestCase):
             func=_log_from_another_process,
             args=(logger_name, 'YOU WILL NOT SEE THIS'))
         log_task.join()
+        file_handler.flush()
 
         # second should log because logger level is set to info
         logger.setLevel(logging.INFO)
