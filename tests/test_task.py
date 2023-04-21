@@ -831,6 +831,7 @@ class TaskGraphTests(unittest.TestCase):
         def get_name_and_message():
             with open(file_log_path, 'r') as log_file:
                 message = log_file.read().rstrip()
+                printf(f'DEBUG this is the message from {file_log_path}: {message}')
             process_name, logged_message = re.match(
                 ':([^:]*):([^:]*):', message).groups()
             return process_name, logged_message
