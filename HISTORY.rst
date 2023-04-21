@@ -10,6 +10,8 @@ Unreleased Changes
   been removed from the automated tests.
 * Python 3.11 has been released, so ``taskgraph`` is now tested against this
   new version of the language.
+* Fixed issue where ``TaskGraph`` ignored the parent logger level and would
+  log messages with a lower priority than its effective level.
 
 0.11.0 (2021-10-12)
 -------------------
@@ -47,8 +49,6 @@ Unreleased Changes
   recomputation. Rather than add additional complexity around the limitations
   of this feature it is being removed to guide a design toward a standalone
   cache library if needed.
-* Fixed issue where ``TaskGraph`` ignored the parent logger level and would
-  log messages with a lower priority than its effective level.
 
 0.10.3 (2021-01-29)
 -------------------
