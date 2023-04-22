@@ -105,16 +105,16 @@ def _initialize_logging_to_queue(logging_queue):
         None
 
     """
-    root_logger = logging.getLogger()
-
-    print(f'DEBUG all handlers: {print(list(logging.Logger.manager.loggerDict.keys()))}')
-
     # By the time this function is called, `root_logger` has a copy of all of
     # the logging handlers registered to it within the parent process, which
     # leads to duplicate logging in some cases.  By removing all of the
     # handlers here, we ensure that log messages can only be passed back to the
     # parent process by the `logging_queue`, where they will be handled.
-    root_logger.handlers.clear()
+    for logger in logging.Logger.manager.loggerDict.values():
+        logger.handlers.clear()
+        logger.setLevel(logging.NOTSET)
+
+    root_logger = logging.getLogger()
     root_logger.setLevel(logging.NOTSET)
     handler = logging.handlers.QueueHandler(logging_queue)
     root_logger.addHandler(handler)
