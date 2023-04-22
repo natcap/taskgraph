@@ -112,9 +112,7 @@ def _initialize_logging_to_queue(logging_queue):
     # leads to duplicate logging in some cases.  By removing all of the
     # handlers here, we ensure that log messages can only be passed back to the
     # parent process by the `logging_queue`, where they will be handled.
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
+    root_logger.handlers.clear()
     root_logger.setLevel(logging.NOTSET)
     handler = logging.handlers.QueueHandler(logging_queue)
     root_logger.addHandler(handler)
