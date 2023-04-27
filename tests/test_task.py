@@ -796,7 +796,7 @@ class TaskGraphTests(unittest.TestCase):
         logger_name = 'test.task.queuelogger'
         log_message = 'This is coming from another process'
         logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.DEBUG)
+        #logger.setLevel(logging.DEBUG)
         file_log_path = os.path.join(
             self.workspace_dir, 'test_multiprocessed_logging.log')
         file_handler = logging.FileHandler(file_log_path)
@@ -805,13 +805,23 @@ class TaskGraphTests(unittest.TestCase):
         logger.addHandler(file_handler)
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
+        logger.setLevel(logging.WARNING)
         log_task = task_graph.add_task(
             func=_log_from_another_process,
-            args=(logger_name, log_message))
+            args=(logger_name, 'YOU WILL NOT SEE THIS'))
         log_task.join()
         file_handler.flush()
+
+        logger.setLevel(logging.INFO)
+        log_task = task_graph.add_task(
+            func=_log_from_another_process,
+            args=(logger_name, log_messages))
+        log_task.join()
+
+
         task_graph.close()
         task_graph.join()
+        file_handler.flush()
         file_handler.close()
 
         @retrying.retry(wait_exponential_multiplier=100,
