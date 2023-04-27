@@ -815,7 +815,7 @@ class TaskGraphTests(unittest.TestCase):
         logger.setLevel(logging.INFO)
         log_task = task_graph.add_task(
             func=_log_from_another_process,
-            args=(logger_name, log_messages))
+            args=(logger_name, log_message))
         log_task.join()
 
 
