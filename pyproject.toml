@@ -1,0 +1,39 @@
+[project]
+name = "taskgraph"
+description = "Parallel task graph framework"
+readme = "README.rst"
+requires-python = ">=3.6"
+license = {file = "LICENSE.txt"}
+maintainers = [
+    {name = "Natural Capital Project Software Team"}
+]
+keywords = ["parallel", "multiprocessing", "distributed", "computing"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Topic :: System :: Distributed Computing",
+    "Development Status :: 5 - Production/Stable",
+    "Natural Language :: English",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: BSD License"
+]
+# the version is provided dynamically by setuptools_scm
+# `dependencies` and `optional-dependencies` are provided by setuptools
+# using the corresponding setup args `install_requires` and `extras_require`
+dynamic = ["version", "dependencies", "optional-dependencies"]
+
+[build-system]
+requires = [
+    'wheel', 'setuptools_scm>=8.0'
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_scheme = "post-release"
+local_scheme = "node-and-date"
