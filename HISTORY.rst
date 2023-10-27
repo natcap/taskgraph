@@ -4,8 +4,8 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
-------------------
+0.11.1 (2023-10-27)
+-------------------
 * Adding ``pyproject.toml`` for our build definitions.
 * Python 3.6 has reached end-of-life and is no longer maintained, so it has
   been removed from the automated tests.
