@@ -1,5 +1,4 @@
 """Task graph framework."""
-from pkg_resources import get_distribution
 import collections
 import hashlib
 import inspect
@@ -15,10 +14,21 @@ import queue
 import sqlite3
 import threading
 import time
+try:
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version
+except ImportError:
+    # importlib.metadata added to stdlib in 3.8
+    from importlib_metadata import PackageNotFoundError
+    from importlib_metadata import version
 
 import retrying
 
-__version__ = get_distribution('taskgraph').version
+try:
+    __version__ = version('taskgraph')
+except PackageNotFoundError:
+    # package is not installed; no metadata available
+    pass
 
 
 _VALID_PATH_TYPES = (str, pathlib.PurePath)

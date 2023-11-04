@@ -4,6 +4,13 @@
 TaskGraph Release History
 =========================
 
+Unreleased Changes
+------------------
+* Using ``importlib.metadata`` or ``importlib_metadata``, depending on the
+  python version, to read the version from package metadata.  This is in
+  response to ``pkg_resources`` being deprecated.
+  (`#100 <https://github.com/natcap/taskgraph/issues/100>`_)
+
 0.11.1 (2023-10-27)
 -------------------
 * Adding ``pyproject.toml`` for our build definitions.
