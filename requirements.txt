@@ -4,3 +4,4 @@
 # taskgraph to work as expected.
 
 retrying>=1.3.0
+importlib_metadata  # technically only required on python < 3.8; easier to install with conda across all versions
