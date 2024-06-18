@@ -16,8 +16,6 @@ setup(
     setup_requires=['setuptools_scm'],
     description='Parallel task graph framework.',
     long_description=LONG_DESCRIPTION,
-    maintainer='James Douglass',
-    maintainer_email='jamesdouglassusa@gmail.com',
     url='https://github.com/natcap/taskgraph',
     packages=['taskgraph'],
     license='BSD',
