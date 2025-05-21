@@ -873,6 +873,7 @@ class TaskGraphTests(unittest.TestCase):
     def test_unix_path_repeated_function(self):
         """TaskGraph: ensure no reruns if path is unix style."""
         global _append_val
+        _append_val = _append_val  # flake8 complains if not defined
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
         target_dir = self.workspace_dir + '/foo/bar/rad/'
