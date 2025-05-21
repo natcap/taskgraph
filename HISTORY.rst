@@ -4,8 +4,12 @@
 TaskGraph Release History
 =========================
 
-Unreleased Changes
-------------------
+..
+   Unreleased Changes
+   ------------------
+
+0.11.2 (2025-05-21)
+-------------------
 * Using ``importlib.metadata`` or ``importlib_metadata``, depending on the
   python version, to read the version from package metadata.  This is in
   response to ``pkg_resources`` being deprecated.
