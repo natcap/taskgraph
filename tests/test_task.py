@@ -150,7 +150,8 @@ def _kill_current_process():
         raise AssertionError(
             "This function is only supposed to be called in a subprocess")
 
-    os.kill(os.getpid(), signal.SIGKILL)
+    # Signal.SIGTERM works on both *NIX and Windows.
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 class TaskGraphTests(unittest.TestCase):
