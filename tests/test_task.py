@@ -1502,10 +1502,15 @@ class TaskGraphTests(unittest.TestCase):
         See https://github.com/natcap/taskgraph/issues/109
         """
         task_graph = taskgraph.TaskGraph(self.workspace_dir, n_workers=1)
-        task = task_graph.add_task(_kill_current_process)
+        with self.assertLogs('taskgraph', level='ERROR') as cm:
+            _ = task_graph.add_task(_kill_current_process)
+            task_graph.join()
+            task_graph.close()
 
-        task_graph.join()
-        task_graph.close()
+        self.assertEqual(len(cm.output), 1)
+        self.assertTrue(cm.output[0].startswith('ERROR'))
+        self.assertIn('A change in process pool PIDs has been detected!',
+                 cm.output[0])
 
 
 def Fail(n_tries, result_path):
