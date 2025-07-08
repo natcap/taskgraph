@@ -101,19 +101,6 @@ def _null_func():
     return None
 
 
-def _initialize_process_pool(logging_queue):
-    """A function to chain together multiple initialization functions.
-
-    Args:
-        logging_queue (multiprocessing.Queue): The queue to use for passing
-            log records back to the main process.
-
-    Returns:
-        ``None``
-    """
-    _initialize_logging_to_queue(logging_queue)
-
-
 def _initialize_logging_to_queue(logging_queue):
     """Add a synchronized queue to a new process.
 
@@ -404,7 +391,7 @@ class TaskGraph(object):
         if n_workers > 0:
             self._logging_queue = multiprocessing.Queue()
             self._worker_pool = NonDaemonicPool(
-                n_workers, initializer=_initialize_process_pool,
+                n_workers, initializer=_initialize_logging_to_queue,
                 initargs=(self._logging_queue,))
             self._logging_monitor_thread = threading.Thread(
                 target=_logging_queue_monitor,
