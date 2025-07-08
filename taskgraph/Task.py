@@ -152,21 +152,6 @@ def _logging_queue_monitor(logging_queue):
     LOGGER.debug('_logging_queue_monitor shutting down')
 
 
-def _process_pool_monitor(parent_pid, starting_pids_set):
-    LOGGER.debug("Starting the process pool PID monitor")
-    parent_process = psutil.Process(parent_pid)
-    while True:
-        child_processes = set(
-            proc.pid for proc in parent_process.children(recursive=False))
-        print(child_processes)
-        if child_processes != starting_pids_set:
-            print("Change in PIDs!")
-            print(child_processes)
-            print(starting_pids_set)
-        time.sleep(1)
-        pass
-
-
 def _create_taskgraph_table_schema(taskgraph_database_path):
     """Create database exists and/or ensures it is compatible and recreate.
 
@@ -420,9 +405,11 @@ class TaskGraph(object):
             self._logging_monitor_thread = threading.Thread(
                 target=_logging_queue_monitor,
                 args=(self._logging_queue,))
+
+            self._process_pool_monitor_wait_event = threading.Event()
             self._process_pool_monitor_thread = threading.Thread(
-                target=_process_pool_monitor,
-                args=(os.getpid(), set(proc.pid for proc in self._worker_pool._pool),))
+                target=self._process_pool_monitor,
+                args=(self._process_pool_monitor_wait_event,))
 
             self._logging_monitor_thread.daemon = True
             self._logging_monitor_thread.start()
@@ -792,6 +779,26 @@ class TaskGraph(object):
                 timeout=self._reporting_interval - (
                     (time.time() - start_time)) % self._reporting_interval)
         LOGGER.debug("_execution monitor shutting down")
+
+    def _process_pool_monitor(self, pool_monitor_wait_event):
+        starting_pool_pids = set(proc.pid for proc in self._worker_pool._pool)
+
+        while True:
+            if self._terminated:
+                break
+
+            current_pids = set(
+                proc.pid for proc in self._worker_pool._pool)
+
+            if current_pids != starting_pool_pids:
+                LOGGER.error(
+                    "A change in process pool PIDs has been detected! "
+                    "Shutting down the task graph. "
+                    f"{starting_pool_pids} changed to {current_pids }")
+                self._terminate()
+
+            # Wait 0.5s before looping.
+            pool_monitor_wait_event.wait(timeout=0.5)
 
     def join(self, timeout=None):
         """Join all threads in the graph.
