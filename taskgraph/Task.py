@@ -14,6 +14,7 @@ import queue
 import sqlite3
 import threading
 import time
+
 try:
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version
@@ -100,6 +101,19 @@ def _null_func():
     return None
 
 
+def _initialize_process_pool(logging_queue):
+    """A function to chain together multiple initialization functions.
+
+    Args:
+        logging_queue (multiprocessing.Queue): The queue to use for passing
+            log records back to the main process.
+
+    Returns:
+        ``None``
+    """
+    _initialize_logging_to_queue(logging_queue)
+
+
 def _initialize_logging_to_queue(logging_queue):
     """Add a synchronized queue to a new process.
 
@@ -140,6 +154,21 @@ def _logging_queue_monitor(logging_queue):
         logger = logging.getLogger(record.name)
         logger.handle(record)
     LOGGER.debug('_logging_queue_monitor shutting down')
+
+
+def _process_pool_monitor(parent_pid, starting_pids_set):
+    LOGGER.debug("Starting the process pool PID monitor")
+    parent_process = psutil.Process(parent_pid)
+    while True:
+        child_processes = set(
+            proc.pid for proc in parent_process.children(recursive=False))
+        print(child_processes)
+        if child_processes != starting_pids_set:
+            print("Change in PIDs!")
+            print(child_processes)
+            print(starting_pids_set)
+        time.sleep(1)
+        pass
 
 
 def _create_taskgraph_table_schema(taskgraph_database_path):
@@ -390,14 +419,19 @@ class TaskGraph(object):
         if n_workers > 0:
             self._logging_queue = multiprocessing.Queue()
             self._worker_pool = NonDaemonicPool(
-                n_workers, initializer=_initialize_logging_to_queue,
+                n_workers, initializer=_initialize_process_pool,
                 initargs=(self._logging_queue,))
             self._logging_monitor_thread = threading.Thread(
                 target=_logging_queue_monitor,
                 args=(self._logging_queue,))
+            self._process_pool_monitor_thread = threading.Thread(
+                target=_process_pool_monitor,
+                args=(os.getpid(), set(proc.pid for proc in self._worker_pool._pool),))
 
             self._logging_monitor_thread.daemon = True
             self._logging_monitor_thread.start()
+            self._process_pool_monitor_thread.daemon = True
+            self._process_pool_monitor_thread.start()
             if HAS_PSUTIL:
                 parent = psutil.Process()
                 parent.nice(PROCESS_LOW_PRIORITY)
