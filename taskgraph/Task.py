@@ -23,7 +23,6 @@ except ImportError:
     from importlib_metadata import PackageNotFoundError
     from importlib_metadata import version
 
-import psutil
 import retrying
 
 try:
@@ -36,14 +35,19 @@ except PackageNotFoundError:
 _VALID_PATH_TYPES = (str, pathlib.PurePath)
 _TASKGRAPH_DATABASE_FILENAME = 'taskgraph_data.db'
 
-if psutil.WINDOWS:
-    # Windows' scheduler doesn't use POSIX niceness.
-    PROCESS_LOW_PRIORITY = psutil.BELOW_NORMAL_PRIORITY_CLASS
-else:
-    # On POSIX, use system niceness.
-    # -20 is high priority, 0 is normal priority, 19 is low priority.
-    # 10 here is an arbitrary selection that's probably nice enough.
-    PROCESS_LOW_PRIORITY = 10
+try:
+    import psutil
+    HAS_PSUTIL = True
+    if psutil.WINDOWS:
+        # Windows' scheduler doesn't use POSIX niceness.
+        PROCESS_LOW_PRIORITY = psutil.BELOW_NORMAL_PRIORITY_CLASS
+    else:
+        # On POSIX, use system niceness.
+        # -20 is high priority, 0 is normal priority, 19 is low priority.
+        # 10 here is an arbitrary selection that's probably nice enough.
+        PROCESS_LOW_PRIORITY = 10
+except ImportError:
+    HAS_PSUTIL = False
 
 LOGGER = logging.getLogger(__name__)
 _MAX_TIMEOUT = 5.0  # amount of time to wait for threads to terminate
@@ -416,16 +420,17 @@ class TaskGraph(object):
             self._process_pool_monitor_thread.daemon = True
             self._process_pool_monitor_thread.start()
 
-            parent = psutil.Process()
-            parent.nice(PROCESS_LOW_PRIORITY)
-            for child in parent.children():
-                try:
-                    child.nice(PROCESS_LOW_PRIORITY)
-                except psutil.NoSuchProcess:
-                    LOGGER.warning(
-                        "NoSuchProcess exception encountered when trying "
-                        "to nice %s. This might be a bug in `psutil` so "
-                        "it should be okay to ignore.")
+            if HAS_PSUTIL:
+                parent = psutil.Process()
+                parent.nice(PROCESS_LOW_PRIORITY)
+                for child in parent.children():
+                    try:
+                        child.nice(PROCESS_LOW_PRIORITY)
+                    except psutil.NoSuchProcess:
+                        LOGGER.warning(
+                            "NoSuchProcess exception encountered when trying "
+                            "to nice %s. This might be a bug in `psutil` so "
+                            "it should be okay to ignore.")
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
