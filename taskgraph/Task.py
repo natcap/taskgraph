@@ -781,6 +781,21 @@ class TaskGraph(object):
         LOGGER.debug("_execution monitor shutting down")
 
     def _process_pool_monitor(self, pool_monitor_wait_event):
+        """Monitor the state of the multiprocessing pool's workers.
+
+        Python's multiprocessing.Pool has a bunch of logic to make sure that
+        the pool always has the same number of workers, and it can even limit
+        the lifespan of the pool's worker processes.  In our case, worker
+        processes have multiprocessing.Event objects on them, which means that
+        if a worker process dies for any reason, the whole TaskGraph object
+        will hang.  This worker process monitors for any changes in the PIDs of
+        a multiprocessing.Pool object and terminates the graph if any are
+        found.
+
+        Args:
+            pool_monitor_wait_event (threading.Event): used to sleep the
+                monitor thread for 0.5 seconds.
+        """
         starting_pool_pids = set(proc.pid for proc in self._worker_pool._pool)
 
         while True:
@@ -799,6 +814,7 @@ class TaskGraph(object):
 
             # Wait 0.5s before looping.
             pool_monitor_wait_event.wait(timeout=0.5)
+        LOGGER.debug('_process_pool_monitor shutting down')
 
     def join(self, timeout=None):
         """Join all threads in the graph.
