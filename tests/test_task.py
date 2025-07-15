@@ -1,4 +1,5 @@
 """Tests for taskgraph."""
+import concurrent.futures.process
 import hashlib
 import logging
 import logging.handlers
@@ -1503,15 +1504,10 @@ class TaskGraphTests(unittest.TestCase):
         See https://github.com/natcap/taskgraph/issues/109
         """
         task_graph = taskgraph.TaskGraph(self.workspace_dir, n_workers=1)
-        with self.assertLogs('taskgraph', level='ERROR') as cm:
+        with self.assertRaises(concurrent.futures.process.BrokenProcessPool):
             _ = task_graph.add_task(_kill_current_process)
             task_graph.join()
             task_graph.close()
-
-        self.assertEqual(len(cm.output), 1)
-        self.assertTrue(cm.output[0].startswith('ERROR'))
-        self.assertIn('A change in process pool PIDs has been detected!',
-                 cm.output[0])
 
 
 def Fail(n_tries, result_path):

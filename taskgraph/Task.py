@@ -1,5 +1,6 @@
 """Task graph framework."""
 import collections
+import concurrent.futures
 import hashlib
 import inspect
 import logging
@@ -94,6 +95,15 @@ class NonDaemonicPool(multiprocessing.pool.Pool):
         """Invoke super to set the context of Pool class explicitly."""
         kwargs['context'] = NoDaemonContext()
         super(NonDaemonicPool, self).__init__(*args, **kwargs)
+
+
+class NoDaemonProcessPoolExecutor(concurrent.futures.ProcessPoolExecutor):
+    """NonDaemonic Process Pool Executor"""
+
+    def __init__(self, *args, **kwargs):
+        """Invoke super to set the context of Pool class explicitly."""
+        kwargs['mp_context'] = NoDaemonContext()
+        super(NoDaemonProcessPoolExecutor, self).__init__(*args, **kwargs)
 
 
 def _null_func():
@@ -390,22 +400,16 @@ class TaskGraph(object):
         # set up multiprocessing if n_workers > 0
         if n_workers > 0:
             self._logging_queue = multiprocessing.Queue()
-            self._worker_pool = NonDaemonicPool(
-                n_workers, initializer=_initialize_logging_to_queue,
-                initargs=(self._logging_queue,))
+            self._worker_pool = NoDaemonProcessPoolExecutor(
+                max_workers=n_workers,
+                initializer=_initialize_logging_to_queue,
+                initargs=(self._logging_queue,)
+            )
             self._logging_monitor_thread = threading.Thread(
                 target=_logging_queue_monitor,
                 args=(self._logging_queue,))
-
-            self._process_pool_monitor_wait_event = threading.Event()
-            self._process_pool_monitor_thread = threading.Thread(
-                target=self._process_pool_monitor,
-                args=(self._process_pool_monitor_wait_event,))
-
             self._logging_monitor_thread.daemon = True
             self._logging_monitor_thread.start()
-            self._process_pool_monitor_thread.daemon = True
-            self._process_pool_monitor_thread.start()
 
             if HAS_PSUTIL:
                 parent = psutil.Process()
@@ -457,8 +461,7 @@ class TaskGraph(object):
                         # pool, because otherwise who knows if it's still
                         # executing anything
                         try:
-                            self._worker_pool.close()
-                            self._worker_pool.terminate()
+                            self._worker_pool.shutdown()
                             self._worker_pool = None
                             self._terminate()
                         except Exception:
@@ -772,42 +775,6 @@ class TaskGraph(object):
                     (time.time() - start_time)) % self._reporting_interval)
         LOGGER.debug("_execution monitor shutting down")
 
-    def _process_pool_monitor(self, pool_monitor_wait_event):
-        """Monitor the state of the multiprocessing pool's workers.
-
-        Python's multiprocessing.Pool has a bunch of logic to make sure that
-        the pool always has the same number of workers, and it can even limit
-        the lifespan of the pool's worker processes.  In our case, worker
-        processes have multiprocessing.Event objects on them, which means that
-        if a worker process dies for any reason, the whole TaskGraph object
-        will hang.  This worker process monitors for any changes in the PIDs of
-        a multiprocessing.Pool object and terminates the graph if any are
-        found.
-
-        Args:
-            pool_monitor_wait_event (threading.Event): used to sleep the
-                monitor thread for 0.5 seconds.
-        """
-        starting_pool_pids = set(proc.pid for proc in self._worker_pool._pool)
-
-        while True:
-            if self._terminated:
-                break
-
-            current_pids = set(
-                proc.pid for proc in self._worker_pool._pool)
-
-            if current_pids != starting_pool_pids:
-                LOGGER.error(
-                    "A change in process pool PIDs has been detected! "
-                    "Shutting down the task graph. "
-                    f"{starting_pool_pids} changed to {current_pids }")
-                self._terminate()
-
-            # Wait 0.5s before looping.
-            pool_monitor_wait_event.wait(timeout=0.5)
-        LOGGER.debug('_process_pool_monitor shutting down')
-
     def join(self, timeout=None):
         """Join all threads in the graph.
 
@@ -885,8 +852,7 @@ class TaskGraph(object):
                 self._executor_ready_event.set()
             LOGGER.debug("shutting down workers")
             if self._worker_pool is not None:
-                self._worker_pool.close()
-                self._worker_pool.terminate()
+                self._worker_pool.shutdown()
                 self._worker_pool = None
 
             # This will terminate the logging worker
@@ -1137,12 +1103,12 @@ class Task(object):
         LOGGER.debug("not precalculated %s", self.task_name)
 
         if self._worker_pool is not None:
-            result = self._worker_pool.apply_async(
-                func=self._func, args=self._args, kwds=self._kwargs)
+            result = self._worker_pool.submit(
+                self._func, *self._args, **self._kwargs)
             # the following blocks and raises an exception if result
             # raised an exception
-            LOGGER.debug("apply_async for task %s", self.task_name)
-            payload = result.get()
+            LOGGER.debug("submit for task %s", self.task_name)
+            payload = result.result()
         else:
             LOGGER.debug("direct _func for task %s", self.task_name)
             payload = self._func(*self._args, **self._kwargs)
