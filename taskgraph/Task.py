@@ -855,6 +855,7 @@ class TaskGraph(object):
     def _handle_broken_process_pool(self):
         # block until the event is set, which only happens if the pool broke.
         self._executor_pool_broke_event.wait()
+        LOGGER.debug("Broken process event triggered; terminating graph")
         self._terminate()
 
     def _process_pool_monitor(self, pool_monitor_wait_event):
