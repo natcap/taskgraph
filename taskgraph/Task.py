@@ -1174,6 +1174,7 @@ class Task(object):
             except concurrent.futures.process.BrokenProcessPool:
                 self.executor_pool_broke_event.set()
                 LOGGER.exception('Process pool broke!')
+                raise
         else:
             LOGGER.debug("direct _func for task %s", self.task_name)
             payload = self._func(*self._args, **self._kwargs)
