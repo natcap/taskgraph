@@ -1,4 +1,5 @@
 """Tests for taskgraph."""
+import concurrent.futures.process
 import hashlib
 import logging
 import logging.handlers
@@ -8,6 +9,7 @@ import pathlib
 import pickle
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import tempfile
@@ -138,6 +140,19 @@ def _log_from_another_process(logger_name, log_message):
     """
     logger = logging.getLogger(logger_name)
     logger.info(log_message)
+
+
+def _kill_current_process():
+    """Kill the current process.
+
+    Must be run within a taskgraph task process.
+    """
+    if __name__ == '__main__':
+        raise AssertionError(
+            "This function is only supposed to be called in a subprocess")
+
+    # Signal.SIGTERM works on both *NIX and Windows.
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 class TaskGraphTests(unittest.TestCase):
@@ -1479,6 +1494,24 @@ class TaskGraphTests(unittest.TestCase):
 
         with open(target_path) as target_file:
             self.assertEqual(target_file.read(), content)
+
+    def test_multiprocessing_deadlock(self):
+        """Verify that the graph is shut down in case of deadlock.
+
+        This test will deadlock if the functionality it is testing for (graph
+        shutdown when a task process is killed) is not available.
+
+        See https://github.com/natcap/taskgraph/issues/109
+        """
+        task_graph = taskgraph.TaskGraph(self.workspace_dir, n_workers=1)
+        with self.assertLogs('taskgraph', level='ERROR') as cm:
+            _ = task_graph.add_task(_kill_current_process)
+            task_graph.join()
+            task_graph.close()
+
+        self.assertEqual(len(cm.output), 1)
+        self.assertTrue(cm.output[0].startswith('ERROR'))
+        self.assertIn('Process pool broke!', cm.output[0])
 
 
 def Fail(n_tries, result_path):

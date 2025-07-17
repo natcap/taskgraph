@@ -4,9 +4,13 @@
 TaskGraph Release History
 =========================
 
-..
-   Unreleased Changes
-   ------------------
+Unreleased Changes
+------------------
+* When using ``n_workers >= 1``, the ``TaskGraph`` object will now monitor the
+  underlying ``multiprocessing.Pool`` object for any changes to the PIDs of its
+  processes.  If a change is detected, the graph is shut down to avoid a
+  deadlock.  https://github.com/natcap/taskgraph/issues/109
+
 
 0.11.2 (2025-05-21)
 -------------------
