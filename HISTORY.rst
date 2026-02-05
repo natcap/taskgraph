@@ -4,9 +4,11 @@
 TaskGraph Release History
 =========================
 
-..
-   Unreleased Changes
-   ------------------
+Unreleased Changes
+------------------
+* The Natural Capital Project changed its name to the Natural Capital Alliance.
+  References to the old name have been updated to reflect this change.
+  (`#113 <https://github.com/natcap/taskgraph/issues/113>`_)
 
 0.11.2 (2025-05-21)
 -------------------
