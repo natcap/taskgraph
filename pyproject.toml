@@ -24,7 +24,7 @@ classifiers = [
     "License :: OSI Approved :: BSD License"
 ]
 # the version is provided dynamically by setuptools_scm
-dynamic = ["version"]
+dynamic = ["version", "dependencies"]
 dependencies = {file = ["requirements.txt"]}
 
 [project.optional-dependencies]
