@@ -14,13 +14,8 @@ import queue
 import sqlite3
 import threading
 import time
-try:
-    from importlib.metadata import PackageNotFoundError
-    from importlib.metadata import version
-except ImportError:
-    # importlib.metadata added to stdlib in 3.8
-    from importlib_metadata import PackageNotFoundError
-    from importlib_metadata import version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version
 
 import retrying
 

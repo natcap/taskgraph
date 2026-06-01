@@ -2,7 +2,7 @@
 name = "taskgraph"
 description = "Parallel task graph framework"
 readme = "README.rst"
-requires-python = ">=3.6"
+requires-python = ">=3.8"
 license = {file = "LICENSE.txt"}
 maintainers = [
     {name = "Natural Capital Alliance Software Team"}
@@ -24,9 +24,14 @@ classifiers = [
     "License :: OSI Approved :: BSD License"
 ]
 # the version is provided dynamically by setuptools_scm
-# `dependencies` and `optional-dependencies` are provided by setuptools
-# using the corresponding setup args `install_requires` and `extras_require`
-dynamic = ["version", "dependencies", "optional-dependencies"]
+dynamic = ["version"]
+dependencies = [
+    "retrying>=1.3.0",
+]
+
+[project.optional-dependencies]
+niced_processes = ["psutil"]
+
 
 [build-system]
 requires = [
