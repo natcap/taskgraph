@@ -9,6 +9,10 @@ Unreleased Changes
 * The Natural Capital Project changed its name to the Natural Capital Alliance.
   References to the old name have been updated to reflect this change.
   (`#113 <https://github.com/natcap/taskgraph/issues/113>`_)
+* GitHub Actions-based tests are now running against CPython 3.13 and 3.14, and
+  no longer running against 3.8 and 3.9.  All currently-supported versions of
+  CPython are in the test matrix.
+  (`#111 <https://github.com/natcap/taskgraph/issues/111>`_)
 
 0.11.2 (2025-05-21)
 -------------------
