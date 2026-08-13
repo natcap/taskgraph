@@ -17,6 +17,8 @@ import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
 
+import dask
+from dask.delayed import Delayed
 import retrying
 
 try:
@@ -705,6 +707,139 @@ class TaskGraph(object):
                         self._dependent_task_map[new_task.task_name].add(
                             dep_task_name)
             return new_task
+
+        except Exception:
+            # something went wrong, shut down the taskgraph
+            LOGGER.exception(
+                "Something went wrong when adding task %s, "
+                "terminating taskgraph.", task_name)
+            self._terminate()
+            raise
+
+    def add_dask_task(
+            self, func=None, args=None, kwargs=None, task_name=None,
+            target_path_list=None, ignore_path_list=None,
+            hash_target_files=True, dependent_task_list=None,
+            ignore_directories=True, priority=0,
+            hash_algorithm='sizetimestamp', transient_run=False,
+            store_result=False):
+        """Add a task to the task graph.
+
+        Args:
+            func (callable): target function
+            args (list): argument list for ``func``
+            kwargs (dict): keyword arguments for ``func``
+            target_path_list (list): if not None, a list of file paths that
+                are expected to be output by ``func``.  If any of these paths
+                don't exist, or their timestamp is earlier than an input
+                arg or work token, func will be executed.
+
+                If ``None``, any identical calls to ``add_task`` will be
+                skipped for the TaskGraph object. A future TaskGraph object
+                will re-run an exact call once for its lifetime. The reasoning
+                is that it is likely the user wishes to run a target-less task
+                once for the lifetime of a task-graph, but would otherwise not
+                have a transient result that could be re-used in a future
+                instantiation of a TaskGraph object.
+
+            task_name (string): if not None, this value is used to identify
+                the task in logging messages.
+            ignore_path_list (list): list of file paths that could be in
+                args/kwargs that should be ignored when considering timestamp
+                hashes.
+            hash_target_files (bool): If True, the hash value of the target
+                files will be recorded to determine if a future run of this
+                function is precalculated. If False, this function only notes
+                the existence of the target files before determining if
+                a function call is precalculated.
+            dependent_task_list (list): list of ``Task``s that this task must
+                ``join`` before executing.
+            ignore_directories (boolean): if the existence/timestamp of any
+                directories discovered in args or kwargs is used as part
+                of the work token hash.
+            priority (numeric): the priority of a task is considered when
+                there is more than one task whose dependencies have been
+                met and are ready for scheduling. Tasks are inserted into the
+                work queue in order of decreasing priority value
+                (priority 10 is higher than priority 1). This value can be
+                positive, negative, and/or floating point.
+            hash_algorithm (string): either a hash function id that
+                exists in hashlib.algorithms_available, 'sizetimestamp',
+                or 'exists'. Any paths to actual files in the arguments will
+                be digested with this algorithm. If value is 'sizetimestamp'
+                the digest will only use the normed path, size, and timestamp
+                of any files found in the arguments. This value is used when
+                determining whether a task is precalculated or its target
+                files can be copied to an equivalent task. Note if
+                ``hash_algorithm`` is 'sizetimestamp' the task will require the
+                same base path files to determine equality. If it is a
+                ``hashlib`` algorithm only file contents will be considered.
+                If the value is 'exists' the only test for file equivalence
+                will be if it exists on disk (True) or not (False).
+            transient_run (bool): if True, this Task will be reexecuted
+                even if it was successfully executed in a previous TaskGraph
+                instance. If False, this Task will be skipped if it was
+                executed successfully in a previous TaskGraph instance. One
+                might wish to set `transient_run` to True on a Task that does
+                some sort of initialization that's needed every time a
+                TaskGraph is instantiated. Perhaps to acquire dynamic resources
+                or authenticate permissions.
+            store_result (bool): If True, the result of ``func`` will be stored
+                in the TaskGraph database and retrievable with a call to
+                ``.get()`` on a ``Task`` object.
+
+        Returns:
+            Task which was just added to the graph or an existing Task that
+            has the same signature and has already been added to the
+            TaskGraph.
+
+        Raises:
+            ValueError if objects are passed to the dependent task list that
+                are not Tasks.
+            ValueError if ``add_task`` is invoked after the ``TaskGraph`` is
+                closed.
+            RuntimeError if ``add_task`` is invoked after ``TaskGraph`` has
+                reached a terminate state.
+
+        """
+        try:
+            if self._terminated:
+                raise RuntimeError(
+                    "add_task when Taskgraph is terminated.")
+            if self._closed:
+                raise ValueError(
+                    "The task graph is closed and cannot accept more "
+                    "tasks.")
+            self._added_task_count += 1
+            if args is None:
+                args = []
+            if kwargs is None:
+                kwargs = {}
+            if task_name is None:
+                task_name = 'UNNAMED TASK'
+            if dependent_task_list is None:
+                dependent_task_list = []
+            if target_path_list is None:
+                target_path_list = []
+            if ignore_path_list is None:
+                ignore_path_list = []
+            if func is None:
+                func = _null_func
+
+            # this is a pretty common error to accidentally not pass a
+            # Task to the dependent task list.
+            if any(not isinstance(task, Delayed)
+                   for task in dependent_task_list):
+                raise ValueError(
+                    "Objects passed to dependent task list that are not "
+                    "tasks: %s", dependent_task_list)
+
+            def wrapper(deps):
+                func(*args, **kwargs)
+                return ''
+
+            delayed = dask.delayed(wrapper)(dependent_task_list)
+            return delayed
 
         except Exception:
             # something went wrong, shut down the taskgraph
