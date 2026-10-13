@@ -35,10 +35,10 @@ from parsl.addresses import address_by_hostname
 LOGGER = logging.getLogger(__name__)
 
 
-@id_for_memo.register(object)
-def id_for_memo_pickle(obj, output_ref=False):
-    print('hashing', obj)
-    return pickle.dumps(obj)
+# @id_for_memo.register(object)
+# def id_for_memo_pickle(obj, output_ref=False):
+#     print('hashing', obj)
+#     return pickle.dumps(obj)
 
 
 try:
@@ -164,105 +164,6 @@ def _logging_queue_monitor(logging_queue):
     LOGGER.debug('_logging_queue_monitor shutting down')
 
 
-def _create_taskgraph_table_schema(taskgraph_database_path):
-    """Create database exists and/or ensures it is compatible and recreate.
-
-    Args:
-        taskgraph_database_path (str): path to an existing database or desired
-            location of a new database.
-
-    Returns:
-        None.
-
-    """
-    sql_create_projects_table_script = (
-        """
-        CREATE TABLE taskgraph_data (
-            task_reexecution_hash TEXT NOT NULL,
-            target_path_stats BLOB NOT NULL,
-            result BLOB NOT NULL,
-            PRIMARY KEY (task_reexecution_hash)
-        );
-        CREATE TABLE global_variables (
-            key TEXT NOT NULL,
-            value BLOB,
-            PRIMARY KEY (key)
-        );
-        """)
-
-    table_valid = True
-    expected_table_column_name_map = {
-        'taskgraph_data': [
-            'task_reexecution_hash', 'target_path_stats', 'result'],
-        'global_variables': ['key', 'value']}
-    if os.path.exists(taskgraph_database_path):
-        try:
-            # check that the tables exist and the column names are as expected
-            for expected_table_name in expected_table_column_name_map:
-                table_result = _execute_sqlite(
-                    '''
-                    SELECT name
-                    FROM sqlite_master
-                    WHERE type='table' AND name=?
-                    ''', taskgraph_database_path,
-                    argument_list=[expected_table_name],
-                    mode='read_only', execute='execute', fetch='all')
-                if not table_result:
-                    raise ValueError(f'missing table {expected_table_name}')
-
-                # this query returns a list of results of the form
-                # [(0, 'task_reexecution_hash', 'TEXT', 1, None, 1), ... ]
-                # we'll just check that the header names are the same, no
-                # need to be super aggressive, also need to construct the
-                # PRAGMA string directly since it doesn't take arguments
-                table_info_result = _execute_sqlite(
-                    f'PRAGMA table_info({expected_table_name})',
-                    taskgraph_database_path, mode='read_only',
-                    execute='execute', fetch='all')
-
-                expected_column_names = expected_table_column_name_map[
-                    expected_table_name]
-                header_count = 0
-                for header_line in table_info_result:
-                    column_name = header_line[1]
-                    if column_name not in expected_column_names:
-                        raise ValueError(
-                            f'expected {column_name} in table '
-                            f'{expected_table_name} but not found')
-                    header_count += 1
-                if header_count < len(expected_column_names):
-                    raise ValueError(
-                        f'found only {header_count} of an expected '
-                        f'{len(expected_column_names)} columns in table '
-                        f'{expected_table_name}')
-                if not table_info_result:
-                    raise ValueError(f'missing table {expected_table_name}')
-        except Exception:
-            # catch all "Exception"s because anything that goes wrong while
-            # checking the database should be considered a bad database and we
-            # should make a new one.
-            LOGGER.exception(
-                f'{taskgraph_database_path} exists, but is incompatible '
-                'somehow. Deleting and making a new one.')
-            os.remove(taskgraph_database_path)
-            table_valid = False
-    else:
-        # table does not exist
-        table_valid = False
-
-    if not table_valid:
-        # create the base table
-        _execute_sqlite(
-            sql_create_projects_table_script, taskgraph_database_path,
-            mode='modify', execute='script')
-        # set the database version
-        _execute_sqlite(
-            '''
-            INSERT OR REPLACE INTO global_variables
-            VALUES ("version", ?)
-            ''', taskgraph_database_path, mode='modify',
-            argument_list=(__version__,))
-
 
 class TaskGraph(object):
     """Encapsulates the worker and tasks states for parallel processing."""
@@ -317,10 +218,6 @@ class TaskGraph(object):
         # keep track if the task graph has been forcibly terminated
         self._terminated = False
 
-        # if n_workers > 0 this will be a multiprocessing pool used to execute
-        # the __call__ functions in Tasks
-        self._worker_pool = None
-
         # If n_workers > 0 this will be a threading.Thread used to propagate
         # log records from another process into the current process.
         self._logging_monitor_thread = None
@@ -335,9 +232,6 @@ class TaskGraph(object):
         # keeps track of how many tasks have all their dependencies satisfied
         # and are waiting for a worker
         self._task_waiting_count = 0
-
-        # this might hold the threads to execute tasks if n_workers >= 0
-        self._task_executor_thread_list = []
 
         # executor threads wait on this event that gets set when new tasks are
         # added to the queue. If the queue is empty an executor will clear
@@ -358,31 +252,12 @@ class TaskGraph(object):
         # tasks that complete are added to this set
         self._completed_task_names = set()
 
-        self._task_database_path = os.path.join(
-            self._taskgraph_cache_dir_path, _TASKGRAPH_DATABASE_FILENAME)
-
-        # create new table if needed
-        _create_taskgraph_table_schema(self._task_database_path)
-
-        # check the version of the database and warn if a problem
-        local_version = _execute_sqlite(
-            '''
-            SELECT value
-            FROM global_variables
-            WHERE key=?
-            ''', self._task_database_path, mode='read_only',
-            fetch='one', argument_list=['version'])[0]
-        if local_version != __version__:
-            LOGGER.warning(
-                f'the database located at {self._task_database_path} was '
-                f'created with TaskGraph version {local_version} but the '
-                f'current version is {__version__}')
-
         print('loading config')
         config.app_cache = True
         config.memoizer = BasicMemoizer(
             checkpoint_mode='task_exit',
-            checkpoint_files=get_all_checkpoints())
+            checkpoint_files=get_all_checkpoints(
+                self._taskgraph_cache_dir_path))
         config.run_dir = taskgraph_cache_dir_path
         config.initialize_logging = False
         config.monitoring = MonitoringHub(
@@ -390,6 +265,7 @@ class TaskGraph(object):
             monitoring_debug=True,
             resource_monitoring_interval=10
         )
+        print('create pool')
         self.pool = ParslPoolExecutor(
             config=config,
             executors=[
@@ -422,24 +298,9 @@ class TaskGraph(object):
             self._execution_monitor_thread.daemon = True
             self._execution_monitor_thread.start()
 
-        # launch executor threads
-        self._executor_thread_count = max(0, n_workers)
-        for thread_id in range(max(1, n_workers)):
-            task_executor_thread = threading.Thread(
-                target=self._task_executor,
-                name='task_executor_%s' % thread_id)
-            # make daemons in case there's a catastrophic error the main
-            # thread won't hang
-            task_executor_thread.daemon = True
-            task_executor_thread.start()
-            self._task_executor_thread_list.append(task_executor_thread)
-
         # set up multiprocessing if n_workers > 0
         if n_workers > 0:
             self._logging_queue = multiprocessing.Queue()
-            self._worker_pool = NonDaemonicPool(
-                n_workers, initializer=_initialize_logging_to_queue,
-                initargs=(self._logging_queue,))
             self._logging_monitor_thread = threading.Thread(
                 target=_logging_queue_monitor,
                 args=(self._logging_queue,))
@@ -460,106 +321,8 @@ class TaskGraph(object):
 
     def __del__(self):
         """Ensure all threads have been joined for cleanup."""
+        print('__del__')
         self._terminate()
-
-    def _task_executor(self):
-        """Worker that executes Tasks that have satisfied dependencies."""
-        while True:
-            # this event blocks until the task graph has signaled it wants
-            # the executors to read the state of the queue or a stop event or
-            # a timeout exceeded just to protect against a worst case deadlock
-            self._executor_ready_event.wait(_MAX_TIMEOUT)
-            # this lock synchronizes changes between the queue and
-            # executor_ready_event
-            if self._terminated:
-                LOGGER.debug(
-                    "taskgraph is terminated, ending %s",
-                    threading.current_thread())
-                break
-            task = None
-            try:
-                task = self._task_ready_priority_queue.get_nowait()
-                self._task_waiting_count -= 1
-                task_name_time_tuple = (task.task_name, time.time())
-                self._active_task_list.append(task_name_time_tuple)
-            except queue.Empty:
-                # no tasks are waiting could be because the taskgraph is
-                # closed or because the queue is just empty.
-                if (self._closed and len(self._completed_task_names) ==
-                        self._added_task_count):
-                    # the graph is closed and there are as many completed tasks
-                    # as there are added tasks, so none left. The executor can
-                    # terminate.
-                    self._executor_thread_count -= 1
-                    if self._executor_thread_count == 0 and self._worker_pool:
-                        # only the last executor should terminate the worker
-                        # pool, because otherwise who knows if it's still
-                        # executing anything
-                        try:
-                            self._worker_pool.close()
-                            self._worker_pool.terminate()
-                            self._worker_pool = None
-                            self._terminate()
-                        except Exception:
-                            # there's the possibility for a race condition here
-                            # where another thread already closed the worker
-                            # pool, so just guard against it
-                            LOGGER.warning('worker pool was already closed')
-                    LOGGER.debug(
-                        "no tasks are pending and taskgraph closed, normally "
-                        "terminating executor %s." % threading.current_thread())
-                    break
-                else:
-                    # there's still the possibility for work to be added or
-                    # still work in the pipeline
-                    self._executor_ready_event.clear()
-            if task is None:
-                continue
-            try:
-                task._call()
-                task.task_done_executing_event.set()
-            except Exception as e:
-                # An error occurred on a call, terminate the taskgraph
-                task.exception_object = e
-                LOGGER.exception(
-                    'A taskgraph _task_executor failed on Task '
-                    '%s. Terminating taskgraph.', task.task_name)
-                self._terminate()
-                break
-
-            LOGGER.debug(
-                "task %s is complete, checking to see if any dependent "
-                "tasks can be executed now", task.task_name)
-            self._completed_task_names.add(task.task_name)
-            self._active_task_list.remove(task_name_time_tuple)
-            for waiting_task_name in (
-                    self._task_dependent_map[task.task_name]):
-                # remove `task` from the set of tasks that
-                # `waiting_task` was waiting on.
-                self._dependent_task_map[waiting_task_name].remove(
-                    task.task_name)
-                # if there aren't any left, we can push `waiting_task`
-                # to the work queue
-                if not self._dependent_task_map[waiting_task_name]:
-                    # if we removed the last task we can put it to the
-                    # work queue
-                    LOGGER.debug(
-                        "Task %s is ready for processing, sending to "
-                        "task_ready_priority_queue",
-                        waiting_task_name)
-                    del self._dependent_task_map[waiting_task_name]
-                    self._task_ready_priority_queue.put(
-                        self._task_name_map[waiting_task_name])
-                    self._task_waiting_count += 1
-                    # indicate to executors there is work to do
-                    self._executor_ready_event.set()
-            del self._task_dependent_map[task.task_name]
-            # this extra set ensures that recently emptied map won't get
-            # ignored by the executor if no work is left to do and the graph is
-            # closed
-            self._executor_ready_event.set()
-            LOGGER.debug("task %s done processing", task.task_name)
-        LOGGER.debug("task executor shutting down")
 
     def add_task(
             self, func=None, args=None, kwargs=None, task_name=None,
@@ -673,18 +436,21 @@ class TaskGraph(object):
 
             # this is a pretty common error to accidentally not pass a
             # Task to the dependent task list.
-            if any(not isinstance(task, AppFuture)
+            if any(not isinstance(task, Task)
                    for task in dependent_task_list):
                 raise ValueError(
                     "Objects passed to dependent task list that are not "
-                    "parsl AppFutures: %s", dependent_task_list)
+                    "tasks: %s", dependent_task_list)
 
             task_name = '%s (%d)' % (task_name, len(self._task_hash_map))
+            new_task = Task(
+                task_name, func, args, kwargs, target_path_list,
+                ignore_path_list, hash_target_files, ignore_directories,
+                transient_run,
+                priority, hash_algorithm, store_result,
+                dependent_task_list)
 
-            new_task = wrap_func(func, *args, **kwargs, inputs=dependent_task_list)
-
-
-            # self._task_name_map[new_task.task_name] = new_task
+            self._task_name_map[new_task.task_name] = new_task
             # it may be this task was already created in an earlier call,
             # use that object in its place
             if new_task in self._task_hash_map:
@@ -724,8 +490,46 @@ class TaskGraph(object):
                         "a runtime error: submitted task: %s, existing "
                         "task: %s" % (new_task, duplicate_task))
             self._task_hash_map[new_task] = new_task
-
+            if self._n_workers < 0:
+                # call directly if single threaded
+                new_task._call()
+            else:
+                # determine if task is ready or is dependent on other
+                # tasks
+                LOGGER.debug(
+                    "multithreaded: %s sending to new task queue.",
+                    task_name)
+                outstanding_dep_task_name_list = [
+                    dep_task.task_name for dep_task in dependent_task_list
+                    if dep_task.task_name
+                    not in self._completed_task_names]
+                if not outstanding_dep_task_name_list:
+                    LOGGER.debug(
+                        "sending task %s right away", new_task.task_name)
+                    self._task_ready_priority_queue.put(new_task)
+                    self._task_waiting_count += 1
+                    self._executor_ready_event.set()
+                else:
+                    # there are unresolved tasks that the waiting
+                    # process scheduler has not been notified of.
+                    # Record dependencies.
+                    for dep_task_name in outstanding_dep_task_name_list:
+                        # record tasks that are dependent on dep_task_name
+                        self._task_dependent_map[dep_task_name].add(
+                            new_task.task_name)
+                        # record tasks that new_task depends on
+                        self._dependent_task_map[new_task.task_name].add(
+                            dep_task_name)
             return new_task
+
+        except Exception:
+            # something went wrong, shut down the taskgraph
+            LOGGER.exception(
+                "Something went wrong when adding task %s, "
+                "terminating taskgraph.", task_name)
+            self._terminate()
+            raise
+
 
         except Exception:
             # something went wrong, shut down the taskgraph
@@ -795,15 +599,22 @@ class TaskGraph(object):
         LOGGER.debug("joining taskgraph")
         try:
             LOGGER.debug("attempting to join threads")
-            timedout = False
+
             for task in self._task_hash_map.values():
-                print('computing task', task)
-                task.result()
+                try:
+                    print('computing task', task)
+                    task.join(timeout=timeout)
+                except TimeoutError:
+                    LOGGER.info(
+                        "task %s timed out in graph join", task.task_name)
+                    return False
+
             if self._closed:
                 # Close down the taskgraph; ok if already terminated
                 self._executor_ready_event.set()
                 self._terminate()
             return True
+
         except Exception:
             # If there's an exception on a join it means that a task failed
             # to execute correctly. Print a helpful message then terminate the
@@ -838,8 +649,6 @@ class TaskGraph(object):
         print('shut down pool')
         print(self.pool)
         self.pool.shutdown()
-        # print('dfk cleanup')
-        # parsl.dfk().cleanup()
         try:
             # it's possible the global state is not well defined, so just in
             # case we'll wrap it all up in a try/except
@@ -847,30 +656,383 @@ class TaskGraph(object):
             if self._executor_ready_event is not None:
                 # alert executors to check that _terminated is True
                 self._executor_ready_event.set()
-            LOGGER.debug("shutting down workers")
-            if self._worker_pool is not None:
-                self._worker_pool.close()
-                self._worker_pool.terminate()
-                self._worker_pool = None
 
             # This will terminate the logging worker
             if self._logging_queue is not None:
                 self._logging_queue.put(None)
-
-            # This will cause all 'join'ed Tasks to join.
-            if self._n_workers >= 0:
-                self._executor_ready_event.set()
-                if self._reporting_interval is not None:
-                    self._execution_monitor_wait_event.set()
-                for task in self._task_hash_map.values():
-                    # shortcut to get the tasks to mark as joined
-                    task.task_done_executing_event.set()
 
             LOGGER.debug('taskgraph terminated')
         except Exception:
             LOGGER.exception(
                 'ignoring an exception that occurred during _terminate')
 
+
+class Task(object):
+    """Encapsulates work/task state for multiprocessing."""
+
+    def __init__(
+            self, task_name, func, args, kwargs, target_path_list,
+            ignore_path_list, hash_target_files, ignore_directories,
+            transient_run, priority, hash_algorithm,
+            store_result, dependent_task_list):
+        """Make a Task.
+
+        Args:
+            task_name (int): unique task id from the task graph.
+            func (function): a function that takes the argument list
+               ``args``
+            args (tuple): a list of arguments to pass to ``func``.  Can be
+                None.
+            kwargs (dict): keyword arguments to pass to ``func``.  Can be
+                None.
+            target_path_list (list): a list of filepaths that this task
+                should generate.
+            ignore_path_list (list): list of file paths that could be in
+                args/kwargs that should be ignored when considering timestamp
+                hashes.
+            hash_target_files (bool): If True, the hash value of the target
+                files will be recorded to determine if a future run of this
+                function is precalculated. If False, this function only notes
+                the existence of the target files before determining if
+                a function call is precalculated.
+            ignore_directories (bool): if the existence/timestamp of any
+                directories discovered in args or kwargs is used as part
+                of the work token hash.
+            transient_run (bool): if True a call with an identical execution
+                hash will be reexecuted on a subsequent instantiation of a
+                future TaskGraph object. If a duplicate task is submitted
+                to the same object it will not be re-run in any scenario.
+                Otherwise if False, subsequent tasks with an identical
+                execution hash will be skipped.
+            worker_pool (multiprocessing.Pool): if not None, is a
+                multiprocessing pool that can be used for ``_call`` execution.
+            priority (numeric): the priority of a task is considered when
+                there is more than one task whose dependencies have been
+                met and are ready for scheduling. Tasks are inserted into the
+                work queue in order of decreasing priority. This value can be
+                positive, negative, and/or floating point.
+            hash_algorithm (string): either a hash function id that
+                exists in hashlib.algorithms_available, 'sizetimestamp',
+                or 'exists'. Any paths to actual files in the arguments will
+                be digested with this algorithm. If value is 'sizetimestamp'
+                the digest will only use the normed path, size, and timestamp
+                of any files found in the arguments. If 'exists' will be
+                considered the same file only if a file with the same filename
+                exists on disk.
+            store_result (bool): If true, the result of ``func`` will be
+                stored in the TaskGraph database and retrievable with a call
+                to ``.get()`` on the Task object.
+            task_database_path (str): path to an SQLITE database that has
+                table named "taskgraph_data" with the three fields:
+                    task_hash TEXT NOT NULL,
+                    target_path_stats BLOB NOT NULL
+                    result BLOB NOT NULL
+                If a call is successful its hash is inserted/updated in the
+                table, the target_path_stats stores the base/target stats
+                for the target files created by the call and listed in
+                ``target_path_list``, and the result of ``func`` is stored in
+                ``result``.
+
+        """
+        # it is a common error to accidentally pass a non string as to the
+        # target path list, this terminates early if so
+        if any([not (isinstance(path, _VALID_PATH_TYPES))
+                for path in target_path_list]):
+            raise ValueError(
+                "Values passed to target_path_list are not strings: %s",
+                target_path_list)
+
+        # sort the target path list because the order doesn't matter for
+        # a result, but it would cause a task to be reexecuted if the only
+        # difference was a different order.
+        self._target_path_list = sorted([
+            _normalize_path(path) for path in target_path_list])
+        self.task_name = task_name
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+        self._ignore_path_list = [
+            _normalize_path(path) for path in ignore_path_list]
+        self._hash_target_files = hash_target_files
+        self._ignore_directories = ignore_directories
+        self._transient_run = transient_run
+        self._hash_algorithm = hash_algorithm
+        self._store_result = store_result
+        self.exception_object = None
+
+        # invert the priority since sorting goes smallest to largest and we
+        # want more positive priority values to be executed first.
+        self._priority = -priority
+
+        # Used to ensure only one attempt at executing and also a mechanism
+        # to see when Task is complete. This can be set if a Task finishes
+        # a _call and there are no more attempts at reexecution.
+        self.task_done_executing_event = threading.Event()
+
+        # These are used to store and later access the result of the call.
+        self._result = None
+
+        # Calculate a hash based only on argument inputs.
+        try:
+            if not hasattr(Task, 'func_source_map'):
+                Task.func_source_map = {}
+            # memoize func source code because it's likely we'll import
+            # the same func many times and reflection is slow
+            if self._func not in Task.func_source_map:
+                Task.func_source_map[self._func] = (
+                    inspect.getsource(self._func))
+            source_code = Task.func_source_map[self._func]
+        except (IOError, TypeError):
+            # many reasons for this, for example, frozen Python code won't
+            # have source code, so just leave blank
+            source_code = ''
+
+        if not hasattr(self._func, '__name__'):
+            LOGGER.warning(
+                "function does not have a __name__ which means it will not "
+                "be considered when calculating a successive input has "
+                "been changed with another function without __name__.")
+            self._func.__name__ = ''
+
+        args_clean = []
+        for index, arg in enumerate(self._args):
+            try:
+                scrubbed_value = _scrub_task_args(arg, self._target_path_list)
+                _ = pickle.dumps(scrubbed_value)
+                args_clean.append(scrubbed_value)
+            except TypeError:
+                LOGGER.warning(
+                    "could not pickle argument at index %d (%s). "
+                    "Skipping argument which means it will not be considered "
+                    "when calculating whether inputs have been changed "
+                    "on a successive run.", index, arg)
+
+        kwargs_clean = {}
+        # iterate through sorted order so we get the same hash result with the
+        # same set of kwargs irrespective of the item dict order.
+        for key, arg in sorted(self._kwargs.items()):
+            try:
+                scrubbed_value = _scrub_task_args(arg, self._target_path_list)
+                _ = pickle.dumps(scrubbed_value)
+                kwargs_clean[key] = scrubbed_value
+            except TypeError:
+                LOGGER.warning(
+                    "could not pickle kw argument %s (%s) scrubbed to %s. "
+                    "Skipping argument which means it will not be considered "
+                    "when calculating whether inputs have been changed "
+                    "on a successive run.", key, arg, scrubbed_value)
+
+        self._reexecution_info = {
+            'func_name': self._func.__name__,
+            'args_clean': args_clean,
+            'kwargs_clean': kwargs_clean,
+            'source_code_hash': hashlib.sha1(
+                source_code.encode('utf-8')).hexdigest(),
+        }
+
+        argument_hash_string = ':'.join([
+            repr(self._reexecution_info[key])
+            for key in sorted(self._reexecution_info.keys())])
+
+        self._task_id_hash = hashlib.sha1(
+            argument_hash_string.encode('utf-8')).hexdigest()
+
+        # this will get calculated when ``is_precalculated`` is invoked.
+        self._task_reexecution_hash = None
+
+        self.future = wrap_func(
+            func, *args, **kwargs,
+            inputs=[task.future for task in dependent_task_list])
+
+    def __eq__(self, other):
+        """Two tasks are equal if their hashes are equal."""
+        return (
+            isinstance(self, other.__class__) and
+            (self._task_id_hash == other._task_id_hash))
+
+    def __hash__(self):
+        """Return the base-16 integer hash of this hash string."""
+        return int(self._task_id_hash, 16)
+
+    def __ne__(self, other):
+        """Inverse of __eq__."""
+        return not self.__eq__(other)
+
+    def __lt__(self, other):
+        """Less than based on priority."""
+        return self._priority < other._priority
+
+    def __repr__(self):
+        """Create a string representation of a Task."""
+        return "Task object %s:\n\n" % (id(self)) + pprint.pformat(
+            {
+                "task_name": self.task_name,
+                "priority": self._priority,
+                "ignore_path_list": self._ignore_path_list,
+                "ignore_directories": self._ignore_directories,
+                "target_path_list": self._target_path_list,
+                "task_id_hash": self._task_id_hash,
+                "task_reexecution_hash": self._task_reexecution_hash,
+                "exception_object": self.exception_object,
+                "self._reexecution_info": self._reexecution_info,
+                "self._result": self._result,
+            })
+
+    def _call(self, timeout=None):
+        """Invoke this method to execute task.
+
+        Precondition is that the Task dependencies are satisfied.
+
+        Sets the ``self.task_done_executing_event`` flag if execution is
+        successful.
+
+        Raises:
+            RuntimeError if any target paths are not generated after the
+                function call is complete.
+
+        """
+        self.future.result(timeout=timeout)
+
+        # check that the target paths exist and record stats for later
+        if not self._hash_target_files:
+            target_hash_algorithm = 'exists'
+        else:
+            target_hash_algorithm = self._hash_algorithm
+        result_target_path_stats = list(
+            _get_file_stats(
+                self._target_path_list, target_hash_algorithm, [], False))
+        result_target_path_set = set(
+            [x[0] for x in result_target_path_stats])
+        target_path_set = set(self._target_path_list)
+        if target_path_set != result_target_path_set:
+            raise RuntimeError(
+                "In Task: %s\nMissing expected target path results.\n"
+                "Expected: %s\nObserved: %s\n" % (
+                    self.task_name, self._target_path_list,
+                    result_target_path_set))
+
+        self.task_done_executing_event.set()
+        LOGGER.debug("successful run on task %s", self.task_name)
+
+    def join(self, timeout=None):
+        """Block until task is complete, raise exception if runtime failed."""
+        LOGGER.debug(
+            "joining %s done executing: %s", self.task_name,
+            self.task_done_executing_event)
+        self._call(timeout=timeout)
+        successful_wait = self.task_done_executing_event.wait(timeout)
+        if self.exception_object:
+            raise self.exception_object
+        return successful_wait
+
+    def get(self, timeout=None):
+        """Return the result of the ``func`` once it is ready.
+
+        If ``timeout`` is None, this call blocks until the task is complete
+        determined by a call to ``.join()``. Otherwise will wait up to
+        ``timeout`` seconds before raising a``RuntimeError`` if exceeded.
+
+        Args:
+            timeout (float): if not None this parameter is a floating point
+                number specifying a timeout for the operation in seconds.
+
+        Returns:
+            value of the result
+
+        Raises:
+            RuntimeError when ``timeout`` exceeded.
+            ValueError if ``store_result`` was set to ``False`` when the task
+                was created.
+
+        """
+        if not self._store_result:
+            raise ValueError(
+                'must set `store_result` to True in `add_task` to invoke this '
+                'function')
+        timeout = not self.join(timeout)
+        if timeout:
+            raise RuntimeError('call to get timed out')
+        return self._result
+
+
+@retrying.retry(
+    wait_exponential_multiplier=500, wait_exponential_max=3200,
+    stop_max_attempt_number=100)
+def _execute_sqlite(
+        sqlite_command, database_path, argument_list=None,
+        mode='read_only', execute='execute', fetch=None):
+    """Execute SQLite command and attempt retries on a failure.
+
+    Args:
+        sqlite_command (str): a well formatted SQLite command.
+        database_path (str): path to the SQLite database to operate on.
+        argument_list (list): ``execute == 'execute'`` then this list is passed
+            to the internal sqlite3 ``execute`` call.
+        mode (str): must be either 'read_only' or 'modify'.
+        execute (str): must be either 'execute' or 'script'.
+        fetch (str): if not ``None`` can be either 'all' or 'one'.
+            If not None the result of a fetch will be returned by this
+            function.
+
+    Returns:
+        result of fetch if ``fetch`` is not None.
+
+    """
+    cursor = None
+    connection = None
+    try:
+        if mode == 'read_only':
+            ro_uri = r'%s?mode=ro' % pathlib.Path(
+                os.path.abspath(database_path)).as_uri()
+            LOGGER.debug(
+                '%s exists: %s', ro_uri, os.path.exists(os.path.abspath(
+                    database_path)))
+            connection = sqlite3.connect(ro_uri, uri=True)
+        elif mode == 'modify':
+            connection = sqlite3.connect(database_path)
+        else:
+            raise ValueError('Unknown mode: %s' % mode)
+
+        if execute == 'execute':
+            if argument_list is None:
+                cursor = connection.execute(sqlite_command)
+            else:
+                cursor = connection.execute(sqlite_command, argument_list)
+        elif execute == 'script':
+            cursor = connection.executescript(sqlite_command)
+        else:
+            raise ValueError('Unknown execute mode: %s' % execute)
+
+        result = None
+        payload = None
+        if fetch == 'all':
+            payload = (cursor.fetchall())
+        elif fetch == 'one':
+            payload = (cursor.fetchone())
+        elif fetch is not None:
+            raise ValueError('Unknown fetch mode: %s' % fetch)
+        if payload is not None:
+            result = list(payload)
+        cursor.close()
+        connection.commit()
+        connection.close()
+        cursor = None
+        connection = None
+        return result
+    except sqlite3.OperationalError:
+        LOGGER.warning(
+            'TaskGraph database is locked because another process is using '
+            'it, waiting for a bit of time to try again')
+        raise
+    except Exception:
+        LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
+        raise
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if connection is not None:
+            connection.commit()
+            connection.close()
 
 def _get_file_stats(
         base_value, hash_algorithm, ignore_list,
@@ -1095,82 +1257,3 @@ def _normalize_path(path):
         abs_path = norm_path
     return os.path.normcase(abs_path)
 
-
-@retrying.retry(
-    wait_exponential_multiplier=500, wait_exponential_max=3200,
-    stop_max_attempt_number=100)
-def _execute_sqlite(
-        sqlite_command, database_path, argument_list=None,
-        mode='read_only', execute='execute', fetch=None):
-    """Execute SQLite command and attempt retries on a failure.
-
-    Args:
-        sqlite_command (str): a well formatted SQLite command.
-        database_path (str): path to the SQLite database to operate on.
-        argument_list (list): ``execute == 'execute'`` then this list is passed
-            to the internal sqlite3 ``execute`` call.
-        mode (str): must be either 'read_only' or 'modify'.
-        execute (str): must be either 'execute' or 'script'.
-        fetch (str): if not ``None`` can be either 'all' or 'one'.
-            If not None the result of a fetch will be returned by this
-            function.
-
-    Returns:
-        result of fetch if ``fetch`` is not None.
-
-    """
-    cursor = None
-    connection = None
-    try:
-        if mode == 'read_only':
-            ro_uri = r'%s?mode=ro' % pathlib.Path(
-                os.path.abspath(database_path)).as_uri()
-            LOGGER.debug(
-                '%s exists: %s', ro_uri, os.path.exists(os.path.abspath(
-                    database_path)))
-            connection = sqlite3.connect(ro_uri, uri=True)
-        elif mode == 'modify':
-            connection = sqlite3.connect(database_path)
-        else:
-            raise ValueError('Unknown mode: %s' % mode)
-
-        if execute == 'execute':
-            if argument_list is None:
-                cursor = connection.execute(sqlite_command)
-            else:
-                cursor = connection.execute(sqlite_command, argument_list)
-        elif execute == 'script':
-            cursor = connection.executescript(sqlite_command)
-        else:
-            raise ValueError('Unknown execute mode: %s' % execute)
-
-        result = None
-        payload = None
-        if fetch == 'all':
-            payload = (cursor.fetchall())
-        elif fetch == 'one':
-            payload = (cursor.fetchone())
-        elif fetch is not None:
-            raise ValueError('Unknown fetch mode: %s' % fetch)
-        if payload is not None:
-            result = list(payload)
-        cursor.close()
-        connection.commit()
-        connection.close()
-        cursor = None
-        connection = None
-        return result
-    except sqlite3.OperationalError:
-        LOGGER.warning(
-            'TaskGraph database is locked because another process is using '
-            'it, waiting for a bit of time to try again')
-        raise
-    except Exception:
-        LOGGER.exception('Exception on _execute_sqlite: %s', sqlite_command)
-        raise
-    finally:
-        if cursor is not None:
-            cursor.close()
-        if connection is not None:
-            connection.commit()
-            connection.close()
