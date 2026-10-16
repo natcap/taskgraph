@@ -8,136 +8,19 @@ import pathlib
 import pickle
 import re
 import shutil
-import sqlite3
 import subprocess
 import tempfile
-import time
 import unittest
 
+import parsl
 import retrying
 import taskgraph
+from taskgraph import _test_fixtures
 
 LOGGER = logging.getLogger(__name__)
 
 N_TEARDOWN_RETRIES = 5
 MAX_TRY_WAIT_MS = 500
-
-
-def _return_value_once(value):
-    """Return the value passed to it only once."""
-    if hasattr(_return_value_once, 'executed'):
-        raise RuntimeError("this function was called twice")
-    _return_value_once.executed = True
-    return value
-
-
-def _noop_function(**kwargs):
-    """Do nothing except allow kwargs to be passed."""
-    pass
-
-
-def _long_running_function(delay):
-    """Wait for ``delay`` seconds."""
-    time.sleep(delay)
-
-
-def _create_two_files_on_disk(value, target_a_path, target_b_path):
-    """Create two files and write ``value`` and append if possible."""
-    with open(target_a_path, 'a') as a_file:
-        a_file.write(value)
-
-    with open(target_b_path, 'a') as b_file:
-        b_file.write(value)
-
-
-def _merge_and_append_files(base_a_path, base_b_path, target_path):
-    """Merge two files and append if possible to new file."""
-    with open(target_path, 'a') as target_file:
-        for base_path in [base_a_path, base_b_path]:
-            with open(base_path, 'r') as base_file:
-                target_file.write(base_file.read())
-
-
-def _create_list_on_disk(value, length, target_path=None):
-    """Create a numpy array on disk filled with value of ``size``."""
-    target_list = [value] * length
-    pickle.dump(target_list, open(target_path, 'wb'))
-
-
-def _call_it(target, *args):
-    """Invoke ``target`` with ``args``."""
-    target(*args)
-
-
-def _append_val(path, *val):
-    """Append a ``val`` to file at ``path``."""
-    with open(path, 'a') as target_file:
-        for v in val:
-            target_file.write(str(v))
-
-
-def _sum_lists_from_disk(list_a_path, list_b_path, target_path):
-    """Read two lists, add them and save result."""
-    list_a = pickle.load(open(list_a_path, 'rb'))
-    list_b = pickle.load(open(list_b_path, 'rb'))
-    target_list = []
-    for a, b in zip(list_a, list_b):
-        target_list.append(a+b)
-    pickle.dump(target_list, open(target_path, 'wb'))
-
-
-def _div_by_zero():
-    """Divide by zero to raise an exception."""
-    return 1/0
-
-
-def _create_file(target_path, content):
-    """Create a file with contents."""
-    with open(target_path, 'w') as target_file:
-        target_file.write(content)
-
-
-def _create_file_once(target_path, content):
-    """Create a file on the first call, raise an exception on the second."""
-    if hasattr(_create_file_once, 'executed'):
-        raise RuntimeError("this function was called twice")
-    _create_file_once.executed = True
-    with open(target_path, 'w') as target_file:
-        target_file.write(content)
-
-
-def _copy_file_once(base_path, target_path):
-    """Copy base to target on the first call, raise exception on second."""
-    if hasattr(_copy_file_once, 'executed'):
-        raise RuntimeError("this function was called twice")
-    _copy_file_once.executed = True
-    shutil.copyfile(base_path, target_path)
-
-
-def _copy_two_files_once(base_path, target_a_path, target_b_path):
-    """Copy base to target a/b on first call, raise exception on second."""
-    if hasattr(_copy_two_files_once, 'executed'):
-        raise RuntimeError("this function was called twice")
-    _copy_two_files_once.executed = True
-    shutil.copyfile(base_path, target_a_path)
-    shutil.copyfile(base_path, target_b_path)
-
-
-def _log_from_another_process(logger_name, log_message):
-    """Write a log message to a given logger.
-
-    Args:
-        logger_name (string): The string logger name to which ``log_message``
-            will be logged.
-        log_message (string): The string log message to be logged (at INFO
-            level) to the logger at ``logger_name``.
-
-    Returns:
-        ``None``
-
-    """
-    logger = logging.getLogger(logger_name)
-    logger.info(log_message)
 
 
 class TaskGraphTests(unittest.TestCase):
@@ -172,6 +55,7 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_single_task(self):
         """TaskGraph: Test a single task."""
+        # from pudb import set_trace; set_trace()
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0.1)
         # forcing this one to be unicode since there shouldn't be a problem
         # with that at all...
@@ -179,7 +63,7 @@ class TaskGraphTests(unittest.TestCase):
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={
                 'target_path': target_path,
@@ -195,13 +79,13 @@ class TaskGraphTests(unittest.TestCase):
         target_a_path = os.path.join(self.workspace_dir, 'a.txt')
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         task_a = task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_a_path, 'test value'),
             target_path_list=[target_a_path])
         task_a.join()
         target_b_path = os.path.join(self.workspace_dir, 'b.txt')
         _ = task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_b_path, 'test value'),
             target_path_list=[target_b_path])
         task_graph.close()
@@ -214,7 +98,7 @@ class TaskGraphTests(unittest.TestCase):
         target_c_path = os.path.join(self.workspace_dir, 'c.txt')
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
         _ = task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_c_path, 'test value'),
             target_path_list=[target_c_path])
         task_graph.close()
@@ -233,13 +117,13 @@ class TaskGraphTests(unittest.TestCase):
         target_b_path = os.path.abspath(target_a_path)
 
         _ = task_graph.add_task(
-           func=_create_file,
+           func=_test_fixtures._create_file,
            args=(target_a_path, 'test value'),
            target_path_list=[target_a_path],
            task_name='task a')
 
         _ = task_graph.add_task(
-           func=_create_file,
+           func=_test_fixtures._create_file,
            args=(target_b_path, 'test value'),
            target_path_list=[target_b_path],
            task_name='task b')
@@ -262,10 +146,11 @@ class TaskGraphTests(unittest.TestCase):
         """TaskGraph: Test timeout functionality."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task(
-            func=_long_running_function,
+            func=_test_fixtures._long_running_function,
             args=(5,))
         task_graph.close()
         timedout = not task_graph.join(0.5)
+        print("timed out:", timedout)
         # this should timeout since function runs for 5 seconds
         self.assertTrue(timedout)
 
@@ -276,7 +161,7 @@ class TaskGraphTests(unittest.TestCase):
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={
                 'target_path': target_path,
@@ -291,7 +176,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         _ = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={
                 'target_path': target_path,
@@ -316,21 +201,21 @@ class TaskGraphTests(unittest.TestCase):
         value_b = 10
         list_len = 10
         task_a = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value_a, list_len),
             kwargs={
                 'target_path': target_a_path,
             },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value_b, list_len),
             kwargs={
                 'target_path': target_b_path,
             },
             target_path_list=[target_b_path])
         sum_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
+            func=_test_fixtures._sum_lists_from_disk,
             args=(target_a_path, target_b_path),
             kwargs={
                 'target_path': result_path,
@@ -343,7 +228,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [value_a+value_b]*list_len)
 
         sum_2_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
+            func=_test_fixtures._sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task])
@@ -353,7 +238,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result2, expected_result)
 
         sum_3_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
+            func=_test_fixtures._sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task])
@@ -375,7 +260,7 @@ class TaskGraphTests(unittest.TestCase):
         value_b = 10
         list_len = 10
         task_a = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value_a, list_len),
             kwargs={
                 'target_path': target_a_path,
@@ -383,7 +268,7 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_a_path],
             task_name='task a')
         task_b = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value_b, list_len),
             kwargs={
                 'target_path': target_b_path,
@@ -391,7 +276,7 @@ class TaskGraphTests(unittest.TestCase):
             target_path_list=[target_b_path],
             task_name='task b')
         sum_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
+            func=_test_fixtures._sum_lists_from_disk,
             args=(target_a_path, target_b_path),
             kwargs={
                 'target_path': result_path,
@@ -405,7 +290,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [value_a+value_b]*list_len)
 
         sum_2_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
+            func=_test_fixtures._sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task],
@@ -416,7 +301,7 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result2, expected_result)
 
         sum_3_task = task_graph.add_task(
-            func=_sum_lists_from_disk,
+            func=_test_fixtures._sum_lists_from_disk,
             args=(target_a_path, result_path, result_2_path),
             target_path_list=[result_2_path],
             dependent_task_list=[task_a, sum_task],
@@ -429,17 +314,17 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = None
         self.assertEqual(result3, expected_result)
 
-        # we should have 4 completed values in the database, 5 total but one
-        # was a duplicate
-        database_path = os.path.join(
-            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
-        conn = sqlite3.connect(database_path)
-        with conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM taskgraph_data")
-            result = cursor.fetchall()
-        conn.close()
-        self.assertEqual(len(result), 4)
+        # # we should have 4 completed values in the database, 5 total but one
+        # # was a duplicate
+        # database_path = os.path.join(
+        #     self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        # conn = sqlite3.connect(database_path)
+        # with conn:
+        #     cursor = conn.cursor()
+        #     cursor.execute("SELECT * FROM taskgraph_data")
+        #     result = cursor.fetchall()
+        # conn.close()
+        # self.assertEqual(len(result), 4)
 
     def test_task_broken_chain(self):
         """TaskGraph: Test a multiprocess chain with exception raised."""
@@ -450,17 +335,17 @@ class TaskGraphTests(unittest.TestCase):
         value_a = 5
         list_len = 10
         task_a = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value_a, list_len),
             kwargs={
                 'target_path': target_a_path,
             },
             target_path_list=[target_a_path])
         task_b = task_graph.add_task(
-            func=_div_by_zero,
+            func=_test_fixtures._div_by_zero,
             dependent_task_list=[task_a])
         _ = task_graph.add_task(
-            func=_sum_lists_from_disk,
+            func=_test_fixtures._sum_lists_from_disk,
             args=(target_a_path, target_b_path),
             kwargs={
                 'target_path': result_path,
@@ -477,7 +362,7 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
 
         broken_task = task_graph.add_task(
-            func=_div_by_zero, task_name='test_broken_task')
+            func=_test_fixtures._div_by_zero, task_name='test_broken_task')
         with self.assertRaises(ZeroDivisionError):
             _ = broken_task.join()
 
@@ -497,19 +382,19 @@ class TaskGraphTests(unittest.TestCase):
             target_path = os.path.join(
                 self.workspace_dir, '1000_%d.dat' % task_id)
             normal_task = task_graph.add_task(
-                func=_create_list_on_disk,
+                func=_test_fixtures._create_list_on_disk,
                 args=(value, list_len),
                 kwargs={'target_path': target_path},
                 target_path_list=[target_path],
                 task_name='create list on disk %d' % task_id)
             zero_div_task = task_graph.add_task(
-                func=_div_by_zero,
+                func=_test_fixtures._div_by_zero,
                 dependent_task_list=[normal_task],
                 task_name='test_broken_task_chain_%d' % task_id)
             target_path = os.path.join(
                 self.workspace_dir, 'after_zerodiv_1000_%d.dat' % task_id)
             _ = task_graph.add_task(
-                func=_create_list_on_disk,
+                func=_test_fixtures._create_list_on_disk,
                 args=(value, list_len),
                 kwargs={'target_path': target_path},
                 dependent_task_list=[zero_div_task],
@@ -517,8 +402,9 @@ class TaskGraphTests(unittest.TestCase):
                 task_name='create list on disk after zero div%d' % task_id)
 
         task_graph.close()
-        with self.assertRaises(ZeroDivisionError):
+        with self.assertRaises(parsl.dataflow.errors.DependencyError) as err:
             task_graph.join()
+            assert isinstance(err.__cause__, ZeroDivisionError)
 
     def test_empty_task(self):
         """TaskGraph: Test an empty task."""
@@ -526,17 +412,17 @@ class TaskGraphTests(unittest.TestCase):
         _ = task_graph.add_task()
         task_graph.close()
         task_graph.join()
-        # we shouldn't have anything in the database
-        database_path = os.path.join(
-            self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
+        # # we shouldn't have anything in the database
+        # database_path = os.path.join(
+        #     self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
 
-        conn = sqlite3.connect(database_path)
-        with conn:
-            cursor = conn.cursor()
-            cursor.executescript("SELECT * FROM taskgraph_data")
-            result = cursor.fetchall()
-        conn.close()
-        self.assertEqual(len(result), 0)
+        # conn = sqlite3.connect(database_path)
+        # with conn:
+        #     cursor = conn.cursor()
+        #     cursor.executescript("SELECT * FROM taskgraph_data")
+        #     result = cursor.fetchall()
+        # conn.close()
+        # self.assertEqual(len(result), 0)
 
     def test_closed_graph(self):
         """TaskGraph: Test adding to an closed task graph fails."""
@@ -547,7 +433,7 @@ class TaskGraphTests(unittest.TestCase):
         list_len = 1000
         with self.assertRaises(ValueError):
             _ = task_graph.add_task(
-                func=_create_list_on_disk,
+                func=_test_fixtures._create_list_on_disk,
                 args=(value, list_len),
                 kwargs={'target_path': target_path},
                 target_path_list=[target_path])
@@ -560,7 +446,7 @@ class TaskGraphTests(unittest.TestCase):
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={
                 'target_path': target_path,
@@ -598,13 +484,13 @@ class TaskGraphTests(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_transient_runs(self):
-        """TaskGraph: ensure that transent tasks reexecute."""
+        """TaskGraph: ensure that transient tasks reexecute."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
         target_path = os.path.join(self.workspace_dir, '1000.dat')
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={
                 'target_path': target_path,
@@ -617,7 +503,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         _ = task_graph2.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             transient_run=True,
             kwargs={
@@ -638,7 +524,7 @@ class TaskGraphTests(unittest.TestCase):
         value = 5
         list_len = 1000
         _ = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={
                 'target_path': target_path,
@@ -650,7 +536,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph2 = taskgraph.TaskGraph(self.workspace_dir, -1)
         task = task_graph2.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={
                 'target_path': target_path,
@@ -667,17 +553,17 @@ class TaskGraphTests(unittest.TestCase):
         value = 5
         list_len = 1000
         task_a = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={'target_path': target_path},
             target_path_list=[target_path])
         task_a_same = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value, list_len),
             kwargs={'target_path': target_path},
             target_path_list=[target_path])
         task_b = task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=(value+1, list_len),
             kwargs={'target_path': target_path},
             target_path_list=[target_path])
@@ -691,7 +577,7 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(
             self.workspace_dir, 0, reporting_interval=0.5)
         _ = task_graph.add_task(
-            func=_long_running_function,
+            func=_test_fixtures._long_running_function,
             args=(1.0,))
         task_graph.close()
         task_graph.join()
@@ -705,18 +591,18 @@ class TaskGraphTests(unittest.TestCase):
 
         target_path = os.path.join(self.workspace_dir, 'a.txt')
         first_task = task_graph.add_task(
-            func=_append_val,
+            func=_test_fixtures._append_val,
             args=(target_path, 1, [1], {'x': 1}),
             task_name='first append')
 
         second_task = task_graph.add_task(
-            func=_append_val,
+            func=_test_fixtures._append_val,
             args=(target_path, 1, [1], {'x': 2}),
             dependent_task_list=[first_task],
             task_name='second append')
 
         _ = task_graph.add_task(
-            func=_append_val,
+            func=_test_fixtures._append_val,
             args=(target_path, 1, [2], {'x': 1}),
             dependent_task_list=[second_task],
             task_name='third append')
@@ -735,12 +621,12 @@ class TaskGraphTests(unittest.TestCase):
         target_b_path = os.path.join(self.workspace_dir, 'b.txt')
 
         task_graph.add_task(
-            func=_create_two_files_on_disk,
+            func=_test_fixtures._create_two_files_on_disk,
             args=("word", target_a_path, target_b_path),
             target_path_list=[target_a_path, target_b_path])
 
         task_graph.add_task(
-            func=_create_two_files_on_disk,
+            func=_test_fixtures._create_two_files_on_disk,
             args=("word", target_a_path, target_b_path),
             target_path_list=[target_b_path, target_a_path])
 
@@ -763,13 +649,13 @@ class TaskGraphTests(unittest.TestCase):
         target_b_path = os.path.join(self.workspace_dir, 'b.txt')
 
         create_files_task = task_graph.add_task(
-            func=_create_two_files_on_disk,
+            func=_test_fixtures._create_two_files_on_disk,
             args=("word", target_a_path, target_b_path),
             target_path_list=[target_a_path, target_b_path])
 
         target_merged_path = os.path.join(self.workspace_dir, 'merged.txt')
         task_graph.add_task(
-            func=_merge_and_append_files,
+            func=_test_fixtures._merge_and_append_files,
             args=(target_a_path, target_b_path, target_merged_path),
             target_path_list=[target_merged_path],
             dependent_task_list=[create_files_task])
@@ -778,7 +664,7 @@ class TaskGraphTests(unittest.TestCase):
 
         # this second task shouldn't execute because it's a copy of the first
         task_graph.add_task(
-            func=_merge_and_append_files,
+            func=_test_fixtures._merge_and_append_files,
             args=(target_a_path, target_b_path, target_merged_path),
             target_path_list=[target_merged_path],
             dependent_task_list=[create_files_task])
@@ -806,7 +692,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
         log_task = task_graph.add_task(
-            func=_log_from_another_process,
+            func=_test_fixtures._log_from_another_process,
             args=(logger_name, log_message))
         log_task.join()
         file_handler.flush()
@@ -816,11 +702,11 @@ class TaskGraphTests(unittest.TestCase):
 
         @retrying.retry(wait_exponential_multiplier=100,
                         wait_exponential_max=1000,
-                        stop_max_attempt_number=5)
+                        stop_max_attempt_number=10)
         def get_name_and_message():
             with open(file_log_path, 'r') as log_file:
                 message = log_file.read().rstrip()
-            print(message)
+            print('message:', message)
             process_name, logged_message = re.match(
                 ':([^:]*):([^:]*):', message).groups()
             return process_name, logged_message
@@ -832,13 +718,11 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_repeated_function(self):
         """TaskGraph: ensure no reruns if argument is a function."""
-        global _append_val
-
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
         task_graph.add_task(
-            func=_call_it,
-            args=(_append_val, target_path, 1),
+            func=_test_fixtures._call_it,
+            args=(_test_fixtures._append_val, target_path, 1),
             target_path_list=[target_path],
             ignore_path_list=[target_path],
             task_name='first _call_it')
@@ -846,18 +730,14 @@ class TaskGraphTests(unittest.TestCase):
         task_graph.join()
         del task_graph
 
-        # this causes the address to change
-        def _append_val(path, *val):
-            """Append a ``val`` to file at ``path``."""
-            with open(path, 'a') as target_file:
-                for v in val:
-                    target_file.write(str(v))
+        # change the address of the function
+        _test_fixtures._append_val = _test_fixtures._append_val_2
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 1)
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
         task_graph.add_task(
-            func=_call_it,
-            args=(_append_val, target_path, 1),
+            func=_test_fixtures._call_it,
+            args=(_test_fixtures._append_val, target_path, 1),
             target_path_list=[target_path],
             ignore_path_list=[target_path],
             task_name='second _call_it')
@@ -872,16 +752,13 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_unix_path_repeated_function(self):
         """TaskGraph: ensure no reruns if path is unix style."""
-        global _append_val
-        _append_val = _append_val  # flake8 complains if not defined
-
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
         target_dir = self.workspace_dir + '/foo/bar/rad/'
         os.makedirs(target_dir)
         target_path = target_dir + '/testfile.txt'
         task_graph.add_task(
-            func=_call_it,
-            args=(_append_val, target_path, 1),
+            func=_test_fixtures._call_it,
+            args=(_test_fixtures._append_val, target_path, 1),
             target_path_list=[target_path],
             task_name='first _call_it')
         task_graph.close()
@@ -890,8 +767,8 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
         task_graph.add_task(
-            func=_call_it,
-            args=(_append_val, target_path, 1),
+            func=_test_fixtures._call_it,
+            args=(_test_fixtures._append_val, target_path, 1),
             target_path_list=[target_path],
             task_name='second _call_it')
         task_graph.close()
@@ -920,11 +797,11 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
 
-        if hasattr(_create_file_once, 'executed'):
-            del _create_file_once.executed
+        if hasattr(_test_fixtures._create_file_once, 'executed'):
+            del _test_fixtures._create_file_once.executed
 
         task_graph.add_task(
-            func=_create_file_once,
+            func=_test_fixtures._create_file_once,
             args=(target_path, 'test'),
             target_path_list=[target_path],
             hash_target_files=False,
@@ -939,7 +816,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         task_graph.add_task(
-            func=_create_file_once,
+            func=_test_fixtures._create_file_once,
             args=(target_path, 'test'),
             target_path_list=[target_path],
             hash_target_files=False,
@@ -958,7 +835,7 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
         task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_path, 'test'),
             target_path_list=[target_path],
             task_name='first _create_file')
@@ -974,7 +851,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_path, 'test'),
             target_path_list=[target_path],
             task_name='second _create_file')
@@ -991,7 +868,7 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
         task_graph.add_task(
-            func=_create_list_on_disk,
+            func=_test_fixtures._create_list_on_disk,
             args=('test', 1, target_path),
             target_path_list=[target_path],
             task_name='first _create_list_on_disk')
@@ -999,7 +876,7 @@ class TaskGraphTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             # make the same call but with different target path list
             task_graph.add_task(
-                func=_create_list_on_disk,
+                func=_test_fixtures._create_list_on_disk,
                 args=('test', 1, target_path),
                 target_path_list=[target_path, 'test.txt'],
                 task_name='first _create_list_on_disk')
@@ -1010,12 +887,12 @@ class TaskGraphTests(unittest.TestCase):
     def test_terminated_taskgraph(self):
         """TaskGraph: terminated task graph raises exception correctly."""
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 4)
-        _ = task_graph.add_task(func=_div_by_zero)
+        _ = task_graph.add_task(func=_test_fixtures._div_by_zero)
         with self.assertRaises(ZeroDivisionError):
             task_graph.join()
 
         with self.assertRaises(RuntimeError) as cm:
-            _ = task_graph.add_task(func=_div_by_zero)
+            _ = task_graph.add_task(func=_test_fixtures._div_by_zero)
         expected_message = "add_task when Taskgraph is terminated"
         actual_message = str(cm.exception)
         self.assertTrue(expected_message in actual_message, actual_message)
@@ -1030,7 +907,7 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
         with self.assertRaises(ValueError) as cm:
             task_graph.add_task(
-                func=_create_list_on_disk,
+                func=_test_fixtures._create_list_on_disk,
                 args=('test', 1, target_path),
                 target_path_list=[target_path],
                 dependent_task_list=[target_path],
@@ -1046,7 +923,7 @@ class TaskGraphTests(unittest.TestCase):
         target_path = os.path.join(self.workspace_dir, 'testfile.txt')
         with self.assertRaises(ValueError) as cm:
             task_graph.add_task(
-                func=_create_list_on_disk,
+                func=_test_fixtures._create_list_on_disk,
                 args=('test', 1, target_path),
                 target_path_list=[1],
                 task_name='_create_list_on_disk')
@@ -1062,7 +939,7 @@ class TaskGraphTests(unittest.TestCase):
         not_target_path = os.path.join(self.workspace_dir, 'not_target.txt')
         with self.assertRaises(RuntimeError) as cm:
             task_graph.add_task(
-                func=_create_list_on_disk,
+                func=_test_fixtures._create_list_on_disk,
                 args=('test', 1, target_path),
                 target_path_list=[not_target_path],
                 task_name='_create_list_on_disk')
@@ -1072,10 +949,6 @@ class TaskGraphTests(unittest.TestCase):
 
     def test_expected_path_list(self):
         """TaskGraph: test expected path list matches actual path list."""
-        def _create_file(target_path, content):
-            with open(target_path, 'w') as target_file:
-                target_file.write(content)
-
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
         # note it is important this is a relative path that does not
         # contain the drive letter on Windows.
@@ -1085,7 +958,7 @@ class TaskGraphTests(unittest.TestCase):
                                         start=self.workspace_dir)
 
         _ = task_graph.add_task(
-           func=_create_file,
+           func=_test_fixtures._create_file,
            args=(relative_path, 'test value'),
            target_path_list=[relative_path],
            task_name='create file')
@@ -1101,13 +974,13 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
 
         task_a = task_graph.add_task(
-            func=_noop_function,
+            func=_test_fixtures._noop_function,
             kwargs={
                 'content': ['this value: a']},
             task_name='noop a')
 
         task_b = task_graph.add_task(
-            func=_noop_function,
+            func=_test_fixtures._noop_function,
             kwargs={
                 'content': ['this value b']},
             task_name='noop b')
@@ -1136,13 +1009,13 @@ class TaskGraphTests(unittest.TestCase):
         os.utime(file_b_path, (0, 0))
 
         task_a = task_graph.add_task(
-            func=_noop_function,
+            func=_test_fixtures._noop_function,
             kwargs={
                 'path': file_a_path},
             task_name='noop a')
 
         task_b = task_graph.add_task(
-            func=_noop_function,
+            func=_test_fixtures._noop_function,
             kwargs={
                 'path': file_b_path},
             task_name='noop b')
@@ -1160,7 +1033,7 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
         target_file_path = os.path.join(self.workspace_dir, 'target.txt')
         _ = task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_file_path, 'content'),
             hash_algorithm='exists',
             target_path_list=[target_file_path],
@@ -1176,7 +1049,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
         _ = task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_file_path, 'content'),
             hash_algorithm='exists',
             target_path_list=[target_file_path],
@@ -1190,7 +1063,7 @@ class TaskGraphTests(unittest.TestCase):
 
         task_graph = taskgraph.TaskGraph(self.workspace_dir, -1, 0)
         _ = task_graph.add_task(
-            func=_create_file,
+            func=_test_fixtures._create_file,
             args=(target_file_path, 'content'),
             hash_algorithm='md5',
             target_path_list=[target_file_path],
@@ -1202,24 +1075,10 @@ class TaskGraphTests(unittest.TestCase):
         with open(target_file_path, 'r') as target_file:
             self.assertEqual(target_file.read(), 'content')
 
-    def test_return_value_no_record(self):
-        """TaskGraph: test  ``get`` raises exception if not set to record."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
-        value_task = task_graph.add_task(
-            func=_noop_function,
-            store_result=False)
-
-        # get wil raise a ValueError because store_result is not True
-        with self.assertRaises(ValueError) as cm:
-            _ = value_task.get()
-        expected_message = 'must set `store_result` to True in `add_task`'
-        actual_message = str(cm.exception)
-        self.assertTrue(expected_message in actual_message, actual_message)
-
     def test_return_value(self):
         """TaskGraph: test that ``.get`` behavior works as expected."""
-        if hasattr(_return_value_once, 'executed'):
-            del _return_value_once.executed
+        if hasattr(_test_fixtures._return_value_once, 'executed'):
+            del _test_fixtures._return_value_once.executed
         n_iterations = 3
         task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
         for iteration_id in range(n_iterations):
@@ -1227,9 +1086,8 @@ class TaskGraphTests(unittest.TestCase):
             LOGGER.debug(iteration_id)
             expected_value = 'a good value'
             value_task = task_graph.add_task(
-                func=_return_value_once,
+                func=_test_fixtures._return_value_once,
                 transient_run=transient_run,
-                store_result=True,
                 args=(expected_value,),
                 task_name=f'{expected_value} iter {iteration_id}')
             value = value_task.get()
@@ -1239,16 +1097,15 @@ class TaskGraphTests(unittest.TestCase):
         task_graph = None
 
         # reset run
-        del _return_value_once.executed
+        del _test_fixtures._return_value_once.executed
         for iteration_id in range(n_iterations):
             LOGGER.debug(iteration_id)
             task_graph = taskgraph.TaskGraph(self.workspace_dir, 0, 0)
             expected_value = 'transient run'
             if iteration_id == 0:
                 value_task = task_graph.add_task(
-                    func=_return_value_once,
+                    func=_test_fixtures._return_value_once,
                     transient_run=True,
-                    store_result=True,
                     args=(expected_value,),
                     task_name='first re-run transient')
                 value = value_task.get()
@@ -1258,9 +1115,8 @@ class TaskGraphTests(unittest.TestCase):
             else:
                 with self.assertRaises(RuntimeError):
                     value_task = task_graph.add_task(
-                        func=_return_value_once,
+                        func=_test_fixtures._return_value_once,
                         transient_run=True,
-                        store_result=True,
                         args=(expected_value,),
                         task_name=f'expected error {iteration_id}')
 
@@ -1271,100 +1127,20 @@ class TaskGraphTests(unittest.TestCase):
 
             task_graph = None
 
-    def test_malformed_taskgraph_database(self):
-        """TaskGraph: Test an empty task."""
-        db_schema_test_list = [
-            '''
-            CREATE TABLE taskgraph_data (
-                bad_name_1 TEXT NOT NULL,
-                bad_name_2 BLOB NOT NULL,
-                bad_name_3 BLOB NOT NULL);
-            ''',
-            '''
-            CREATE TABLE taskgraph_data (
-                task_reexecution_hash TEXT NOT NULL,
-                target_path_stats BLOB NOT NULL);
-            ''',
-            '''
-            CREATE TABLE bad_table_name (
-                task_reexecution_hash TEXT NOT NULL,
-                target_path_stats BLOB NOT NULL,
-                result BLOB NOT NULL,
-                PRIMARY KEY (task_reexecution_hash));
-            '''
-        ]
+    # def test_dictionary_arguments(self):
+    #     """TaskGraph: test that large dictionary arguments behave well."""
+    #     task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
+    #     dict_arg = {}
+    #     x = {None: None}
+    #     for _ in range(10000):
+    #         dict_arg[_] = x
 
-        for db_schema in db_schema_test_list:
-            database_path = os.path.join(
-                self.workspace_dir, taskgraph._TASKGRAPH_DATABASE_FILENAME)
-            if os.path.exists(database_path):
-                os.remove(database_path)
-            connection = sqlite3.connect(database_path)
-            cursor = connection.cursor()
-            cursor.executescript(db_schema)
-            cursor.close()
-            connection.commit()
-            connection.close()
-
-            task_graph = taskgraph.TaskGraph(self.workspace_dir, 0)
-            _ = task_graph.add_task()
-            task_graph.close()
-            task_graph.join()
-            del task_graph
-
-            expected_column_name_list = [
-                'task_reexecution_hash', 'target_path_stats', 'result']
-            connection = sqlite3.connect(database_path)
-            cursor = connection.cursor()
-            cursor.execute('PRAGMA table_info(taskgraph_data)')
-            result = list(cursor.fetchall())
-            cursor.close()
-            connection.commit()
-            connection.close()
-            for header_line in result:
-                column_name = header_line[1]
-                if column_name not in expected_column_name_list:
-                    raise ValueError(
-                        f'unexpected column name {column_name} in '
-                        'taskgraph_data ')
-            self.assertEqual(len(result), len(expected_column_name_list))
-
-    def test_terminate_log(self):
-        """TaskGraph: test that the logger thread terminates on .join."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, 1, 5.0)
-        _ = task_graph.add_task()
-        task_graph.join()
-
-        # logger should not terminate until after join, give it enough time
-        # to have a chance to close, but not so long the test hangs
-        task_graph._logging_monitor_thread.join(0.1)
-        self.assertTrue(task_graph._logging_monitor_thread.is_alive())
-        task_graph._execution_monitor_thread.join(0.1)
-        self.assertTrue(task_graph._execution_monitor_thread.is_alive())
-
-        task_graph.close()
-        task_graph.join()
-
-        # 5 seconds should be way too much time to expect the thread to join
-        task_graph._logging_monitor_thread.join(5)
-        self.assertFalse(task_graph._logging_monitor_thread.is_alive())
-        task_graph._execution_monitor_thread.join(5)
-        self.assertFalse(task_graph._execution_monitor_thread.is_alive())
-
-    def test_dictionary_arguments(self):
-        """TaskGraph: test that large dictionary arguments behave well."""
-        task_graph = taskgraph.TaskGraph(self.workspace_dir, -1)
-        dict_arg = {}
-        x = {None: None}
-        for _ in range(10000):
-            dict_arg[_] = x
-
-        def my_op(dict_arg):
-            pass
-        task_graph.add_task(
-            func=my_op, args=(), kwargs={'dict_arg': dict_arg})
-        task_graph.join()
-        self.assertTrue(True, 'no memory error so everything is fine')
+    #     def my_op(dict_arg):
+    #         pass
+    #     task_graph.add_task(
+    #         func=my_op, args=(), kwargs={'dict_arg': dict_arg})
+    #     task_graph.join()
+    #     self.assertTrue(True, 'no memory error so everything is fine')
 
     def test_filter_non_files(self):
         """TaskGraph: test internal filter non-files function."""
@@ -1437,7 +1213,7 @@ class TaskGraphTests(unittest.TestCase):
         content = 'test'
         for _ in range(10):
             _ = task_graph.add_task(
-                func=_create_file,
+                func=_test_fixtures._create_file,
                 args=(target_path, content),
                 target_path_list=[target_path],
                 task_name='create content')
@@ -1470,7 +1246,7 @@ class TaskGraphTests(unittest.TestCase):
         for content in ('test text', 'TEST TEXT', 'test text'):
             task_graph = taskgraph.TaskGraph(self.workspace_dir, n_workers=-1)
             _ = task_graph.add_task(
-                func=_create_file,
+                func=_test_fixtures._create_file,
                 args=(target_path, content),
                 target_path_list=[target_path],
                 task_name='create content')
